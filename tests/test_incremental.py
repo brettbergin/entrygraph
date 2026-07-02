@@ -85,6 +85,25 @@ def test_worker_hashes_enable_paranoid_no_change(repo, tmp_path):
     engine.dispose()
 
 
+def test_streaming_edge_writes_across_batches(tmp_path, monkeypatch):
+    # force many small flushes so the edge/entrypoint writers cross batch
+    # boundaries; the resulting graph must be identical to a single bulk insert.
+    import entrygraph.pipeline.writer as writer
+
+    monkeypatch.setattr(writer, "_BATCH", 3)
+    engine = make_engine(tmp_path / "stream.db")
+    stats = index_repository(FLASK_APP, engine)
+    assert stats.edges > 3  # spans multiple batches
+
+    from entrygraph import CodeGraph
+
+    g = CodeGraph(engine)
+    # edge count persisted matches what the writer reported, and reachability holds
+    assert g.stats().edges == stats.edges
+    assert g.reachable(source="app.routes.create_report", sink="py:subprocess.run")
+    engine.dispose()
+
+
 def test_worker_hashes_predicate():
     # only supported+unskipped files are hashed by the worker; everything else the
     # worker never reads is hashed in the diff phase.
