@@ -312,3 +312,24 @@ def test_cha_candidates_for_unknown_receiver():
     cha = [e for e in resolver.resolve() if e.via == "cha"]
     assert {e.dst_symbol_id for e in cha} == {43, 44}
     assert all(e.confidence is Confidence.FUZZY for e in cha)
+
+
+def test_cha_survives_many_unrelated_same_name_methods():
+    # 2 process() methods share a hierarchy; 8 more standalone classes also define
+    # process() (10 total > the fan-out cap). The related pair must still be found
+    # — regression: the cap was applied to the raw count before hierarchy filtering,
+    # zeroing the legitimate pair.
+    table = make_table()
+    table.add_symbol(40, "app.services.Base", "Base", SymbolKind.CLASS)
+    table.add_symbol(41, "app.services.HandlerA", "HandlerA", SymbolKind.CLASS)
+    table.add_symbol(42, "app.services.HandlerB", "HandlerB", SymbolKind.CLASS)
+    table.add_symbol(43, "app.services.HandlerA.process", "process", SymbolKind.METHOD)
+    table.add_symbol(44, "app.services.HandlerB.process", "process", SymbolKind.METHOD)
+    table.class_parents["app.services.HandlerA"] = ["app.services.Base"]
+    table.class_parents["app.services.HandlerB"] = ["app.services.Base"]
+    for i in range(8):  # unrelated standalone classes, each with its own process()
+        table.add_symbol(50 + i, f"app.mod.Loner{i}", f"Loner{i}", SymbolKind.CLASS)
+        table.add_symbol(60 + i, f"app.mod.Loner{i}.process", "process", SymbolKind.METHOD)
+    resolver, _ = make_resolver(table, [ref("h.process", receiver="h")])
+    cha = {e.dst_symbol_id for e in resolver.resolve() if e.via == "cha"}
+    assert cha == {43, 44}

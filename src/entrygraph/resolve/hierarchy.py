@@ -16,7 +16,8 @@ from entrygraph.kinds import SymbolKind
 from entrygraph.resolve.symbol_table import SymbolTable
 
 _MAX_ANCESTOR_DEPTH = 10
-_MAX_CHA_CANDIDATES = 8
+_MAX_CHA_CANDIDATES = 8  # max virtual-dispatch edges emitted per unknown-receiver call
+_MAX_CHA_SCAN = 64  # raw same-name method count above which CHA is skipped entirely
 
 
 def expand_relative(imp: RawImport, module_path: str, is_package: bool) -> str:
@@ -127,8 +128,10 @@ def cha_candidates(
     """Symbol ids of all method overrides named `method_name` that share a hierarchy.
 
     Class-hierarchy analysis for virtual dispatch on an unknown receiver: only
-    fires when >=2 classes defining the method are related by inheritance, and
-    bails out past _MAX_CHA_CANDIDATES to avoid common-name blowup (run/get/...).
+    fires when >=2 classes defining the method are related by inheritance. The
+    hierarchy filter runs first, then the result is capped at _MAX_CHA_CANDIDATES,
+    so a small related group is kept even when many unrelated methods share the
+    name (run/get/...); a pathological raw count skips the scan entirely.
     """
     candidates = [
         sid
@@ -137,7 +140,12 @@ def cha_candidates(
     ]
     if exclude:
         candidates = [c for c in candidates if c not in exclude]
-    if len(candidates) < 2 or len(candidates) > _MAX_CHA_CANDIDATES:
+    # A pathological same-name count (get/set/run defined hundreds of times) can't
+    # yield a useful dispatch set; skip before the O(n^2) closure scan. This is a
+    # generous scan bound, NOT the result cap — the real cap is applied to the
+    # hierarchy-related subset below so a small related group isn't zeroed just
+    # because many unrelated methods share the name.
+    if len(candidates) < 2 or len(candidates) > _MAX_CHA_SCAN:
         return []
     # Keep methods whose owning classes are connected in the hierarchy — either
     # one is an ancestor of the other, or they share a common ancestor (siblings
@@ -154,4 +162,9 @@ def cha_candidates(
     for sid, closure in closures.items():
         if any(oid != sid and closure & other for oid, other in closures.items()):
             related.append(sid)
-    return related if len(related) >= 2 else []
+    if len(related) < 2:
+        return []
+    # Cap the fan-out of the *related* set (truncate deterministically; don't zero).
+    if len(related) > _MAX_CHA_CANDIDATES:
+        related = sorted(related)[:_MAX_CHA_CANDIDATES]
+    return related
