@@ -127,6 +127,9 @@ class Edge(Base):
     confidence: Mapped[int] = mapped_column(Integer, default=0)  # kinds.Confidence value
     arg_preview: Mapped[str | None] = mapped_column(Text)
     sink_id: Mapped[str | None] = mapped_column(String(64))  # pre-tagged at index time
+    # A call to a taint-source function (request/env/stdin/...) tags its calling
+    # edge; the src symbol is then a taint origin. Pre-tagged at index time.
+    source_id: Mapped[str | None] = mapped_column(String(64))
     # Edge provenance for edges not resolved by the direct import/scope pass:
     # "cha" (class-hierarchy candidate), "dynamic" (getattr/computed call),
     # "reexport" (chased through a barrel file). NULL for directly-resolved edges.
@@ -138,6 +141,7 @@ class Edge(Base):
         Index("ix_edges_srcfile", "src_file_id"),
         Index("ix_edges_unresolved", "dst_qname", sqlite_where=text("dst_symbol_id IS NULL")),
         Index("ix_edges_sink", "sink_id", sqlite_where=text("sink_id IS NOT NULL")),
+        Index("ix_edges_source", "source_id", sqlite_where=text("source_id IS NOT NULL")),
         Index("ix_edges_via", "via", sqlite_where=text("via IS NOT NULL")),
     )
 

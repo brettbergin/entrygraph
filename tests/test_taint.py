@@ -4,6 +4,7 @@ from entrygraph.detect.taint import (
     SanitizerPattern,
     SinkPattern,
     SinkRegistry,
+    SourcePattern,
     _load_toml,
     builtin_registry,
 )
@@ -54,6 +55,25 @@ def test_sanitizer_matching_and_category_lookup():
     assert len(matched) == 1 and matched[0].effect == "neutralizes"
     assert reg.match_sanitizers("py:os.system") == []
     assert reg.sanitizers_for_category("command_exec")[0].id == "san"
+
+
+def test_match_source_and_source_category():
+    reg = SinkRegistry(
+        sinks=[],
+        sources=[
+            SourcePattern(id="env", category="env_input", callee="py:{os.getenv,os.environ.get}"),
+            SourcePattern(id="http", category="http_input", callee="py:flask.request*"),
+        ],
+    )
+    assert reg.match_source("py:os.getenv") == "env"
+    assert reg.match_source("py:flask.request.args.get") == "http"
+    assert reg.match_source("py:os.system") is None
+    assert reg.source_ids_for_category("env_input") == {"env"}
+
+
+def test_builtin_registry_matches_env_source():
+    reg = builtin_registry()
+    assert reg.match_source("py:os.getenv") == "py.env"
 
 
 def test_builtin_registry_loads_library_summaries_and_sanitizers():

@@ -136,3 +136,4 @@ class GraphStats:
     resolved_edges: int
     entrypoints: int
     sink_edges: int
+    source_edges: int

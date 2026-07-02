@@ -85,6 +85,7 @@ class SinkRegistry:
         self.sources = {s.id: s for s in sources}
         self.sanitizers = {s.id: s for s in (sanitizers or [])}
         self._compiled = [(_compile(s.callee), s) for s in sinks]
+        self._compiled_sources = [(_compile(s.callee), s) for s in sources]
         self._compiled_sanitizers = [(_compile(s.callee), s) for s in (sanitizers or [])]
 
     def match(self, canonical_callee: str, arg_preview: str | None = None) -> str | None:
@@ -98,6 +99,17 @@ class SinkRegistry:
                 return sink.id
         return None
 
+    def match_source(self, canonical_callee: str) -> str | None:
+        """Return the first matching taint-source id for this callee, or None.
+
+        A call to a source function (e.g. ``flask.request.args.get``, ``os.getenv``)
+        marks its calling site as a taint origin. Stamped on edges at index time,
+        symmetric to :meth:`match`."""
+        for regex, source in self._compiled_sources:
+            if regex.match(canonical_callee):
+                return source.id
+        return None
+
     def match_sanitizers(self, canonical_callee: str) -> list[SanitizerPattern]:
         """Sanitizers whose pattern matches this callee qname."""
         return [s for regex, s in self._compiled_sanitizers if regex.match(canonical_callee)]
@@ -107,6 +119,9 @@ class SinkRegistry:
 
     def ids_for_category(self, category: str) -> set[str]:
         return {s.id for s in self.sinks.values() if s.category == category}
+
+    def source_ids_for_category(self, category: str) -> set[str]:
+        return {s.id for s in self.sources.values() if s.category == category}
 
     def severity_of(self, sink_id: str | None) -> str | None:
         sink = self.sinks.get(sink_id) if sink_id else None
