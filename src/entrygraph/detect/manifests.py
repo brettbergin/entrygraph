@@ -105,6 +105,74 @@ def parse_gemfile(text: str) -> set[str]:
     return set(_GEMFILE_GEM.findall(text))
 
 
+def parse_csproj(text: str) -> set[str]:
+    """NuGet <PackageReference Include="..."> (and <Reference> fallback)."""
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return set()
+    deps: set[str] = set()
+    for el in root.iter():
+        tag = el.tag.split("}")[-1]
+        if tag in ("PackageReference", "Reference"):
+            include = el.get("Include")
+            if include:
+                deps.add(include.split(",", 1)[0].strip().lower())
+    return deps
+
+
+def parse_packages_config(text: str) -> set[str]:
+    """Legacy NuGet packages.config: <package id="..." />."""
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return set()
+    return {
+        el.get("id").lower()
+        for el in root.iter()
+        if el.tag.split("}")[-1] == "package" and el.get("id")
+    }
+
+
+def parse_composer_json(text: str) -> set[str]:
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    deps: set[str] = set()
+    for key in ("require", "require-dev"):
+        section = data.get(key)
+        if isinstance(section, dict):
+            for name in section:
+                low = name.lower()
+                if low == "php" or low.startswith("ext-"):
+                    continue
+                deps.add(low)
+    return deps
+
+
+def parse_cargo_toml(text: str) -> set[str]:
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return set()
+    deps: set[str] = set()
+
+    def collect(section) -> None:
+        if isinstance(section, dict):
+            deps.update(k.lower().replace("_", "-") for k in section)
+
+    for key in ("dependencies", "dev-dependencies", "build-dependencies"):
+        collect(data.get(key))
+    collect(data.get("workspace", {}).get("dependencies"))
+    for target in (data.get("target", {}) or {}).values():
+        if isinstance(target, dict):
+            collect(target.get("dependencies"))
+    return deps
+
+
 @dataclass(slots=True)
 class ManifestDeps:
     """Dependencies per ecosystem, plus which manifest files provided them."""
@@ -114,6 +182,9 @@ class ManifestDeps:
     go: set[str] = field(default_factory=set)
     java: set[str] = field(default_factory=set)
     ruby: set[str] = field(default_factory=set)
+    csharp: set[str] = field(default_factory=set)
+    php: set[str] = field(default_factory=set)
+    rust: set[str] = field(default_factory=set)
     sources: list[str] = field(default_factory=list)  # repo-relative manifest paths
 
     def for_language(self, language: str) -> set[str]:
@@ -131,6 +202,10 @@ _MANIFEST_SPECS: list[tuple[str, str, object]] = [  # (glob, ecosystem, parser f
     ("build.gradle", "java", parse_build_gradle),
     ("build.gradle.kts", "java", parse_build_gradle),
     ("Gemfile", "ruby", parse_gemfile),
+    ("*.csproj", "csharp", parse_csproj),
+    ("packages.config", "csharp", parse_packages_config),
+    ("composer.json", "php", parse_composer_json),
+    ("Cargo.toml", "rust", parse_cargo_toml),
 ]
 
 _MANIFEST_SEARCH_DEPTH = 3  # root plus a couple of levels for monorepos
@@ -145,7 +220,8 @@ def parse_manifests(root: str | Path) -> ManifestDeps:
             for manifest in root.glob(glob):
                 if not manifest.is_file():
                     continue
-                if any(part in ("node_modules", "vendor", ".venv", "venv") for part in manifest.parts):
+                if any(part in ("node_modules", "vendor", ".venv", "venv", "target", "packages")
+                       for part in manifest.parts):
                     continue
                 try:
                     text = manifest.read_text(encoding="utf-8", errors="replace")

@@ -71,3 +71,54 @@ def test_parse_manifests_fixture():
     deps = parse_manifests(fixtures)
     assert {"flask", "click", "requests"} <= deps.python
     assert "requirements.txt" in deps.sources
+
+
+# ---------------- C1: C#, PHP, Rust manifests ----------------
+from entrygraph.detect.manifests import (  # noqa: E402
+    parse_cargo_toml,
+    parse_composer_json,
+    parse_csproj,
+    parse_packages_config,
+)
+
+
+def test_parse_csproj():
+    deps = parse_csproj(
+        '<Project Sdk="Microsoft.NET.Sdk">\n'
+        '  <ItemGroup>\n'
+        '    <PackageReference Include="Microsoft.AspNetCore.App" Version="8.0.0" />\n'
+        '    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />\n'
+        '  </ItemGroup>\n'
+        '</Project>\n'
+    )
+    assert "microsoft.aspnetcore.app" in deps and "newtonsoft.json" in deps
+
+
+def test_parse_packages_config():
+    deps = parse_packages_config(
+        '<packages><package id="EntityFramework" version="6.4.4" /></packages>'
+    )
+    assert deps == {"entityframework"}
+
+
+def test_parse_composer_json():
+    deps = parse_composer_json(
+        '{"require": {"php": ">=8.1", "laravel/framework": "^10.0", "ext-json": "*"},'
+        ' "require-dev": {"phpunit/phpunit": "^10.0"}}'
+    )
+    assert deps == {"laravel/framework", "phpunit/phpunit"}  # php + ext-* dropped
+
+
+def test_parse_cargo_toml():
+    deps = parse_cargo_toml(
+        '[dependencies]\naxum = "0.7"\ntokio = { version = "1", features = ["full"] }\n'
+        '[dev-dependencies]\nreqwest = "0.11"\n'
+        '[build-dependencies]\ncc = "1"\n'
+    )
+    assert {"axum", "tokio", "reqwest", "cc"} <= deps
+
+
+def test_new_manifest_parsers_handle_malformed():
+    assert parse_csproj("<not xml") == set()
+    assert parse_composer_json("{bad json") == set()
+    assert parse_cargo_toml("[[[") == set()
