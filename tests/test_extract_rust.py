@@ -172,7 +172,10 @@ fn run(cmd: &str) {
     calls = {r.callee_text: r for r in x.references if r.kind == "call"}
     cmd = calls["Command.new"]
     assert cmd.callee_name == "new"
-    assert cmd.receiver_text == "Command"
+    # a `::`-scoped call is a qualified path, not a value.method — the receiver is
+    # left unset so the resolver keeps the full path (rs:Command.new / the imported
+    # rs:std.process.Command.new) rather than collapsing to rs:*.new.
+    assert cmd.receiver_text is None
     assert cmd.caller_qualified_name == "handlers.run"
 
 

@@ -34,8 +34,11 @@ def test_callback_edge_created(graph):
 
 
 def test_handler_reachable_only_with_callbacks(graph):
-    # the callback edge is what makes the handler reachable from the registration
-    # site (the Command sink itself isn't stamped here — a separate Rust
-    # scoped-call resolution gap — so reach to the handler symbol directly)
-    assert not graph.reachable(source="_root.register", sink="_root.handler")
-    assert graph.reachable(source="_root.register", sink="_root.handler", include_callbacks=True)
+    # the callback edge is what makes the handler (and the command_exec sink in its
+    # body) reachable from the route registration site
+    kw = {"source": "_root.register", "sink_category": "command_exec", "include_unresolved": True}
+    assert graph.paths(**kw) == []
+    withcb = graph.paths(**kw, include_callbacks=True)
+    assert withcb
+    assert "_root.handler" in [s.qname for s in withcb[0].symbols]
+    assert withcb[0].symbols[-1].qname == "rs:std.process.Command.new"
