@@ -176,6 +176,25 @@ fn run(cmd: &str) {
     assert cmd.caller_qualified_name == "handlers.run"
 
 
+def test_function_value_argument_is_a_callback():
+    # post(handler) passes `handler` as a value; it must be a callback so the
+    # handler is reachable from the route registration.
+    x = extract(
+        """
+fn register(app: Router) {
+    app.route("/run", post(handler));
+}
+
+async fn handler() {}
+"""
+    )
+    callbacks = {r.callee_name: r for r in x.references if r.kind == "callback"}
+    assert "handler" in callbacks
+    assert callbacks["handler"].caller_qualified_name == "_root.register"
+    # string literal arg is not a callback
+    assert "/run" not in callbacks
+
+
 def test_partial_tree_still_extracts():
     x = extract("fn good() {}\n\nfn broken( {\n", path="src/lib.rs")
     assert not x.parse_ok
