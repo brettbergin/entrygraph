@@ -199,6 +199,32 @@ public class C {
     assert "ProcessBuilder" in calls
 
 
+def test_method_reference_argument_is_a_callback():
+    # r.get("/run", this::handle) / stream.map(App::parse) pass method values;
+    # they must be callbacks so the referenced method is reachable.
+    x = extract(
+        """
+package com.example;
+
+public class App {
+    void setup(Router r) {
+        r.get("/run", this::handle);
+        r.post("/x", App::parse);
+    }
+    void handle() {}
+    static void parse() {}
+}
+""",
+        path="src/main/java/com/example/App.java",
+    )
+    callbacks = {r.callee_name: r for r in x.references if r.kind == "callback"}
+    assert callbacks["handle"].receiver_text == "this"
+    assert callbacks["handle"].caller_qualified_name == "com.example.App.setup"
+    assert callbacks["parse"].receiver_text == "App"
+    # string literal args are not callbacks
+    assert "/run" not in callbacks
+
+
 # ---------------- unit: main detection ----------------
 
 
