@@ -123,13 +123,21 @@ def _load_gitignore(root: Path) -> pathspec.GitIgnoreSpec | None:
     return pathspec.GitIgnoreSpec.from_lines(patterns)
 
 
-def _content_gate(abs_path: str, language: str | None, size_bytes: int) -> str | None:
-    """Return a skip reason, or None if the file should be parsed."""
+def cheap_gate(name: str, size_bytes: int) -> str | None:
+    """Skip reasons decidable from stat + filename alone — no file read."""
     if size_bytes > MAX_FILE_BYTES:
         return "too_large"
-    name = os.path.basename(abs_path)
     if name.endswith(_MINIFIED_SUFFIXES):
         return "minified"
+    return None
+
+
+def content_gate(abs_path: str, language: str | None, size_bytes: int) -> str | None:
+    """Skip reasons requiring a peek at the bytes (binary / minified-by-content).
+
+    Split from :func:`cheap_gate` so this 8 KiB read runs only for files that are
+    actually going to be indexed (added/changed), not for every unchanged file on
+    every walk. Assumes the cheap gate already passed."""
     try:
         with open(abs_path, "rb") as fh:
             head = fh.read(8192)
@@ -205,7 +213,10 @@ def walk_repo(root: str | Path) -> tuple[list[WalkedFile], RepoLanguageProfile]:
                     language=language,
                     size_bytes=stat.st_size,
                     mtime_ns=stat.st_mtime_ns,
-                    skip_reason=_content_gate(entry.path, language, stat.st_size),
+                    # only the cheap (no-read) gate here; the byte-peek content
+                    # gate is deferred to the diff phase so unchanged files aren't
+                    # opened on every walk (see fs.hashing.diff_files).
+                    skip_reason=cheap_gate(name, stat.st_size),
                 )
             )
 

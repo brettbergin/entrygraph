@@ -160,6 +160,10 @@ def index_repository(
         return IndexStats(
             files_scanned=len(walked),
             files_indexed=len(diff.to_index),
+            # skips among files considered this run. The byte-peek content gate is
+            # deferred to the diff, so on an incremental run a binary/minified file
+            # that is unchanged (fast-path) is not re-flagged here — consistent with
+            # files_indexed, which is also a this-run count.
             files_skipped=sum(1 for w in walked if w.skip_reason),
             files_deleted=deleted,
             symbols=repo.symbol_count,
