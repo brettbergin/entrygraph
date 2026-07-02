@@ -274,6 +274,7 @@ def cmd_paths(args) -> int:
             min_confidence=args.min_confidence,
             include_fuzzy=args.include_fuzzy,
             include_unresolved=args.include_unresolved,
+            include_callbacks=args.include_callbacks,
             prune_sanitized=args.prune_sanitized,
         )
     if args.json:
@@ -410,6 +411,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="include_unresolved",
         action="store_true",
         help="also traverse unresolved wildcard-sink and dynamic-call edges",
+    )
+    p.add_argument(
+        "--include-callbacks",
+        dest="include_callbacks",
+        action="store_true",
+        help="also follow function/method values passed as arguments "
+        "(handler registrations, callbacks)",
     )
     p.add_argument(
         "--prune-sanitized",
