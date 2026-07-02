@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy import Engine, func, select, text
@@ -64,6 +65,27 @@ def _traversal_params(
     else:
         floor = int(Confidence.FUZZY)
     return floor, include_fuzzy
+
+
+@dataclass(frozen=True)
+class _FilteredAdjacency:
+    """Binds a shared AdjacencyCache to one query's confidence/CHA filter, so the
+    memory engine matches the CteEngine's ``paths``/``reachable`` interface while
+    every combination reuses the same cache."""
+
+    cache: AdjacencyCache
+    min_confidence: int
+    include_cha: bool
+
+    def paths(self, sources, sinks, max_depth=25, max_paths=10):
+        return self.cache.paths(
+            sources, sinks, max_depth, max_paths, self.min_confidence, self.include_cha
+        )
+
+    def reachable(self, sources, sinks, max_depth):
+        return self.cache.reachable(
+            sources, sinks, max_depth, self.min_confidence, self.include_cha
+        )
 
 
 def _has_sanitizer(path: CallPath) -> bool:
@@ -422,21 +444,17 @@ class CodeGraph:
             return CteEngine(session, frozenset(edge_kinds), min_confidence, include_cha)
         if engine != "memory":
             raise ValueError(f"unknown reachability engine {engine!r} (use 'memory' or 'sql')")
-        return self._cache(session, edge_kinds, min_confidence, include_cha)
+        # one shared cache per (kinds, generation); confidence/CHA filtering is
+        # applied per traversal by the view, not baked into a per-combo cache.
+        return _FilteredAdjacency(self._cache(session, edge_kinds), min_confidence, include_cha)
 
-    def _cache(
-        self,
-        session: Session,
-        edge_kinds: tuple[str, ...],
-        min_confidence: int,
-        include_cha: bool = True,
-    ) -> AdjacencyCache:
+    def _cache(self, session: Session, edge_kinds: tuple[str, ...]) -> AdjacencyCache:
         kinds = frozenset(edge_kinds)
         generation = self._generation(session)
-        key = (kinds | {f"minconf:{min_confidence}", f"cha:{include_cha}"}, generation)
+        key = (kinds, generation)
         cache = self._adjacency.get(key)
         if cache is None:
-            cache = AdjacencyCache.build(session, generation, kinds, min_confidence, include_cha)
+            cache = AdjacencyCache.build(session, generation, kinds)
             self._adjacency = {k: v for k, v in self._adjacency.items() if k[1] == generation}
             self._adjacency[key] = cache
         return cache
@@ -493,7 +511,7 @@ class CodeGraph:
             ids = self._spec_to_ids(session, target)
             if not ids:
                 raise SymbolNotFoundError(f"no symbol matching {target!r}")
-            cache = self._cache(session, edge_kinds, 0)
+            cache = self._cache(session, edge_kinds)
             found = cache.neighborhood(ids, depth, direction)
             symbol_map = q.symbols_by_ids(session, found)
         return sorted(symbol_map.values(), key=lambda s: s.qname)

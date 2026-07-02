@@ -73,6 +73,18 @@ def test_unknown_engine_raises(graph):
         graph.paths(source="app.routes.*", sink="py:subprocess.run", engine="bogus")
 
 
+def test_shared_adjacency_cache_across_configs(graph):
+    # different confidence-floor / CHA combinations must reuse one cache, not
+    # build a full duplicate graph per combination (memory dedup).
+    graph._adjacency.clear()
+    kw = {"source": "app.routes.create_report", "sink": "py:subprocess.run"}
+    graph.paths(**kw)
+    graph.paths(**kw, include_fuzzy=True)
+    graph.paths(**kw, include_unresolved=True)
+    graph.reachable(**kw, include_unresolved=True)
+    assert len(graph._adjacency) == 1
+
+
 # ---------------- S4: enrichment / risk scoring / confidence gating ----------------
 
 
