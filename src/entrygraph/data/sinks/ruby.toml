@@ -1,0 +1,46 @@
+# Built-in Ruby sink/source catalog.
+# Patterns are brace-globs matched against canonical callee qnames:
+#   unresolved bare calls      -> "rb:system"
+#   unresolved attribute calls -> "rb:*.execute"
+#   fuzzy/import project calls  -> the project qname (not matched here)
+
+[[sink]]
+id = "rb.command-exec.kernel"
+category = "command_exec"
+severity = "high"
+callee = "rb:{system,exec,spawn,fork,syscall}"
+description = "Kernel command execution"
+
+[[sink]]
+id = "rb.command-exec.attr"
+category = "command_exec"
+severity = "high"
+callee = "rb:*.{system,exec,spawn}"
+description = "Command execution on a receiver (Open3, Process, etc.)"
+
+[[sink]]
+id = "rb.code-eval"
+category = "code_eval"
+severity = "critical"
+callee = "rb:{eval,instance_eval,class_eval,module_eval,define_method}"
+description = "Dynamic code evaluation"
+
+[[sink]]
+id = "rb.code-eval.attr"
+category = "code_eval"
+severity = "critical"
+callee = "rb:*.{eval,instance_eval,class_eval,module_eval}"
+description = "Dynamic code evaluation on a receiver"
+
+[[sink]]
+id = "rb.sql-execute"
+category = "sql"
+severity = "medium"
+callee = "rb:*.{execute,find_by_sql,exec_query,select_all}"
+description = "SQL statement execution (receiver-agnostic)"
+
+[[source]]
+id = "rb.sinatra.params"
+category = "http_input"
+callee = "rb:*.params*"
+description = "Sinatra/Rails request params"

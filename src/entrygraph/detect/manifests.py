@@ -1,0 +1,158 @@
+"""Dependency-manifest parsers — stdlib + regex only.
+
+Each parser takes file text and returns a set of normalized dependency names.
+``parse_manifests(root)`` walks the well-known manifest locations and merges
+results per ecosystem.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import tomllib
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
+from pathlib import Path
+
+_REQ_LINE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+_GO_REQUIRE_BLOCK = re.compile(r"require\s*\(([^)]*)\)", re.DOTALL)
+_GO_REQUIRE_LINE = re.compile(r"^\s*require\s+(\S+)", re.MULTILINE)
+_GO_MODULE_LINE = re.compile(r"^\s*(\S+)\s+v[\w.\-+]+", re.MULTILINE)
+_GRADLE_DEP = re.compile(
+    r"""(?:implementation|api|compile|runtimeOnly|compileOnly|testImplementation)\s*[\(\s]\s*['"]([^'"]+)['"]"""
+)
+_GEMFILE_GEM = re.compile(r"""^\s*gem\s+['"]([^'"]+)['"]""", re.MULTILINE)
+
+
+def parse_requirements_txt(text: str) -> set[str]:
+    deps: set[str] = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("#", "-")):
+            continue
+        match = _REQ_LINE.match(line)
+        if match:
+            deps.add(match.group(1).lower().replace("_", "-"))
+    return deps
+
+
+def parse_pyproject_toml(text: str) -> set[str]:
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return set()
+    deps: set[str] = set()
+    project = data.get("project", {})
+    raw: list[str] = list(project.get("dependencies", []) or [])
+    for extra_deps in (project.get("optional-dependencies", {}) or {}).values():
+        raw.extend(extra_deps or [])
+    for spec in raw:
+        match = _REQ_LINE.match(spec)
+        if match:
+            deps.add(match.group(1).lower().replace("_", "-"))
+    poetry = data.get("tool", {}).get("poetry", {}).get("dependencies", {}) or {}
+    deps.update(k.lower().replace("_", "-") for k in poetry if k.lower() != "python")
+    return deps
+
+
+def parse_package_json(text: str) -> set[str]:
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    deps: set[str] = set()
+    for key in ("dependencies", "devDependencies", "peerDependencies"):
+        section = data.get(key)
+        if isinstance(section, dict):
+            deps.update(section)
+    return deps
+
+
+def parse_go_mod(text: str) -> set[str]:
+    deps: set[str] = set()
+    for block in _GO_REQUIRE_BLOCK.findall(text):
+        deps.update(_GO_MODULE_LINE.findall(block))
+    for single in _GO_REQUIRE_LINE.findall(text):
+        if single != "(":
+            deps.add(single)
+    return deps
+
+
+def parse_pom_xml(text: str) -> set[str]:
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return set()
+    ns = {"m": root.tag.split("}")[0].strip("{")} if root.tag.startswith("{") else {}
+    prefix = "m:" if ns else ""
+    deps: set[str] = set()
+    for dep in root.iter():
+        if dep.tag.endswith("dependency"):
+            group = dep.find(f"{prefix}groupId", ns)
+            artifact = dep.find(f"{prefix}artifactId", ns)
+            if group is not None and artifact is not None:
+                deps.add(f"{group.text}:{artifact.text}")
+    return deps
+
+
+def parse_build_gradle(text: str) -> set[str]:
+    return {m for m in _GRADLE_DEP.findall(text)}
+
+
+def parse_gemfile(text: str) -> set[str]:
+    return set(_GEMFILE_GEM.findall(text))
+
+
+@dataclass(slots=True)
+class ManifestDeps:
+    """Dependencies per ecosystem, plus which manifest files provided them."""
+
+    python: set[str] = field(default_factory=set)
+    javascript: set[str] = field(default_factory=set)
+    go: set[str] = field(default_factory=set)
+    java: set[str] = field(default_factory=set)
+    ruby: set[str] = field(default_factory=set)
+    sources: list[str] = field(default_factory=list)  # repo-relative manifest paths
+
+    def for_language(self, language: str) -> set[str]:
+        if language in ("typescript", "tsx"):
+            language = "javascript"
+        return getattr(self, language, set())
+
+
+_MANIFEST_SPECS: list[tuple[str, str, object]] = [  # (glob, ecosystem, parser fn)
+    ("requirements*.txt", "python", parse_requirements_txt),
+    ("pyproject.toml", "python", parse_pyproject_toml),
+    ("package.json", "javascript", parse_package_json),
+    ("go.mod", "go", parse_go_mod),
+    ("pom.xml", "java", parse_pom_xml),
+    ("build.gradle", "java", parse_build_gradle),
+    ("build.gradle.kts", "java", parse_build_gradle),
+    ("Gemfile", "ruby", parse_gemfile),
+]
+
+_MANIFEST_SEARCH_DEPTH = 3  # root plus a couple of levels for monorepos
+
+
+def parse_manifests(root: str | Path) -> ManifestDeps:
+    root = Path(root)
+    result = ManifestDeps()
+    for pattern, ecosystem, parser in _MANIFEST_SPECS:
+        for depth in range(_MANIFEST_SEARCH_DEPTH):
+            glob = "/".join(["*"] * depth + [pattern]) if depth else pattern
+            for manifest in root.glob(glob):
+                if not manifest.is_file():
+                    continue
+                if any(part in ("node_modules", "vendor", ".venv", "venv") for part in manifest.parts):
+                    continue
+                try:
+                    text = manifest.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                deps = parser(text)
+                if deps:
+                    getattr(result, ecosystem).update(deps)
+                    result.sources.append(manifest.relative_to(root).as_posix())
+    return result

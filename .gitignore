@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# entrygraph build artifacts
+dist/
+build/
+*.egg-info/
+.entrygraph.db
+*.entrygraph.db

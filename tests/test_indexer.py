@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from entrygraph.db.models import Edge, Entrypoint, File, Repository, Symbol
+from entrygraph.kinds import Confidence, EdgeKind, SymbolKind
+from entrygraph.pipeline.scanner import index_repository
+
+FLASK_APP = Path(__file__).parent / "fixtures" / "python" / "flask_app"
+
+
+@pytest.fixture
+def indexed(tmp_engine):
+    stats = index_repository(FLASK_APP, tmp_engine)
+    return tmp_engine, stats
+
+
+def test_index_stats(indexed):
+    _, stats = indexed
+    assert stats.files_indexed >= 4  # routes, services, db, cli, __init__
+    assert stats.symbols > 10
+    assert stats.edges > 10
+
+
+def test_symbols_extracted(indexed):
+    engine, _ = indexed
+    with Session(engine) as s:
+        qnames = set(s.execute(select(Symbol.qname)).scalars())
+        assert "app.routes.get_user" in qnames
+        assert "app.routes.create_report" in qnames
+        assert "app.services.ReportRunner" in qnames
+        assert "app.services.ReportRunner.start" in qnames
+        assert "app.services.run_report" in qnames
+        assert "py:subprocess.run" in qnames  # external placeholder (aliased import)
+
+        runner = s.execute(select(Symbol).where(Symbol.qname == "app.services.ReportRunner")).scalar_one()
+        assert runner.kind is SymbolKind.CLASS
+        method = s.execute(
+            select(Symbol).where(Symbol.qname == "app.services.ReportRunner.start")
+        ).scalar_one()
+        assert method.kind is SymbolKind.METHOD
+        assert method.parent_id == runner.id
+
+
+def test_call_edges_resolved(indexed):
+    engine, _ = indexed
+    with Session(engine) as s:
+        def sym(qname):
+            return s.execute(select(Symbol.id).where(Symbol.qname == qname)).scalar_one()
+
+        def edge_between(src, dst):
+            return s.execute(
+                select(Edge).where(
+                    Edge.src_symbol_id == sym(src),
+                    Edge.dst_symbol_id == sym(dst),
+                    Edge.kind == EdgeKind.CALLS,
+                )
+            ).scalars().all()
+
+        # route handler -> service function (from-import, cross-file)
+        assert edge_between("app.routes.create_report", "app.services.run_report")
+        # service function -> method
+        assert edge_between("app.services.run_report", "app.services.ReportRunner.start")
+        # method -> method (self receiver), including the cycle
+        assert edge_between(
+            "app.services.ReportRunner.start", "app.services.ReportRunner.render_and_execute"
+        )
+        assert edge_between(
+            "app.services.ReportRunner.render_and_execute", "app.services.ReportRunner.start"
+        )
+        # method -> external sink via aliased import
+        sink_edges = edge_between("app.services.ReportRunner.render_and_execute", "py:subprocess.run")
+        assert sink_edges and sink_edges[0].confidence == Confidence.IMPORT
+
+
+def test_import_edges(indexed):
+    engine, _ = indexed
+    with Session(engine) as s:
+        routes_module = s.execute(select(Symbol.id).where(Symbol.qname == "app.routes")).scalar_one()
+        imports = s.execute(
+            select(Edge.dst_qname).where(
+                Edge.src_symbol_id == routes_module, Edge.kind == EdgeKind.IMPORTS
+            )
+        ).scalars().all()
+        assert "py:flask" in imports
+        assert "app.services" in imports
+
+
+def test_reindex_is_idempotent(indexed):
+    engine, first = indexed
+    second = index_repository(FLASK_APP, engine)
+    assert second.symbols == first.symbols
+    assert second.edges == first.edges
+    with Session(engine) as s:
+        # each full index run bumps the generation (drives cache invalidation)
+        assert s.execute(select(Repository)).scalars().one().index_generation == 2

@@ -1,0 +1,117 @@
+"""Go entrypoint rules: the package-main entrypoint, net/http handler
+registration, gin router routes, and cobra CLI commands."""
+
+from __future__ import annotations
+
+from entrygraph.detect.entrypoints.base import (
+    EntrypointRule,
+    first_string_arg,
+    register,
+)
+from entrygraph.extract.ir import EntrypointHint, FileExtraction
+from entrygraph.kinds import EntrypointKind, SymbolKind
+
+_GIN_METHODS = frozenset(
+    {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "Any", "Handle"}
+)
+_NETHTTP_REGISTER = frozenset({"HandleFunc", "Handle"})
+
+
+def _go_main(x: FileExtraction) -> list[EntrypointHint]:
+    hints = []
+    for symbol in x.symbols:
+        if (
+            symbol.kind is SymbolKind.FUNCTION
+            and symbol.name == "main"
+            and symbol.parent_qualified_name is None
+        ):
+            hints.append(
+                EntrypointHint(
+                    rule_id="go.core.main",
+                    kind=EntrypointKind.MAIN,
+                    handler_qualified_name=symbol.qualified_name,
+                    name=symbol.qualified_name,
+                    span=symbol.span,
+                )
+            )
+    return hints
+
+
+def _nethttp_routes(x: FileExtraction) -> list[EntrypointHint]:
+    hints = []
+    for ref in x.references:
+        if (
+            ref.kind == "call"
+            and ref.receiver_text == "http"
+            and ref.callee_name in _NETHTTP_REGISTER
+            and ref.arg_preview
+        ):
+            route = first_string_arg("(" + ref.arg_preview.lstrip("("))
+            if route is not None:
+                hints.append(
+                    EntrypointHint(
+                        rule_id="go.nethttp.route",
+                        kind=EntrypointKind.HTTP_ROUTE,
+                        handler_qualified_name=ref.caller_qualified_name,
+                        route=route,
+                        http_methods=["*"],
+                        framework="net/http",
+                        metadata={"registration": ref.arg_preview},
+                    )
+                )
+    return hints
+
+
+def _gin_routes(x: FileExtraction) -> list[EntrypointHint]:
+    hints = []
+    for ref in x.references:
+        if (
+            ref.kind == "call"
+            and ref.receiver_text is not None
+            and ref.callee_name in _GIN_METHODS
+            and ref.arg_preview
+        ):
+            route = first_string_arg("(" + ref.arg_preview.lstrip("("))
+            if route is not None and route.startswith("/"):
+                method = ref.callee_name.upper() if ref.callee_name in {
+                    "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"
+                } else "*"
+                hints.append(
+                    EntrypointHint(
+                        rule_id="go.gin.route",
+                        kind=EntrypointKind.HTTP_ROUTE,
+                        handler_qualified_name=ref.caller_qualified_name,
+                        route=route,
+                        http_methods=[method],
+                        framework="gin",
+                        metadata={"registration": ref.arg_preview},
+                    )
+                )
+    return hints
+
+
+def _cobra_commands(x: FileExtraction) -> list[EntrypointHint]:
+    hints = []
+    for ref in x.references:
+        if ref.kind == "composite" and ref.callee_text == "cobra.Command":
+            hints.append(
+                EntrypointHint(
+                    rule_id="go.cobra.command",
+                    kind=EntrypointKind.CLI_COMMAND,
+                    handler_qualified_name=ref.caller_qualified_name,
+                    name=first_string_arg("(" + (ref.arg_preview or "") + ")") or None,
+                    framework="cobra",
+                    span=ref.span,
+                )
+            )
+    return hints
+
+
+register(EntrypointRule("go.core.main", "go", None,
+                        EntrypointKind.MAIN, _go_main))
+register(EntrypointRule("go.nethttp.route", "go", "net/http",
+                        EntrypointKind.HTTP_ROUTE, _nethttp_routes))
+register(EntrypointRule("go.gin.route", "go", "gin",
+                        EntrypointKind.HTTP_ROUTE, _gin_routes))
+register(EntrypointRule("go.cobra.command", "go", "cobra",
+                        EntrypointKind.CLI_COMMAND, _cobra_commands))

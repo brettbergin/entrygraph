@@ -1,0 +1,4 @@
+flask>=3.0
+click==8.1.7
+# a comment
+requests

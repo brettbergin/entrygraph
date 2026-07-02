@@ -1,0 +1,80 @@
+# Built-in Python sink/source catalog.
+# Patterns are brace-globs matched against canonical callee qnames:
+#   resolved external calls    -> "py:subprocess.run"
+#   unresolved attribute calls -> "py:*.execute"
+#   unresolved bare calls      -> "py:eval"
+
+[[sink]]
+id = "py.command-exec.subprocess"
+category = "command_exec"
+severity = "high"
+callee = "py:subprocess.{run,call,check_call,check_output,Popen,getoutput,getstatusoutput}"
+description = "Subprocess execution"
+
+[[sink]]
+id = "py.command-exec.os"
+category = "command_exec"
+severity = "high"
+callee = "py:os.{system,popen,execv,execve,execvp,execl,execlp,spawnv,spawnl,startfile}"
+description = "OS command execution"
+
+[[sink]]
+id = "py.code-eval"
+category = "code_eval"
+severity = "critical"
+callee = "py:{eval,exec,compile,builtins.eval,builtins.exec}"
+description = "Dynamic code evaluation"
+
+[[sink]]
+id = "py.sql-execute"
+category = "sql"
+severity = "medium"
+callee = "py:*.{execute,executemany,executescript}"
+description = "SQL statement execution (receiver-agnostic)"
+
+[[sink]]
+id = "py.deserialization.pickle"
+category = "deserialization"
+severity = "high"
+callee = "py:{pickle,cPickle,marshal,shelve}.{load,loads,open}"
+description = "Unsafe deserialization"
+
+[[sink]]
+id = "py.deserialization.yaml"
+category = "deserialization"
+severity = "high"
+callee = "py:yaml.{load,unsafe_load,full_load}"
+description = "Unsafe YAML loading"
+
+[[sink]]
+id = "py.template-injection.flask"
+category = "template_injection"
+severity = "high"
+callee = "py:{flask.render_template_string,*.render_template_string}"
+description = "Template rendering from a string"
+
+[[sink]]
+id = "py.file-write"
+category = "file_write"
+severity = "low"
+callee = "py:{shutil.rmtree,shutil.move,os.remove,os.unlink,os.rmdir,*.write_text,*.write_bytes}"
+description = "Filesystem mutation"
+
+[[sink]]
+id = "py.network-out"
+category = "network_out"
+severity = "low"
+callee = "py:{requests.{get,post,put,delete,patch,request},urllib.request.urlopen,httpx.{get,post,request}}"
+description = "Outbound network request"
+
+[[source]]
+id = "py.flask.request"
+category = "http_input"
+callee = "py:flask.request*"
+description = "Flask request object"
+
+[[source]]
+id = "py.stdin"
+category = "user_input"
+callee = "py:{input,sys.stdin.*}"
+description = "Interactive input"

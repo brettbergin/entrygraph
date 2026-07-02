@@ -1,0 +1,51 @@
+# Built-in JavaScript / TypeScript sink catalog.
+# Canonical callees: import-expanded externals like "js:child_process.exec",
+# unresolved attribute calls like "js:*.query", bare calls like "js:eval".
+
+[[sink]]
+id = "js.command-exec.child_process"
+category = "command_exec"
+severity = "high"
+callee = "js:child_process.{exec,execSync,spawn,spawnSync,execFile,execFileSync}"
+description = "Child process execution"
+
+[[sink]]
+id = "js.command-exec.member"
+category = "command_exec"
+severity = "high"
+callee = "js:*.{exec,execSync,spawn,spawnSync}"
+description = "Child process execution (member call)"
+
+[[sink]]
+id = "js.code-eval"
+category = "code_eval"
+severity = "critical"
+callee = "js:{eval,Function}"
+description = "Dynamic code evaluation"
+
+[[sink]]
+id = "js.sql-query"
+category = "sql"
+severity = "medium"
+callee = "js:*.{query,execute,raw}"
+description = "SQL query execution (receiver-agnostic)"
+
+[[sink]]
+id = "js.file-write"
+category = "file_write"
+severity = "low"
+callee = "js:{fs.writeFile,fs.writeFileSync,fs.appendFile,fs.rm,fs.rmSync,fs.unlink}"
+description = "Filesystem mutation"
+
+[[sink]]
+id = "js.network-out"
+category = "network_out"
+severity = "low"
+callee = "js:{fetch,axios.get,axios.post,http.get,https.get}"
+description = "Outbound network request"
+
+[[source]]
+id = "js.express.req"
+category = "http_input"
+callee = "js:*.{body,query,params}"
+description = "Express request input"

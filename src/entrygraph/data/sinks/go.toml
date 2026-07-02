@@ -1,0 +1,46 @@
+# Built-in Go sink/source catalog.
+# Patterns are brace-globs matched against canonical callee qnames:
+#   import-expanded external calls -> "go:os/exec.Command"
+#   unresolved selector calls      -> "go:*.Query"
+#   unresolved bare calls          -> "go:panic"
+
+[[sink]]
+id = "go.command-exec.exec"
+category = "command_exec"
+severity = "high"
+callee = "go:os/exec.{Command,CommandContext}"
+description = "Subprocess execution via os/exec"
+
+[[sink]]
+id = "go.command-exec.os"
+category = "command_exec"
+severity = "high"
+callee = "go:os.StartProcess"
+description = "OS process spawn"
+
+[[sink]]
+id = "go.sql-query"
+category = "sql"
+severity = "medium"
+callee = "go:*.{Query,QueryRow,Exec,QueryContext,ExecContext,QueryRowContext}"
+description = "SQL statement execution (receiver-agnostic; database/sql)"
+
+[[sink]]
+id = "go.file-write"
+category = "file_write"
+severity = "low"
+callee = "go:os.{OpenFile,WriteFile,Create,Remove,RemoveAll}"
+description = "Filesystem mutation"
+
+[[sink]]
+id = "go.network-out"
+category = "network_out"
+severity = "low"
+callee = "go:net/http.{Get,Post,PostForm,Head}"
+description = "Outbound network request"
+
+[[source]]
+id = "go.nethttp.request"
+category = "http_input"
+callee = "go:*.{FormValue,PostFormValue,Query}"
+description = "HTTP request input"

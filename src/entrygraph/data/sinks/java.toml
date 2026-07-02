@@ -1,0 +1,37 @@
+# Built-in Java sink/source catalog.
+# Patterns are brace-globs matched against canonical callee qnames:
+#   resolved external calls    -> "java:com.example.Foo.bar"
+#   unresolved attribute calls -> "java:*.exec"     (unknown receiver)
+#   unresolved bare calls      -> "java:doThing"
+#
+# Runtime.getRuntime().exec(...) and new ProcessBuilder(...).start() both have
+# unknown receivers, so they land on "java:*.exec" / "java:*.start"-style
+# guesses; the receiver-agnostic patterns below catch them.
+
+[[sink]]
+id = "java.command-exec"
+category = "command_exec"
+severity = "high"
+callee = "java:{*.exec,Runtime.exec,ProcessBuilder,*.ProcessBuilder}"
+description = "OS command execution (Runtime.exec / ProcessBuilder)"
+
+[[sink]]
+id = "java.sql-execute"
+category = "sql"
+severity = "medium"
+callee = "java:*.{executeQuery,executeUpdate,execute,executeLargeUpdate,executeBatch}"
+description = "SQL statement execution (receiver-agnostic)"
+
+[[sink]]
+id = "java.deserialization"
+category = "deserialization"
+severity = "high"
+callee = "java:*.readObject"
+description = "Unsafe Java deserialization (ObjectInputStream.readObject)"
+
+[[sink]]
+id = "java.code-eval"
+category = "code_eval"
+severity = "critical"
+callee = "java:*.eval"
+description = "Dynamic code evaluation (ScriptEngine.eval)"

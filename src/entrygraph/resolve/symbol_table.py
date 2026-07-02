@@ -1,0 +1,48 @@
+"""In-memory symbol index for pass-2 reference resolution."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+
+from entrygraph.kinds import SymbolKind
+
+
+class SymbolTable:
+    def __init__(self) -> None:
+        self.by_fqn: dict[str, int] = {}
+        self.qname_of: dict[int, str] = {}
+        self.by_name: dict[str, list[int]] = defaultdict(list)
+        self.kinds: dict[int, SymbolKind] = {}
+        self.project_modules: set[str] = set()
+        self.module_symbol_ids: dict[str, int] = {}  # module_path -> module symbol id
+        self.class_bases: dict[str, list[str]] = {}  # class fqn -> raw base texts
+        # class fqn -> resolved parent FQNs (project or external), for the
+        # transitive ancestor walk and class-hierarchy analysis (see hierarchy.py).
+        self.class_parents: dict[str, list[str]] = {}
+        # re-export chains (barrel files): module -> {exported_name: (target_module, target_name)}
+        self.reexports: dict[str, dict[str, tuple[str, str]]] = {}
+        self.star_reexports: dict[str, list[str]] = {}  # module -> [source modules]
+
+    def add_symbol(self, symbol_id: int, qname: str, name: str, kind: SymbolKind) -> None:
+        self.by_fqn[qname] = symbol_id
+        self.qname_of[symbol_id] = qname
+        self.by_name[name].append(symbol_id)
+        self.kinds[symbol_id] = kind
+
+    def add_module(self, module_path: str, symbol_id: int) -> None:
+        self.project_modules.add(module_path)
+        self.module_symbol_ids[module_path] = symbol_id
+        self.add_symbol(symbol_id, module_path, module_path.rsplit(".", 1)[-1], SymbolKind.MODULE)
+
+    def is_project_path(self, dotted: str) -> bool:
+        """True if a dotted path starts with any project module (prefix match)."""
+        if dotted in self.project_modules:
+            return True
+        parts = dotted.split(".")
+        return any(".".join(parts[:i]) in self.project_modules for i in range(1, len(parts)))
+
+    def unique_by_name(self, name: str, kinds: tuple[SymbolKind, ...] | None = None) -> int | None:
+        candidates = self.by_name.get(name, [])
+        if kinds is not None:
+            candidates = [c for c in candidates if self.kinds.get(c) in kinds]
+        return candidates[0] if len(candidates) == 1 else None
