@@ -432,7 +432,9 @@ def _write_edges_and_entrypoints(
     entrypoint_rows: list[dict] = []
 
     for path, x, is_package in extractions:
-        resolver = FileResolver(x, module_ids[path], table, externals, is_package)
+        resolver = FileResolver(
+            x, module_ids[path], table, externals, is_package, sink_registry=sink_registry
+        )
         file_id = file_id_by_path[path]
         for edge in resolver.resolve():
             is_call = edge.kind is EdgeKind.CALLS
