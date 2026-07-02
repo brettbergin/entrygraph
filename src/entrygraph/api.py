@@ -251,7 +251,8 @@ class CodeGraph:
     def paths(
         self,
         *,
-        source: SourceSpec,
+        source: SourceSpec | None = None,
+        source_category: str | None = None,
         sink: SourceSpec | None = None,
         sink_category: str | None = None,
         max_depth: int = 25,
@@ -266,6 +267,11 @@ class CodeGraph:
     ) -> list[CallPath]:
         """Enumerate source->sink call paths, risk-ranked (highest first).
 
+        Sources are an explicit `source` spec (qname/glob/Symbol/Entrypoint) and/or
+        a `source_category` resolved from the taint-source catalog (e.g. every call
+        site of an `http_input`/`env` source). Sinks work the same via `sink` /
+        `sink_category`.
+
         By default only EXACT/IMPORT edges are traversed; `include_fuzzy` /
         `include_unresolved` lower the confidence floor (an explicit
         `min_confidence` int overrides the flags). `include_callbacks` also
@@ -276,7 +282,7 @@ class CodeGraph:
         floor, include_cha = _traversal_params(min_confidence, include_fuzzy, include_unresolved)
         kinds = (*edge_kinds, "callback") if include_callbacks else edge_kinds
         with self._session_factory() as session:
-            sources = self._spec_to_ids(session, source)
+            sources = self._source_ids(session, source, source_category)
             sinks = self._sink_ids(session, sink, sink_category)
             if not sources or not sinks:
                 return []
@@ -305,7 +311,8 @@ class CodeGraph:
     def reachable(
         self,
         *,
-        source: SourceSpec,
+        source: SourceSpec | None = None,
+        source_category: str | None = None,
         sink: SourceSpec | None = None,
         sink_category: str | None = None,
         max_depth: int = 25,
@@ -319,7 +326,7 @@ class CodeGraph:
         floor, include_cha = _traversal_params(min_confidence, include_fuzzy, include_unresolved)
         kinds = (*edge_kinds, "callback") if include_callbacks else edge_kinds
         with self._session_factory() as session:
-            sources = self._spec_to_ids(session, source)
+            sources = self._source_ids(session, source, source_category)
             sinks = self._sink_ids(session, sink, sink_category)
             if not sources or not sinks:
                 return False
@@ -361,6 +368,9 @@ class CodeGraph:
                 entrypoints=count(select(func.count(models.Entrypoint.id))),
                 sink_edges=count(
                     select(func.count(models.Edge.id)).where(models.Edge.sink_id.is_not(None))
+                ),
+                source_edges=count(
+                    select(func.count(models.Edge.id)).where(models.Edge.source_id.is_not(None))
                 ),
             )
 
@@ -426,6 +436,22 @@ class CodeGraph:
             return {spec.symbol.id}
         return q.symbol_ids_matching(session, str(spec))
 
+    def _source_ids(self, session: Session, source, source_category: str | None) -> set[int]:
+        """Taint origins: explicit `source` spec plus, for `source_category`, every
+        symbol that calls a matching catalog taint-source function."""
+        ids = self._spec_to_ids(session, source) if source is not None else set()
+        if source_category is not None:
+            registry = self._registry(session)
+            source_pattern_ids = registry.source_ids_for_category(source_category)
+            if source_pattern_ids:
+                rows = session.execute(
+                    select(models.Edge.src_symbol_id).where(
+                        models.Edge.source_id.in_(source_pattern_ids)
+                    )
+                ).scalars()
+                ids |= set(rows)
+        return ids
+
     def _sink_ids(self, session: Session, sink, sink_category: str | None) -> set[int]:
         ids = self._spec_to_ids(session, sink) if sink is not None else set()
         if sink_category is not None:
@@ -474,18 +500,26 @@ class CodeGraph:
 
     @staticmethod
     def _tainted_source_ids(session: Session, sources: set[int]) -> set[int]:
-        """Source symbol ids that are entrypoints with known user-controlled params."""
+        """Source symbol ids known to carry user-controlled data: entrypoints with
+        tainted params, plus call sites of catalog taint-source functions."""
         if not sources:
             return set()
+        tainted: set[int] = set()
         rows = session.execute(
             select(models.Entrypoint.symbol_id, models.Entrypoint.extra).where(
                 models.Entrypoint.symbol_id.in_(sources)
             )
         ).all()
-        tainted: set[int] = set()
         for sid, extra in rows:
             if extra and json.loads(extra).get("tainted_params"):
                 tainted.add(sid)
+        source_callers = session.execute(
+            select(models.Edge.src_symbol_id).where(
+                models.Edge.source_id.is_not(None),
+                models.Edge.src_symbol_id.in_(sources),
+            )
+        ).scalars()
+        tainted |= set(source_callers)
         return tainted
 
     @staticmethod

@@ -146,6 +146,9 @@ entrygraph paths --source '*' --sink-category command_exec
 
 - **CI gate**: exits `0` when a path is found, `1` when none —
   `entrygraph paths --source '*' --sink-category command_exec && echo reachable`.
+- **Catalog sources**: instead of a `--source` glob, use `--source-category` to
+  start from every call site of a registered taint source (e.g.
+  `--source-category http_input` / `env`) — `entrygraph paths --source-category http_input --sink-category sql`. Combine with `--source` to union both.
 - **Precision/recall dial**: by default only high-confidence edges are traversed.
   Widen with `--include-unresolved` (wildcard `py:*.execute` sinks + dynamic
   calls) or `--include-fuzzy` (speculative class-hierarchy edges); drop

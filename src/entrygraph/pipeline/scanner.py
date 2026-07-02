@@ -435,11 +435,9 @@ def _write_edges_and_entrypoints(
         resolver = FileResolver(x, module_ids[path], table, externals, is_package)
         file_id = file_id_by_path[path]
         for edge in resolver.resolve():
-            sink_id = (
-                sink_registry.match(edge.dst_qname, edge.arg_preview)
-                if edge.kind is EdgeKind.CALLS
-                else None
-            )
+            is_call = edge.kind is EdgeKind.CALLS
+            sink_id = sink_registry.match(edge.dst_qname, edge.arg_preview) if is_call else None
+            source_id = sink_registry.match_source(edge.dst_qname) if is_call else None
             edge_rows.append(
                 {
                     "id": alloc.take(Edge),
@@ -452,6 +450,7 @@ def _write_edges_and_entrypoints(
                     "confidence": int(edge.confidence),
                     "arg_preview": edge.arg_preview,
                     "sink_id": sink_id,
+                    "source_id": source_id,
                     "via": edge.via,
                 }
             )

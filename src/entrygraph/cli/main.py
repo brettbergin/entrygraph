@@ -261,9 +261,12 @@ def _path_tree(index: int, path) -> Tree:
 
 
 def cmd_paths(args) -> int:
+    if not args.source and not args.source_category:
+        raise EntrygraphError("provide --source and/or --source-category")
     with _open(args) as graph:
         paths = graph.paths(
             source=args.source,
+            source_category=args.source_category,
             sink=args.sink,
             sink_category=args.sink_category,
             max_depth=args.max_depth,
@@ -297,8 +300,11 @@ def cmd_paths(args) -> int:
             Panel("[yellow]No source → sink paths found.[/]", border_style="yellow", expand=False)
         )
         return 1
+    origin = (
+        args.source or (args.source_category and f"category:{args.source_category}") or "source"
+    )
     target = args.sink or (args.sink_category and f"category:{args.sink_category}") or "sink"
-    con.print(f"[bold]{len(paths)}[/] path(s)  [dim]{args.source} → {target}[/]\n")
+    con.print(f"[bold]{len(paths)}[/] path(s)  [dim]{origin} → {target}[/]\n")
     for i, path in enumerate(paths, 1):
         con.print(_path_tree(i, path))
     return 0
@@ -374,7 +380,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("paths", help="source -> sink call paths")
     add_db(p)
-    p.add_argument("--source", required=True, help="qname or glob")
+    p.add_argument("--source", help="qname or glob")
+    p.add_argument(
+        "--source-category",
+        dest="source_category",
+        help="named taint-source category (e.g. http_input, env)",
+    )
     p.add_argument("--sink", help="qname or glob (e.g. py:subprocess.run)")
     p.add_argument(
         "--sink-category", dest="sink_category", help="named sink category (e.g. command_exec, sql)"
