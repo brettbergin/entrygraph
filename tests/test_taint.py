@@ -79,6 +79,31 @@ def test_sanitizer_matching_and_category_lookup():
     assert reg.sanitizers_for_category("command_exec")[0].id == "san"
 
 
+def test_builtin_sanitizers_cover_all_languages():
+    # every supported language now ships sanitizers, matched against the exact
+    # canonical callee form its resolver produces.
+    reg = builtin_registry()
+    cases = [
+        ("go:path/filepath.Clean", "go.sanitize.filepath-clean"),
+        ("go:strconv.Atoi", "go.sanitize.strconv-sql"),
+        ("java:*.forHtml", "java.sanitize.html-encode"),
+        ("java:*.getFileName", "java.sanitize.path-normalize"),
+        ("rb:*.shellescape", "rb.sanitize.shellwords"),
+        ("rb:File.basename", "rb.sanitize.basename"),
+        ("cs:System.IO.Path.GetFileName", "cs.sanitize.path-getfilename"),
+        ("cs:*.AddWithValue", "cs.sanitize.sql-parameter"),
+        ("php:escapeshellarg", "php.sanitize.escapeshell"),
+        ("php:htmlspecialchars", "php.sanitize.htmlspecialchars"),
+        ("rs:shell_escape.escape", "rs.sanitize.shell-escape"),
+        ("rs:*.file_name", "rs.sanitize.path-filename"),
+    ]
+    for callee, sid in cases:
+        assert sid in {s.id for s in reg.match_sanitizers(callee)}, callee
+    # all eight languages represented
+    langs = {sid.split(".")[0] for sid in reg.sanitizers}
+    assert langs == {"py", "js", "go", "java", "rb", "cs", "php", "rs"}
+
+
 def test_match_source_and_source_category():
     reg = SinkRegistry(
         sinks=[],

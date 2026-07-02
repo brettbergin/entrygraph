@@ -90,3 +90,26 @@ id = "java.env"
 category = "env_input"
 callee = "java:System.getenv"
 description = "Environment variable input"
+
+# ---------------- sanitizers ----------------
+
+[[sanitizer]]
+id = "java.sanitize.html-encode"
+category = "template_injection"
+callee = "java:*.{forHtml,forHtmlContent,forJavaScript,escapeHtml4,escapeHtml,escapeXml11,htmlEscape}"
+effect = "reduces"
+description = "OWASP Encoder / commons-text / Spring HTML escaping"
+
+[[sanitizer]]
+id = "java.sanitize.path-normalize"
+category = "path_traversal"
+callee = "java:*.{getFileName,normalize,getName}"
+effect = "reduces"
+description = "Path normalization / filename extraction (Path.getFileName, FilenameUtils.getName)"
+
+[[sanitizer]]
+id = "java.sanitize.url-encode"
+category = "ssrf"
+callee = "java:*.{urlEncode,encode}"
+effect = "reduces"
+description = "URL encoding (URLEncoder.encode)"
