@@ -33,6 +33,18 @@ def test_language_gating():
     assert not any(d.name == "rails" for d in detected)
 
 
+def test_aws_lambda_js_detected_from_serverless_config():
+    # the javascript.aws-lambda.handler entrypoint rule is gated on this spec;
+    # regression: the spec was missing, so the rule could never fire.
+    detected = detect_frameworks(
+        ManifestDeps(javascript={"@types/aws-lambda"}),
+        import_signals=set(),
+        file_paths=["serverless.yml"],
+        languages_present={"javascript"},
+    )
+    assert any(d.name == "aws-lambda-js" for d in detected)
+
+
 def test_typescript_counts_for_js_frameworks():
     manifests = ManifestDeps(javascript={"express"})
     detected = detect_frameworks(

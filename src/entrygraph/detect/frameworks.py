@@ -105,6 +105,16 @@ FRAMEWORKS: list[FrameworkSpec] = [
     ),
     # JS/TS, Go, Java, Ruby specs land with their extractors (M8)
     FrameworkSpec(
+        "aws-lambda-js",
+        "javascript",
+        (
+            FrameworkSignal("file_presence", "serverless.y*ml", 0.5),
+            FrameworkSignal("file_presence", "template.y*ml", 0.3),
+            FrameworkSignal("manifest_dep", "@types/aws-lambda", 0.6),
+            FrameworkSignal("manifest_dep", "aws-lambda", 0.5),
+        ),
+    ),
+    FrameworkSpec(
         "express",
         "javascript",
         (

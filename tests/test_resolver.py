@@ -57,6 +57,38 @@ def test_import_based_project_resolution():
     assert call.confidence is Confidence.IMPORT
 
 
+def test_relative_import_from_package_init_resolves_submodule():
+    # `from .sub import thing` in the package's own __init__.py (module_path
+    # "app", is_package=True) must resolve to the project module "app.sub".
+    # Regression: is_package was hardcoded False, dropping "app" and yielding a
+    # bogus ".sub" external placeholder.
+    table = make_table()
+    table.add_module("app.sub", 20)
+    x = FileExtraction(
+        path="app/__init__.py",
+        language="python",
+        module_path="app",
+        parse_ok=True,
+        error_count=0,
+        imports=[
+            RawImport(
+                module="sub",
+                imported_name="thing",
+                alias="thing",
+                span=SPAN,
+                is_relative=True,
+                relative_level=1,
+            )
+        ],
+    )
+    externals = ExternalRegistry(iter(range(100, 200)).__next__)
+    resolver = FileResolver(x, 1, table, externals, is_package=True)
+    edges = resolver.resolve()
+    imp = next(e for e in edges if e.kind is EdgeKind.IMPORTS)
+    assert imp.dst_qname == "app.sub"
+    assert imp.dst_symbol_id == 20
+
+
 def test_external_import_creates_placeholder():
     table = make_table()
     imports = [RawImport(module="subprocess", imported_name=None, alias="sub", span=SPAN)]

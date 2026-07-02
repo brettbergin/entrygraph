@@ -17,6 +17,15 @@ def test_is_constant_args():
     assert not is_constant_args("(a, b, c, d, e, f, ...")
 
 
+def test_js_template_literal_interpolation_is_not_constant():
+    # a plain backtick template with no interpolation is a literal
+    assert is_constant_args("(`ls -la`)")
+    # `${...}` carries a variable into the sink -> the archetypal JS command
+    # injection must NOT be scored as constant/safe
+    assert not is_constant_args("(`ls ${req.query.dir}`)")
+    assert not is_constant_args("(`${userInput}`)")
+
+
 def test_score_path_ordering_by_severity():
     common = {
         "hop_confidences": [int(Confidence.EXACT)],

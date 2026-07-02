@@ -7,6 +7,7 @@ import re
 
 from entrygraph.detect.entrypoints.base import (
     EntrypointRule,
+    Matcher,
     first_string_arg,
     identifier_args,
     methods_kwarg,
@@ -157,20 +158,30 @@ def _django_urls(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
-def _click_commands(x: FileExtraction) -> list[EntrypointHint]:
-    hints = []
-    for symbol, decorator in _decorated(x):
-        if _CLICK_CMD.match(decorator):
-            hints.append(
-                EntrypointHint(
-                    rule_id="python.click.command",
-                    kind=EntrypointKind.CLI_COMMAND,
-                    handler_qualified_name=symbol.qualified_name,
-                    name=first_string_arg(decorator) or symbol.name,
-                    framework="click",
+def _click_like(framework: str, rule_id: str) -> Matcher:
+    """click and typer share decorator shape (`@app.command`); only the
+    reported framework/rule_id differ, so bind them per rule."""
+
+    def _match(x: FileExtraction) -> list[EntrypointHint]:
+        hints = []
+        for symbol, decorator in _decorated(x):
+            if _CLICK_CMD.match(decorator):
+                hints.append(
+                    EntrypointHint(
+                        rule_id=rule_id,
+                        kind=EntrypointKind.CLI_COMMAND,
+                        handler_qualified_name=symbol.qualified_name,
+                        name=first_string_arg(decorator) or symbol.name,
+                        framework=framework,
+                    )
                 )
-            )
-    return hints
+        return hints
+
+    return _match
+
+
+_click_commands = _click_like("click", "python.click.command")
+_typer_commands = _click_like("typer", "python.typer.command")
 
 
 def _celery_tasks(x: FileExtraction) -> list[EntrypointHint]:
@@ -363,7 +374,7 @@ register(
 )
 register(
     EntrypointRule(
-        "python.typer.command", "python", "typer", EntrypointKind.CLI_COMMAND, _click_commands
+        "python.typer.command", "python", "typer", EntrypointKind.CLI_COMMAND, _typer_commands
     )
 )
 register(
