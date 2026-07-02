@@ -18,30 +18,54 @@ def test_is_constant_args():
 
 
 def test_score_path_ordering_by_severity():
-    common = dict(hop_confidences=[int(Confidence.EXACT)], hop_vias=[None],
-                  sanitized_effect=None, constant_args=False, source_tainted=True)
+    common = {
+        "hop_confidences": [int(Confidence.EXACT)],
+        "hop_vias": [None],
+        "sanitized_effect": None,
+        "constant_args": False,
+        "source_tainted": True,
+    }
     critical = score_path(sink_severity="critical", **common)
     low = score_path(sink_severity="low", **common)
     assert critical > low
 
 
 def test_score_path_confidence_and_length_penalty():
-    high_conf = score_path(hop_confidences=[int(Confidence.EXACT)], hop_vias=[None],
-                           sink_severity="high", sanitized_effect=None,
-                           constant_args=False, source_tainted=True)
-    low_conf = score_path(hop_confidences=[int(Confidence.FUZZY)], hop_vias=[None],
-                          sink_severity="high", sanitized_effect=None,
-                          constant_args=False, source_tainted=True)
+    high_conf = score_path(
+        hop_confidences=[int(Confidence.EXACT)],
+        hop_vias=[None],
+        sink_severity="high",
+        sanitized_effect=None,
+        constant_args=False,
+        source_tainted=True,
+    )
+    low_conf = score_path(
+        hop_confidences=[int(Confidence.FUZZY)],
+        hop_vias=[None],
+        sink_severity="high",
+        sanitized_effect=None,
+        constant_args=False,
+        source_tainted=True,
+    )
     assert high_conf > low_conf
-    long_path = score_path(hop_confidences=[int(Confidence.EXACT)] * 6, hop_vias=[None] * 6,
-                           sink_severity="high", sanitized_effect=None,
-                           constant_args=False, source_tainted=True)
+    long_path = score_path(
+        hop_confidences=[int(Confidence.EXACT)] * 6,
+        hop_vias=[None] * 6,
+        sink_severity="high",
+        sanitized_effect=None,
+        constant_args=False,
+        source_tainted=True,
+    )
     assert long_path < high_conf  # length decay
 
 
 def test_score_path_sanitizer_and_constant_args():
-    base = dict(hop_confidences=[int(Confidence.EXACT)], hop_vias=[None],
-                sink_severity="critical", source_tainted=True)
+    base = {
+        "hop_confidences": [int(Confidence.EXACT)],
+        "hop_vias": [None],
+        "sink_severity": "critical",
+        "source_tainted": True,
+    }
     neutralized = score_path(sanitized_effect="neutralizes", constant_args=False, **base)
     reduced = score_path(sanitized_effect="reduces", constant_args=False, **base)
     clean = score_path(sanitized_effect=None, constant_args=False, **base)
@@ -52,10 +76,20 @@ def test_score_path_sanitizer_and_constant_args():
 
 
 def test_score_path_speculative_via_discount():
-    plain = score_path(hop_confidences=[int(Confidence.FUZZY)], hop_vias=[None],
-                       sink_severity="high", sanitized_effect=None,
-                       constant_args=False, source_tainted=True)
-    cha = score_path(hop_confidences=[int(Confidence.FUZZY)], hop_vias=["cha"],
-                     sink_severity="high", sanitized_effect=None,
-                     constant_args=False, source_tainted=True)
+    plain = score_path(
+        hop_confidences=[int(Confidence.FUZZY)],
+        hop_vias=[None],
+        sink_severity="high",
+        sanitized_effect=None,
+        constant_args=False,
+        source_tainted=True,
+    )
+    cha = score_path(
+        hop_confidences=[int(Confidence.FUZZY)],
+        hop_vias=["cha"],
+        sink_severity="high",
+        sanitized_effect=None,
+        constant_args=False,
+        source_tainted=True,
+    )
     assert cha < plain

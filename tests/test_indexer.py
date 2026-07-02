@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from entrygraph.db.models import Edge, Entrypoint, File, Repository, Symbol
+from entrygraph.db.models import Edge, Repository, Symbol
 from entrygraph.kinds import Confidence, EdgeKind, SymbolKind
 from entrygraph.pipeline.scanner import index_repository
 
@@ -37,7 +37,9 @@ def test_symbols_extracted(indexed):
         assert "app.services.run_report" in qnames
         assert "py:subprocess.run" in qnames  # external placeholder (aliased import)
 
-        runner = s.execute(select(Symbol).where(Symbol.qname == "app.services.ReportRunner")).scalar_one()
+        runner = s.execute(
+            select(Symbol).where(Symbol.qname == "app.services.ReportRunner")
+        ).scalar_one()
         assert runner.kind is SymbolKind.CLASS
         method = s.execute(
             select(Symbol).where(Symbol.qname == "app.services.ReportRunner.start")
@@ -49,17 +51,22 @@ def test_symbols_extracted(indexed):
 def test_call_edges_resolved(indexed):
     engine, _ = indexed
     with Session(engine) as s:
+
         def sym(qname):
             return s.execute(select(Symbol.id).where(Symbol.qname == qname)).scalar_one()
 
         def edge_between(src, dst):
-            return s.execute(
-                select(Edge).where(
-                    Edge.src_symbol_id == sym(src),
-                    Edge.dst_symbol_id == sym(dst),
-                    Edge.kind == EdgeKind.CALLS,
+            return (
+                s.execute(
+                    select(Edge).where(
+                        Edge.src_symbol_id == sym(src),
+                        Edge.dst_symbol_id == sym(dst),
+                        Edge.kind == EdgeKind.CALLS,
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
         # route handler -> service function (from-import, cross-file)
         assert edge_between("app.routes.create_report", "app.services.run_report")
@@ -73,19 +80,27 @@ def test_call_edges_resolved(indexed):
             "app.services.ReportRunner.render_and_execute", "app.services.ReportRunner.start"
         )
         # method -> external sink via aliased import
-        sink_edges = edge_between("app.services.ReportRunner.render_and_execute", "py:subprocess.run")
+        sink_edges = edge_between(
+            "app.services.ReportRunner.render_and_execute", "py:subprocess.run"
+        )
         assert sink_edges and sink_edges[0].confidence == Confidence.IMPORT
 
 
 def test_import_edges(indexed):
     engine, _ = indexed
     with Session(engine) as s:
-        routes_module = s.execute(select(Symbol.id).where(Symbol.qname == "app.routes")).scalar_one()
-        imports = s.execute(
-            select(Edge.dst_qname).where(
-                Edge.src_symbol_id == routes_module, Edge.kind == EdgeKind.IMPORTS
+        routes_module = s.execute(
+            select(Symbol.id).where(Symbol.qname == "app.routes")
+        ).scalar_one()
+        imports = (
+            s.execute(
+                select(Edge.dst_qname).where(
+                    Edge.src_symbol_id == routes_module, Edge.kind == EdgeKind.IMPORTS
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert "py:flask" in imports
         assert "app.services" in imports
 

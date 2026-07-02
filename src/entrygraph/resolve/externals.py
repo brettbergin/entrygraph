@@ -8,7 +8,7 @@ and no file. Created lazily from actual references, never pre-seeded.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from entrygraph.kinds import SymbolKind
 

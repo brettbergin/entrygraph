@@ -6,7 +6,6 @@ from functools import cache
 
 from entrygraph.extract.base import LanguageExtractor
 
-
 # (module, class) per language extractor. Imported defensively so a language
 # whose module isn't present yet is simply unavailable rather than fatal.
 _EXTRACTOR_SPECS = [

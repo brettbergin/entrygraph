@@ -21,23 +21,35 @@ def make_table() -> SymbolTable:
 
 
 def make_resolver(table, refs=(), imports=(), module="app.routes", module_id=2):
-    x = FileExtraction(path="app/routes.py", language="python", module_path=module,
-                       parse_ok=True, error_count=0,
-                       imports=list(imports), references=list(refs))
+    x = FileExtraction(
+        path="app/routes.py",
+        language="python",
+        module_path=module,
+        parse_ok=True,
+        error_count=0,
+        imports=list(imports),
+        references=list(refs),
+    )
     externals = ExternalRegistry(iter(range(100, 200)).__next__)
     return FileResolver(x, module_id, table, externals), externals
 
 
 def ref(callee_text, callee_name=None, receiver=None, caller=None, kind="call"):
-    return RawReference(kind=kind, callee_text=callee_text,
-                        callee_name=callee_name or callee_text.rsplit(".", 1)[-1],
-                        receiver_text=receiver, span=SPAN, caller_qualified_name=caller)
+    return RawReference(
+        kind=kind,
+        callee_text=callee_text,
+        callee_name=callee_name or callee_text.rsplit(".", 1)[-1],
+        receiver_text=receiver,
+        span=SPAN,
+        caller_qualified_name=caller,
+    )
 
 
 def test_import_based_project_resolution():
     table = make_table()
-    imports = [RawImport(module="app.services", imported_name="run_report",
-                         alias="run_report", span=SPAN)]
+    imports = [
+        RawImport(module="app.services", imported_name="run_report", alias="run_report", span=SPAN)
+    ]
     resolver, _ = make_resolver(table, [ref("run_report")], imports)
     edges = resolver.resolve()
     call = next(e for e in edges if e.kind is EdgeKind.CALLS)
@@ -73,7 +85,8 @@ def test_self_method_resolution():
     resolver, _ = make_resolver(
         table,
         [ref("self.render", receiver="self", caller="app.services.Runner.execute")],
-        module="app.services", module_id=1,
+        module="app.services",
+        module_id=1,
     )
     call = next(e for e in resolver.resolve() if e.kind is EdgeKind.CALLS)
     assert call.dst_symbol_id == 13
@@ -88,7 +101,8 @@ def test_self_method_via_base_class():
     resolver, _ = make_resolver(
         table,
         [ref("self.execute", receiver="self", caller="app.services.Special.go")],
-        module="app.services", module_id=1,
+        module="app.services",
+        module_id=1,
     )
     call = next(e for e in resolver.resolve() if e.kind is EdgeKind.CALLS)
     assert call.dst_symbol_id == 12  # Runner.execute via the ancestor walk
@@ -105,7 +119,8 @@ def test_self_method_via_transitive_base_chain():
     resolver, _ = make_resolver(
         table,
         [ref("self.execute", receiver="self", caller="app.services.Special.go")],
-        module="app.services", module_id=1,
+        module="app.services",
+        module_id=1,
     )
     call = next(e for e in resolver.resolve() if e.kind is EdgeKind.CALLS)
     assert call.dst_symbol_id == 12  # found two levels up
@@ -138,13 +153,22 @@ def test_relative_import_expansion():
     table.add_symbol(40, "app.utils", 40 and "utils", SymbolKind.MODULE)
     table.project_modules.add("app.utils")
     table.module_symbol_ids["app.utils"] = 40
-    imports = [RawImport(module="", imported_name="utils", alias="utils",
-                         span=SPAN, is_relative=True, relative_level=1)]
+    imports = [
+        RawImport(
+            module="",
+            imported_name="utils",
+            alias="utils",
+            span=SPAN,
+            is_relative=True,
+            relative_level=1,
+        )
+    ]
     resolver, _ = make_resolver(table, [], imports)
     assert resolver.import_map["utils"] == "app.utils"
 
 
-# ---------------- S2: hierarchy / wildcards / re-exports / callbacks / dynamic / CHA ----------------
+# ------------- S2: hierarchy / wildcards / re-exports / callbacks / dynamic / CHA -------------
+
 
 def test_wildcard_import_expansion():
     table = make_table()
@@ -162,8 +186,10 @@ def test_inheritance_cycle_terminates():
     table.class_parents["app.services.A"] = ["app.services.B"]
     table.class_parents["app.services.B"] = ["app.services.A"]  # cycle
     resolver, _ = make_resolver(
-        table, [ref("self.missing", receiver="self", caller="app.services.A.go")],
-        module="app.services", module_id=1,
+        table,
+        [ref("self.missing", receiver="self", caller="app.services.A.go")],
+        module="app.services",
+        module_id=1,
     )
     call = next(e for e in resolver.resolve() if e.kind is EdgeKind.CALLS)
     # no such method anywhere; walk must terminate and fall through to a guess
@@ -198,8 +224,10 @@ def test_dynamic_call_placeholder():
     table = make_table()
     resolver, _ = make_resolver(
         table,
-        [ref("getattr", callee_name="getattr", kind="dynamic_call"),
-         ref("registry[x]", callee_name="<dynamic>", kind="dynamic_call")],
+        [
+            ref("getattr", callee_name="getattr", kind="dynamic_call"),
+            ref("registry[x]", callee_name="<dynamic>", kind="dynamic_call"),
+        ],
     )
     edges = [e for e in resolver.resolve() if e.via == "dynamic"]
     qnames = {e.dst_qname for e in edges}

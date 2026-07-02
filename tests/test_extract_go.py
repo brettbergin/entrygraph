@@ -16,8 +16,9 @@ GIN_APP = Path(__file__).parent / "fixtures" / "go" / "gin_app"
 def extract(source: str, path: str = "cmd/server/main.go"):
     module_path, is_package = EXTRACTOR.module_path_for(path)
     src = source.encode()
-    ctx = FileContext(path=path, language="go", module_path=module_path,
-                      source=src, is_package=is_package)
+    ctx = FileContext(
+        path=path, language="go", module_path=module_path, source=src, is_package=is_package
+    )
     return EXTRACTOR.extract(parse("go", src), ctx)
 
 

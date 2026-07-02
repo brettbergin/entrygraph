@@ -8,8 +8,8 @@ frozen dataclasses; the Session never escapes (except via the explicit
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session
@@ -23,7 +23,7 @@ from entrygraph.errors import (
     RepositoryNotIndexedError,
     SymbolNotFoundError,
 )
-from entrygraph.graph.adjacency import AdjacencyCache, Hop
+from entrygraph.graph.adjacency import AdjacencyCache
 from entrygraph.graph.scoring import is_constant_args, score_path
 from entrygraph.kinds import Confidence
 from entrygraph.results import (
@@ -42,7 +42,7 @@ from entrygraph.results import (
 
 DEFAULT_DB_NAME = ".entrygraph.db"
 
-SourceSpec = "str | Symbol | Entrypoint | list[str | Symbol | Entrypoint]"
+type SourceSpec = str | Symbol | Entrypoint | list[str | Symbol | Entrypoint]
 
 
 def _traversal_params(
@@ -76,11 +76,12 @@ class CodeGraph:
         self._engine = engine
         self._session_factory = make_session_factory(engine)
         self._adjacency: dict[tuple[frozenset[str], int], AdjacencyCache] = {}
+        self._last_index_stats: IndexStats | None = None
 
     # ---------------- construction ----------------
 
     @classmethod
-    def index(cls, root: str | Path, db: str | Path | None = None) -> "CodeGraph":
+    def index(cls, root: str | Path, db: str | Path | None = None) -> CodeGraph:
         """Index (or fully re-index) a repository and return an open graph."""
         from entrygraph.pipeline.scanner import index_repository
 
@@ -92,7 +93,7 @@ class CodeGraph:
         return graph
 
     @classmethod
-    def open(cls, db: str | Path) -> "CodeGraph":
+    def open(cls, db: str | Path) -> CodeGraph:
         db_path = Path(db)
         if not db_path.exists():
             raise DatabaseNotFoundError(f"no index database at {db_path}")
@@ -103,7 +104,7 @@ class CodeGraph:
     def close(self) -> None:
         self._engine.dispose()
 
-    def __enter__(self) -> "CodeGraph":
+    def __enter__(self) -> CodeGraph:
         return self
 
     def __exit__(self, *exc) -> None:
@@ -124,8 +125,14 @@ class CodeGraph:
     ) -> list[Symbol]:
         with self._session_factory() as session:
             return q.select_symbols(
-                session, kind=kind, name=name, qname=qname, file=file,
-                include_external=include_external, limit=limit, offset=offset,
+                session,
+                kind=kind,
+                name=name,
+                qname=qname,
+                file=file,
+                include_external=include_external,
+                limit=limit,
+                offset=offset,
             )
 
     def symbol(self, qname: str) -> Symbol:
@@ -152,9 +159,13 @@ class CodeGraph:
 
     def detect(self) -> DetectionReport:
         with self._session_factory() as session:
-            rows = session.execute(
-                select(models.Detection).order_by(models.Detection.confidence.desc())
-            ).scalars().all()
+            rows = (
+                session.execute(
+                    select(models.Detection).order_by(models.Detection.confidence.desc())
+                )
+                .scalars()
+                .all()
+            )
         languages = []
         frameworks = []
         for row in rows:
@@ -177,7 +188,7 @@ class CodeGraph:
                         evidence=tuple(evidence.get("signals", [])),
                     )
                 )
-        languages.sort(key=lambda l: l.byte_count, reverse=True)
+        languages.sort(key=lambda lang: lang.byte_count, reverse=True)
         return DetectionReport(languages=tuple(languages), frameworks=tuple(frameworks))
 
     # ---------------- entrypoints ----------------
@@ -197,23 +208,27 @@ class CodeGraph:
 
     # ---------------- traversal ----------------
 
-    def callers(self, target: "SourceSpec", *, depth: int = 1,
-                edge_kinds: tuple[str, ...] = ("calls",)) -> list[Symbol]:
+    def callers(
+        self, target: SourceSpec, *, depth: int = 1, edge_kinds: tuple[str, ...] = ("calls",)
+    ) -> list[Symbol]:
         return self._neighbors(target, depth, "in", edge_kinds)
 
-    def callees(self, target: "SourceSpec", *, depth: int = 1,
-                edge_kinds: tuple[str, ...] = ("calls",)) -> list[Symbol]:
+    def callees(
+        self, target: SourceSpec, *, depth: int = 1, edge_kinds: tuple[str, ...] = ("calls",)
+    ) -> list[Symbol]:
         return self._neighbors(target, depth, "out", edge_kinds)
 
-    def references(self, target: "SourceSpec") -> list[Edge]:
+    def references(self, target: SourceSpec) -> list[Edge]:
         """All inbound edges (any kind) to the matching symbols."""
         with self._session_factory() as session:
             ids = self._spec_to_ids(session, target)
             if not ids:
                 return []
-            rows = session.execute(
-                select(models.Edge).where(models.Edge.dst_symbol_id.in_(ids))
-            ).scalars().all()
+            rows = (
+                session.execute(select(models.Edge).where(models.Edge.dst_symbol_id.in_(ids)))
+                .scalars()
+                .all()
+            )
             src_map = q.symbols_by_ids(session, {r.src_symbol_id for r in rows})
             return [
                 Edge(
@@ -236,8 +251,8 @@ class CodeGraph:
     def paths(
         self,
         *,
-        source: "SourceSpec",
-        sink: "SourceSpec | None" = None,
+        source: SourceSpec,
+        sink: SourceSpec | None = None,
         sink_category: str | None = None,
         max_depth: int = 25,
         max_paths: int = 10,
@@ -282,15 +297,16 @@ class CodeGraph:
                 for path in raw_paths
             ]
         results = [cp for cp in built if not (prune_sanitized and _fully_sanitized(cp))]
-        results.sort(key=lambda p: (-(p.risk_score or 0.0), len(p.symbols),
-                                    [s.id for s in p.symbols]))
+        results.sort(
+            key=lambda p: (-(p.risk_score or 0.0), len(p.symbols), [s.id for s in p.symbols])
+        )
         return results
 
     def reachable(
         self,
         *,
-        source: "SourceSpec",
-        sink: "SourceSpec | None" = None,
+        source: SourceSpec,
+        sink: SourceSpec | None = None,
         sink_category: str | None = None,
         max_depth: int = 25,
         edge_kinds: tuple[str, ...] = ("calls",),
@@ -320,8 +336,7 @@ class CodeGraph:
             repo = session.execute(select(models.Repository)).scalars().first()
         if repo is None:
             raise RepositoryNotIndexedError("database has no indexed repository")
-        stats = index_repository(repo.root_path, self._engine, incremental=True,
-                                 paranoid=paranoid)
+        stats = index_repository(repo.root_path, self._engine, incremental=True, paranoid=paranoid)
         self._adjacency.clear()
         return stats
 
@@ -341,9 +356,7 @@ class CodeGraph:
                 symbols=count(select(func.count(models.Symbol.id))),
                 edges=count(select(func.count(models.Edge.id))),
                 resolved_edges=count(
-                    select(func.count(models.Edge.id)).where(
-                        models.Edge.dst_symbol_id.is_not(None)
-                    )
+                    select(func.count(models.Edge.id)).where(models.Edge.dst_symbol_id.is_not(None))
                 ),
                 entrypoints=count(select(func.count(models.Entrypoint.id))),
                 sink_edges=count(
@@ -366,8 +379,14 @@ class CodeGraph:
         gen = session.execute(select(models.Repository.index_generation)).scalar()
         return gen or 0
 
-    def _traverser(self, session: Session, engine: str, edge_kinds: tuple[str, ...],
-                min_confidence: int, include_cha: bool = True):
+    def _traverser(
+        self,
+        session: Session,
+        engine: str,
+        edge_kinds: tuple[str, ...],
+        min_confidence: int,
+        include_cha: bool = True,
+    ):
         if engine == "sql":
             from entrygraph.graph.cte import CteEngine
 
@@ -376,8 +395,13 @@ class CodeGraph:
             raise ValueError(f"unknown reachability engine {engine!r} (use 'memory' or 'sql')")
         return self._cache(session, edge_kinds, min_confidence, include_cha)
 
-    def _cache(self, session: Session, edge_kinds: tuple[str, ...],
-               min_confidence: int, include_cha: bool = True) -> AdjacencyCache:
+    def _cache(
+        self,
+        session: Session,
+        edge_kinds: tuple[str, ...],
+        min_confidence: int,
+        include_cha: bool = True,
+    ) -> AdjacencyCache:
         kinds = frozenset(edge_kinds)
         generation = self._generation(session)
         key = (kinds | {f"minconf:{min_confidence}", f"cha:{include_cha}"}, generation)
@@ -417,11 +441,12 @@ class CodeGraph:
                         models.Edge.dst_symbol_id.is_not(None),
                     )
                 ).scalars()
-                ids |= set(rows)
+                ids |= {r for r in rows if r is not None}
         return ids
 
-    def _neighbors(self, target, depth: int, direction: str,
-                   edge_kinds: tuple[str, ...]) -> list[Symbol]:
+    def _neighbors(
+        self, target, depth: int, direction: str, edge_kinds: tuple[str, ...]
+    ) -> list[Symbol]:
         with self._session_factory() as session:
             ids = self._spec_to_ids(session, target)
             if not ids:
@@ -438,13 +463,13 @@ class CodeGraph:
         return registry_for_repo(repo.root_path if repo else None)
 
     @staticmethod
-    def _edge_rows(session: Session, raw_paths) -> dict[int, "models.Edge"]:
+    def _edge_rows(session: Session, raw_paths) -> dict[int, models.Edge]:
         edge_ids = {hop.edge_id for path in raw_paths for _, hop in path if hop and hop.edge_id}
         if not edge_ids:
             return {}
-        rows = session.execute(
-            select(models.Edge).where(models.Edge.id.in_(edge_ids))
-        ).scalars().all()
+        rows = (
+            session.execute(select(models.Edge).where(models.Edge.id.in_(edge_ids))).scalars().all()
+        )
         return {r.id: r for r in rows}
 
     @staticmethod
@@ -522,15 +547,16 @@ class CodeGraph:
 
         risk = score_path(
             hop_confidences=[h.confidence for h in hops],
-            hop_vias=[(rows[i].via if rows[i] else h.via) for i, h in enumerate(hops)],
+            hop_vias=[(row.via if row is not None else h.via) for row, h in zip(rows, hops)],
             sink_severity=registry.severity_of(sink_id),
             sanitized_effect=sanitized_effect,
             constant_args=terminal_const,
             source_tainted=path[0][0] in tainted_sources,
         )
         may_continue = any(node in excluded_nodes for node, _ in path)
-        return CallPath(symbols=symbols, edges=tuple(path_edges),
-                        risk_score=risk, may_continue=may_continue)
+        return CallPath(
+            symbols=symbols, edges=tuple(path_edges), risk_score=risk, may_continue=may_continue
+        )
 
     @staticmethod
     def _path_sanitizers(symbols, rows, registry, sink_category):

@@ -22,8 +22,9 @@ SPRING_APP = Path(__file__).parent / "fixtures" / "java" / "spring_app"
 def extract(source: str, path: str = "src/main/java/com/example/Mod.java"):
     module_path, is_package = EXTRACTOR.module_path_for(path)
     src = source.encode()
-    ctx = FileContext(path=path, language="java", module_path=module_path,
-                      source=src, is_package=is_package)
+    ctx = FileContext(
+        path=path, language="java", module_path=module_path, source=src, is_package=is_package
+    )
     return EXTRACTOR.extract(parse("java", src), ctx)
 
 
@@ -31,12 +32,14 @@ def extract(source: str, path: str = "src/main/java/com/example/Mod.java"):
 
 
 def test_module_path_for():
-    assert EXTRACTOR.module_path_for(
-        "src/main/java/com/example/UserController.java"
-    ) == ("com.example.UserController", False)
-    assert EXTRACTOR.module_path_for(
-        "src/test/java/com/example/FooTest.java"
-    ) == ("com.example.FooTest", False)
+    assert EXTRACTOR.module_path_for("src/main/java/com/example/UserController.java") == (
+        "com.example.UserController",
+        False,
+    )
+    assert EXTRACTOR.module_path_for("src/test/java/com/example/FooTest.java") == (
+        "com.example.FooTest",
+        False,
+    )
     assert EXTRACTOR.module_path_for("com/example/Bar.java") == ("com.example.Bar", False)
     assert EXTRACTOR.module_path_for("Main.java") == ("Main", False)
 
@@ -125,8 +128,9 @@ public class Ctrl {
     method = next(s for s in x.symbols if s.qualified_name == "com.example.Ctrl.list")
     assert method.decorators == ['@GetMapping("/users")']
 
-    decorator_refs = {(r.callee_text, r.caller_qualified_name)
-                      for r in x.references if r.kind == "decorator"}
+    decorator_refs = {
+        (r.callee_text, r.caller_qualified_name) for r in x.references if r.kind == "decorator"
+    }
     assert ("RestController", "com.example.Ctrl") in decorator_refs
     assert ("GetMapping", "com.example.Ctrl.list") in decorator_refs
 
@@ -155,7 +159,10 @@ import java.util.*;
     assert ("java.util", "*", "*") in imports
 
     # framework signals carry the full dotted import so prefix globs fire
-    assert ("import", "org.springframework.web.bind.annotation.RestController") in x.framework_signals
+    assert (
+        "import",
+        "org.springframework.web.bind.annotation.RestController",
+    ) in x.framework_signals
 
 
 # ---------------- unit: calls / receivers ----------------
@@ -246,7 +253,8 @@ def test_spring_boot_detected(indexed):
     engine, _ = indexed
     with Session(engine) as s:
         frameworks = {
-            row.name for row in s.execute(
+            row.name
+            for row in s.execute(
                 select(Detection).where(Detection.category == "framework")
             ).scalars()
         }
@@ -269,18 +277,24 @@ def test_spring_routes_are_http_entrypoints(indexed):
         assert by_route["/reports"].http_method == "POST"
 
         # the language-core main entrypoint is also detected
-        mains = s.execute(
-            select(Entrypoint).where(Entrypoint.kind == EntrypointKind.MAIN)
-        ).scalars().all()
+        mains = (
+            s.execute(select(Entrypoint).where(Entrypoint.kind == EntrypointKind.MAIN))
+            .scalars()
+            .all()
+        )
         assert mains
 
 
 def test_exec_call_is_tagged_as_sink(indexed):
     engine, _ = indexed
     with Session(engine) as s:
-        exec_edges = s.execute(
-            select(Edge).where(Edge.dst_qname == "java:*.exec", Edge.kind == EdgeKind.CALLS)
-        ).scalars().all()
+        exec_edges = (
+            s.execute(
+                select(Edge).where(Edge.dst_qname == "java:*.exec", Edge.kind == EdgeKind.CALLS)
+            )
+            .scalars()
+            .all()
+        )
         assert exec_edges
         assert all(e.sink_id == "java.command-exec" for e in exec_edges)
 

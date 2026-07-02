@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from entrygraph import CodeGraph
-from entrygraph.detect.taint import SinkRegistry, SinkPattern, expand_braces
+from entrygraph.detect.taint import SinkPattern, SinkRegistry, expand_braces
 
 FLASK_APP = Path(__file__).parent / "fixtures" / "python" / "flask_app"
 

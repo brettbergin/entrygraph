@@ -37,16 +37,19 @@ class JavaExtractor:
         path = repo_relative_path
         for root in _JAVA_ROOTS:
             if path.startswith(root):
-                path = path[len(root):]
+                path = path[len(root) :]
                 break
         path = path.removesuffix(".java")
         return ".".join(p for p in path.split("/") if p) or "_root", False
 
-    def extract(self, tree: "Tree", ctx: FileContext) -> FileExtraction:
+    def extract(self, tree: Tree, ctx: FileContext) -> FileExtraction:
         root = tree.root_node
         out = FileExtraction(
-            path=ctx.path, language=ctx.language, module_path=ctx.module_path,
-            parse_ok=not root.has_error, error_count=1 if root.has_error else 0,
+            path=ctx.path,
+            language=ctx.language,
+            module_path=ctx.module_path,
+            parse_ok=not root.has_error,
+            error_count=1 if root.has_error else 0,
         )
         self._definitions(root, ctx, out)
         self._imports(root, ctx, out)
@@ -55,7 +58,7 @@ class JavaExtractor:
 
     # ---------------- definitions ----------------
 
-    def _definitions(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _definitions(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("java", "definitions"), root)
 
         for node in caps.get("def.class", []):
@@ -73,8 +76,11 @@ class JavaExtractor:
             annotations = self._annotations(node)
             out.symbols.append(
                 RawSymbol(
-                    kind=SymbolKind.METHOD, name=name, qualified_name=qname,
-                    span=span_of(node), parent_qualified_name=parent_q,
+                    kind=SymbolKind.METHOD,
+                    name=name,
+                    qualified_name=qname,
+                    span=span_of(node),
+                    parent_qualified_name=parent_q,
                     signature=self._signature(node),
                     decorators=annotations,
                     modifiers=modifiers,
@@ -100,7 +106,9 @@ class JavaExtractor:
             out.symbols.append(
                 RawSymbol(
                     kind=SymbolKind.CONSTANT if is_const else SymbolKind.FIELD,
-                    name=name, qualified_name=qname, span=span_of(node),
+                    name=name,
+                    qualified_name=qname,
+                    span=span_of(node),
                     parent_qualified_name=parent_q,
                     signature=truncate(node_text(node)),
                     decorators=self._annotations(node),
@@ -109,7 +117,9 @@ class JavaExtractor:
                 )
             )
 
-    def _add_type(self, node: "Node", ctx: FileContext, out: FileExtraction, kind: SymbolKind) -> None:
+    def _add_type(
+        self, node: Node, ctx: FileContext, out: FileExtraction, kind: SymbolKind
+    ) -> None:
         name_node = node.child_by_field_name("name")
         if name_node is None:
             return
@@ -119,31 +129,45 @@ class JavaExtractor:
         modifiers = self._modifiers(node)
         out.symbols.append(
             RawSymbol(
-                kind=kind, name=name, qualified_name=qname, span=span_of(node),
-                parent_qualified_name=parent_q, signature=self._signature(node),
-                decorators=self._annotations(node), bases=[*extends, *interfaces],
-                modifiers=modifiers, is_exported="public" in modifiers,
+                kind=kind,
+                name=name,
+                qualified_name=qname,
+                span=span_of(node),
+                parent_qualified_name=parent_q,
+                signature=self._signature(node),
+                decorators=self._annotations(node),
+                bases=[*extends, *interfaces],
+                modifiers=modifiers,
+                is_exported="public" in modifiers,
             )
         )
         for base in extends:
             out.references.append(
                 RawReference(
-                    kind="inherit", callee_text=base, callee_name=base.rsplit(".", 1)[-1],
-                    receiver_text=None, span=span_of(node), caller_qualified_name=qname,
+                    kind="inherit",
+                    callee_text=base,
+                    callee_name=base.rsplit(".", 1)[-1],
+                    receiver_text=None,
+                    span=span_of(node),
+                    caller_qualified_name=qname,
                 )
             )
         for iface in interfaces:
             out.references.append(
                 RawReference(
-                    kind="implement", callee_text=iface, callee_name=iface.rsplit(".", 1)[-1],
-                    receiver_text=None, span=span_of(node), caller_qualified_name=qname,
+                    kind="implement",
+                    callee_text=iface,
+                    callee_name=iface.rsplit(".", 1)[-1],
+                    receiver_text=None,
+                    span=span_of(node),
+                    caller_qualified_name=qname,
                 )
             )
         self._emit_annotation_refs(node, qname, out)
 
     # ---------------- imports ----------------
 
-    def _imports(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _imports(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("java", "imports"), root)
         for node in caps.get("import", []):
             scoped = next((c for c in node.named_children if c.type == "scoped_identifier"), None)
@@ -166,7 +190,7 @@ class JavaExtractor:
 
     # ---------------- calls / annotations ----------------
 
-    def _calls(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _calls(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("java", "calls"), root)
 
         for node in caps.get("call", []):
@@ -184,8 +208,11 @@ class JavaExtractor:
             args = node.child_by_field_name("arguments")
             out.references.append(
                 RawReference(
-                    kind="call", callee_text=callee_text, callee_name=callee_name,
-                    receiver_text=receiver, span=span_of(node),
+                    kind="call",
+                    callee_text=callee_text,
+                    callee_name=callee_name,
+                    receiver_text=receiver,
+                    span=span_of(node),
                     caller_qualified_name=self._caller(node, ctx),
                     arg_count=len(args.named_children) if args is not None else 0,
                     arg_preview=truncate(node_text(args)) if args is not None else None,
@@ -201,8 +228,11 @@ class JavaExtractor:
             args = node.child_by_field_name("arguments")
             out.references.append(
                 RawReference(
-                    kind="call", callee_text=type_text, callee_name=callee_name,
-                    receiver_text=None, span=span_of(node),
+                    kind="call",
+                    callee_text=type_text,
+                    callee_name=callee_name,
+                    receiver_text=None,
+                    span=span_of(node),
                     caller_qualified_name=self._caller(node, ctx),
                     arg_count=len(args.named_children) if args is not None else 0,
                     arg_preview=truncate(node_text(args)) if args is not None else None,
@@ -211,7 +241,7 @@ class JavaExtractor:
 
     # ---------------- helpers ----------------
 
-    def _scope_chain(self, node: "Node", ctx: FileContext) -> list[str]:
+    def _scope_chain(self, node: Node, ctx: FileContext) -> list[str]:
         parts, current = [], node.parent
         while current is not None:
             if current.type in _SCOPE_TYPES:
@@ -228,7 +258,7 @@ class JavaExtractor:
             parts = parts[1:]
         return parts
 
-    def _nearest_scope(self, node: "Node") -> str | None:
+    def _nearest_scope(self, node: Node) -> str | None:
         current = node.parent
         while current is not None:
             if current.type in _SCOPE_TYPES:
@@ -236,7 +266,7 @@ class JavaExtractor:
             current = current.parent
         return None
 
-    def _qualify(self, node: "Node", name: str, ctx: FileContext) -> tuple[str, str | None]:
+    def _qualify(self, node: Node, name: str, ctx: FileContext) -> tuple[str, str | None]:
         chain = self._scope_chain(node, ctx)
         top = ctx.module_path.rsplit(".", 1)[-1]
         # The top-level type named after the file collapses onto the module path
@@ -249,7 +279,7 @@ class JavaExtractor:
         parent_q = ".".join([ctx.module_path, *chain]) if (chain or enclosed_in_top) else None
         return ".".join([ctx.module_path, *chain, name]), parent_q
 
-    def _enclosed_in_top_type(self, node: "Node", top: str) -> bool:
+    def _enclosed_in_top_type(self, node: Node, top: str) -> bool:
         current = node.parent
         while current is not None:
             if current.type in _SCOPE_TYPES:
@@ -258,7 +288,7 @@ class JavaExtractor:
             current = current.parent
         return False
 
-    def _caller(self, node: "Node", ctx: FileContext) -> str | None:
+    def _caller(self, node: Node, ctx: FileContext) -> str | None:
         current = node.parent
         while current is not None:
             if current.type == "method_declaration":
@@ -268,28 +298,29 @@ class JavaExtractor:
             current = current.parent
         return None
 
-    def _signature(self, node: "Node") -> str:
+    def _signature(self, node: Node) -> str:
         return truncate(node_text(node).split("{", 1)[0].strip(), 120)
 
-    def _modifiers_node(self, node: "Node") -> "Node | None":
+    def _modifiers_node(self, node: Node) -> Node | None:
         return next((c for c in node.named_children if c.type == "modifiers"), None)
 
-    def _modifiers(self, node: "Node") -> list[str]:
+    def _modifiers(self, node: Node) -> list[str]:
         mods = self._modifiers_node(node)
         if mods is None:
             return []
         return [
-            node_text(c) for c in mods.children
+            node_text(c)
+            for c in mods.children
             if c.type not in _ANNOTATION_TYPES and node_text(c).strip()
         ]
 
-    def _annotations(self, node: "Node") -> list[str]:
+    def _annotations(self, node: Node) -> list[str]:
         mods = self._modifiers_node(node)
         if mods is None:
             return []
         return [node_text(c) for c in mods.children if c.type in _ANNOTATION_TYPES]
 
-    def _emit_annotation_refs(self, node: "Node", owner_qname: str, out: FileExtraction) -> None:
+    def _emit_annotation_refs(self, node: Node, owner_qname: str, out: FileExtraction) -> None:
         mods = self._modifiers_node(node)
         if mods is None:
             return
@@ -302,14 +333,16 @@ class JavaExtractor:
             callee_text = node_text(name_node)
             out.references.append(
                 RawReference(
-                    kind="decorator", callee_text=callee_text,
+                    kind="decorator",
+                    callee_text=callee_text,
                     callee_name=callee_text.rsplit(".", 1)[-1],
                     receiver_text=callee_text.rsplit(".", 1)[0] if "." in callee_text else None,
-                    span=span_of(child), caller_qualified_name=owner_qname,
+                    span=span_of(child),
+                    caller_qualified_name=owner_qname,
                 )
             )
 
-    def _supertypes(self, node: "Node") -> tuple[list[str], list[str]]:
+    def _supertypes(self, node: Node) -> tuple[list[str], list[str]]:
         """Return (extends supertypes, implements interfaces)."""
         extends: list[str] = []
         superclass = node.child_by_field_name("superclass")

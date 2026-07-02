@@ -16,12 +16,14 @@ FIXTURE = Path(__file__).parent / "fixtures" / "php" / "laravel_app"
 def extract(source: str, path: str = "app/Http/Controllers/Mod.php"):
     module_path, is_package = EXTRACTOR.module_path_for(path)
     src = source.encode()
-    ctx = FileContext(path=path, language="php", module_path=module_path,
-                      source=src, is_package=is_package)
+    ctx = FileContext(
+        path=path, language="php", module_path=module_path, source=src, is_package=is_package
+    )
     return EXTRACTOR.extract(parse("php", src), ctx)
 
 
 # ---------------- unit: definitions & namespaces ----------------
+
 
 def test_namespace_scoped_qnames_and_separator_normalized():
     x = extract(
@@ -55,12 +57,7 @@ def test_namespaceless_module_path_falls_back_to_directory():
 
 
 def test_use_aliases_normalized():
-    x = extract(
-        "<?php\n"
-        "namespace App;\n"
-        "use App\\Services\\Runner;\n"
-        "use App\\Foo as Bar;\n"
-    )
+    x = extract("<?php\nnamespace App;\nuse App\\Services\\Runner;\nuse App\\Foo as Bar;\n")
     imports = {(i.module, i.imported_name, i.alias) for i in x.imports}
     assert ("App.Services.Runner", "Runner", "Runner") in imports
     assert ("App.Foo", "Foo", "Bar") in imports
@@ -68,11 +65,7 @@ def test_use_aliases_normalized():
 
 
 def test_inheritance_and_interfaces():
-    x = extract(
-        "<?php\n"
-        "namespace App;\n"
-        "class C extends Base implements Handler {}\n"
-    )
+    x = extract("<?php\nnamespace App;\nclass C extends Base implements Handler {}\n")
     cls = next(s for s in x.symbols if s.name == "C")
     assert cls.bases == ["Base", "Handler"]
     inherits = [r for r in x.references if r.kind == "inherit"]
@@ -82,6 +75,7 @@ def test_inheritance_and_interfaces():
 
 
 # ---------------- unit: calls & receivers ----------------
+
 
 def test_scoped_vs_member_receivers():
     x = extract(
@@ -112,12 +106,7 @@ def test_scoped_vs_member_receivers():
 
 def test_php8_attributes_are_decorators():
     x = extract(
-        "<?php\n"
-        "namespace App;\n"
-        "class C {\n"
-        "    #[Route('/x')]\n"
-        "    public function h() {}\n"
-        "}\n"
+        "<?php\nnamespace App;\nclass C {\n    #[Route('/x')]\n    public function h() {}\n}\n"
     )
     handler = next(s for s in x.symbols if s.name == "h")
     assert handler.decorators == ["#[Route('/x')]"]
@@ -126,13 +115,7 @@ def test_php8_attributes_are_decorators():
 
 
 def test_include_variable_is_a_call_ref():
-    x = extract(
-        "<?php\n"
-        "namespace App;\n"
-        "function load($f) {\n"
-        "    include $f;\n"
-        "}\n"
-    )
+    x = extract("<?php\nnamespace App;\nfunction load($f) {\n    include $f;\n}\n")
     includes = [r for r in x.references if r.callee_name == "include"]
     assert len(includes) == 1
     assert includes[0].kind == "call"
@@ -142,6 +125,7 @@ def test_include_variable_is_a_call_ref():
 
 
 # ---------------- unit: mixed HTML & robustness ----------------
+
 
 def test_mixed_html_php_extracts_symbols():
     x = extract(
@@ -170,6 +154,7 @@ def test_broken_syntax_does_not_crash_and_reports_parse_error():
 
 # ---------------- e2e: laravel fixture ----------------
 
+
 def test_laravel_fixture_route_to_sink(tmp_path):
     db = tmp_path / "graph.db"
     graph = CodeGraph.index(FIXTURE, db=db)
@@ -183,9 +168,7 @@ def test_laravel_fixture_route_to_sink(tmp_path):
         store_qname = "App.Http.Controllers.ReportController.store"
         assert any(s.qname == store_qname for s in graph.symbols())
 
-        paths = graph.paths(
-            source=store_qname, sink="php:shell_exec", include_unresolved=True
-        )
+        paths = graph.paths(source=store_qname, sink="php:shell_exec", include_unresolved=True)
         assert paths, "expected a store -> shell_exec path"
         assert paths[0].symbols[-1].qname == "php:shell_exec"
     finally:

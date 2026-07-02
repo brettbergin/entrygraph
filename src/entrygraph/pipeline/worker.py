@@ -19,9 +19,10 @@ from entrygraph.parsing.parsers import parse, supported
 
 def extract_one(walked: WalkedFile) -> tuple[str, FileExtraction, bool] | None:
     """Parse+extract one file -> (path, extraction, is_package), or None to skip."""
-    if walked.skip_reason or not supported(walked.language or ""):
+    language = walked.language
+    if walked.skip_reason or not language or not supported(language):
         return None
-    extractor = extractor_for(walked.language)
+    extractor = extractor_for(language)
     if extractor is None:
         return None
     try:
@@ -29,10 +30,10 @@ def extract_one(walked: WalkedFile) -> tuple[str, FileExtraction, bool] | None:
     except OSError:
         return None
     module_path, is_package = extractor.module_path_for(walked.path)
-    tree = parse(walked.language, source)
+    tree = parse(language, source)
     ctx = FileContext(
         path=walked.path,
-        language=walked.language,
+        language=language,
         module_path=module_path,
         source=source,
         is_package=is_package,

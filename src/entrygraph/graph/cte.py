@@ -19,8 +19,13 @@ _SEP = ","
 
 
 class CteEngine:
-    def __init__(self, session: Session, kinds: frozenset[str], min_confidence: int = 0,
-                 include_cha: bool = True) -> None:
+    def __init__(
+        self,
+        session: Session,
+        kinds: frozenset[str],
+        min_confidence: int = 0,
+        include_cha: bool = True,
+    ) -> None:
         self.session = session
         self.kind_values = [EdgeKind(k).value for k in kinds]
         self.min_confidence = min_confidence
@@ -117,7 +122,9 @@ class CteEngine:
         path: list[tuple[int, Hop | None]] = [(node_ids[0], None)]
         for i in range(1, len(node_ids)):
             path.append(
-                (node_ids[i], Hop(node_ids[i], kinds[i - 1], lines[i - 1],
-                                  confs[i - 1], edge_ids[i - 1]))
+                (
+                    node_ids[i],
+                    Hop(node_ids[i], kinds[i - 1], lines[i - 1], confs[i - 1], edge_ids[i - 1]),
+                )
             )
         return path

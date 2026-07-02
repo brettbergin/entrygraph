@@ -41,7 +41,9 @@ def scan_config_entrypoints(root: str | Path) -> list[ConfigHint]:
     root = Path(root)
     hints: list[ConfigHint] = []
     for name in ("serverless.yml", "serverless.yaml"):
-        hints += _scan(root / name, _SERVERLESS_HANDLER, EntrypointKind.LAMBDA_HANDLER, "serverless")
+        hints += _scan(
+            root / name, _SERVERLESS_HANDLER, EntrypointKind.LAMBDA_HANDLER, "serverless"
+        )
     for name in ("template.yaml", "template.yml"):
         hints += _scan(root / name, _SAM_HANDLER, EntrypointKind.LAMBDA_HANDLER, "sam")
     hints += _scan_procfile(root / "Procfile")
@@ -58,7 +60,9 @@ def _read(path: Path) -> str | None:
         return None
 
 
-def _scan(path: Path, pattern: re.Pattern, kind: EntrypointKind, framework: str) -> list[ConfigHint]:
+def _scan(
+    path: Path, pattern: re.Pattern, kind: EntrypointKind, framework: str
+) -> list[ConfigHint]:
     text = _read(path)
     if text is None:
         return []
@@ -75,8 +79,14 @@ def _scan_procfile(path: Path) -> list[ConfigHint]:
         return []
     hints = []
     for proc, command in _PROCFILE_LINE.findall(text):
-        hints.append(ConfigHint(kind=EntrypointKind.MAIN, framework="procfile",
-                                handler_ref=command.strip(), name=proc))
+        hints.append(
+            ConfigHint(
+                kind=EntrypointKind.MAIN,
+                framework="procfile",
+                handler_ref=command.strip(),
+                name=proc,
+            )
+        )
     return hints
 
 
@@ -86,13 +96,20 @@ def _scan_dockerfile(path: Path) -> list[ConfigHint]:
         return []
     hints = []
     for command in _DOCKER_CMD.findall(text):
-        hints.append(ConfigHint(kind=EntrypointKind.MAIN, framework="docker",
-                                handler_ref=command.strip(), name="cmd"))
+        hints.append(
+            ConfigHint(
+                kind=EntrypointKind.MAIN,
+                framework="docker",
+                handler_ref=command.strip(),
+                name="cmd",
+            )
+        )
     return hints
 
 
-def bind_handler(handler_ref: str, symbol_id_by_qname: dict[str, int],
-                 module_symbol_ids: dict[str, int]) -> int | None:
+def bind_handler(
+    handler_ref: str, symbol_id_by_qname: dict[str, int], module_symbol_ids: dict[str, int]
+) -> int | None:
     """Best-effort map a config handler string to an indexed symbol id.
 
     Handles the common forms:
@@ -123,10 +140,14 @@ def _candidate_qnames(handler_ref: str) -> list[str]:
                 ref = tokens[i + 1]
         else:
             ref = next((t for t in tokens[1:] if "/" in t or "." in t), tokens[-1])
-    ref = ref.split(":", 1)[0] if ":" in ref and "/" not in ref.split(":", 1)[1] else ref.replace(":", ".")
+    ref = (
+        ref.split(":", 1)[0]
+        if ":" in ref and "/" not in ref.split(":", 1)[1]
+        else ref.replace(":", ".")
+    )
     for prefix in _SRC_PREFIXES:
         if ref.startswith(prefix):
-            ref = ref[len(prefix):]
+            ref = ref[len(prefix) :]
     for ext in _CODE_EXTS:
         if ref.endswith(ext):
             ref = ref[: -len(ext)]

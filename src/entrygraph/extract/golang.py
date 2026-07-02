@@ -44,7 +44,7 @@ class GoExtractor:
         module = ".".join(p for p in parts if p) or "_root"
         return module, False  # Go packages are never treated as is_package here
 
-    def extract(self, tree: "Tree", ctx: FileContext) -> FileExtraction:
+    def extract(self, tree: Tree, ctx: FileContext) -> FileExtraction:
         root = tree.root_node
         out = FileExtraction(
             path=ctx.path,
@@ -60,7 +60,7 @@ class GoExtractor:
 
     # ---------------- definitions ----------------
 
-    def _extract_definitions(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _extract_definitions(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("go", "definitions"), root)
 
         for node in caps.get("def.function", []):
@@ -116,7 +116,9 @@ class GoExtractor:
         for node in caps.get("def.var", []):
             self._add_value(node, ctx, out, SymbolKind.VARIABLE)
 
-    def _add_type(self, node: "Node", ctx: FileContext, out: FileExtraction, kind: SymbolKind) -> None:
+    def _add_type(
+        self, node: Node, ctx: FileContext, out: FileExtraction, kind: SymbolKind
+    ) -> None:
         # node is the type_declaration; the name is on its type_spec child.
         spec = next((c for c in node.named_children if c.type == "type_spec"), None)
         if spec is None:
@@ -159,7 +161,9 @@ class GoExtractor:
                 )
             )
 
-    def _add_value(self, node: "Node", ctx: FileContext, out: FileExtraction, kind: SymbolKind) -> None:
+    def _add_value(
+        self, node: Node, ctx: FileContext, out: FileExtraction, kind: SymbolKind
+    ) -> None:
         # node is the const_declaration / var_declaration; names live on specs.
         for spec in node.named_children:
             if spec.type not in ("const_spec", "var_spec"):
@@ -182,7 +186,7 @@ class GoExtractor:
 
     # ---------------- imports ----------------
 
-    def _extract_imports(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _extract_imports(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("go", "imports"), root)
         for node in caps.get("import", []):
             for spec in self._import_specs(node):
@@ -190,7 +194,7 @@ class GoExtractor:
         for imp in out.imports:
             out.framework_signals.append(("import", imp.module))
 
-    def _import_specs(self, node: "Node") -> list["Node"]:
+    def _import_specs(self, node: Node) -> list[Node]:
         specs: list[Node] = []
         for child in node.named_children:
             if child.type == "import_spec":
@@ -199,7 +203,7 @@ class GoExtractor:
                 specs.extend(c for c in child.named_children if c.type == "import_spec")
         return specs
 
-    def _add_import(self, spec: "Node", node: "Node", out: FileExtraction) -> None:
+    def _add_import(self, spec: Node, node: Node, out: FileExtraction) -> None:
         path_node = next(
             (c for c in spec.named_children if c.type == "interpreted_string_literal"), None
         )
@@ -209,8 +213,11 @@ class GoExtractor:
         alias_node = spec.child_by_field_name("name")
         if alias_node is None:
             alias_node = next(
-                (c for c in spec.named_children
-                 if c.type in ("package_identifier", "identifier", "dot", "blank_identifier")),
+                (
+                    c
+                    for c in spec.named_children
+                    if c.type in ("package_identifier", "identifier", "dot", "blank_identifier")
+                ),
                 None,
             )
         if alias_node is not None:
@@ -223,7 +230,7 @@ class GoExtractor:
 
     # ---------------- calls / composite literals ----------------
 
-    def _extract_calls(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _extract_calls(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("go", "calls"), root)
 
         for node in caps.get("call", []):
@@ -237,7 +244,11 @@ class GoExtractor:
                 field = fn.child_by_field_name("field")
                 if operand is None or field is None:
                     continue
-                callee_text, callee_name, receiver = node_text(fn), node_text(field), node_text(operand)
+                callee_text, callee_name, receiver = (
+                    node_text(fn),
+                    node_text(field),
+                    node_text(operand),
+                )
             else:
                 continue  # call of a call / index expr / etc. — not statically resolvable
             args = node.child_by_field_name("arguments")
@@ -269,7 +280,7 @@ class GoExtractor:
 
     # ---------------- walking helpers ----------------
 
-    def _receiver_type(self, method: "Node") -> str | None:
+    def _receiver_type(self, method: Node) -> str | None:
         """The bare receiver type name of a method_declaration (deref pointers)."""
         receiver = method.child_by_field_name("receiver")
         if receiver is None:
@@ -277,21 +288,22 @@ class GoExtractor:
             receiver = next((c for c in method.named_children if c.type == "parameter_list"), None)
         if receiver is None:
             return None
-        decl = next(
-            (c for c in receiver.named_children if c.type == "parameter_declaration"), None
-        )
+        decl = next((c for c in receiver.named_children if c.type == "parameter_declaration"), None)
         if decl is None:
             return None
         type_node = decl.child_by_field_name("type")
         if type_node is None:
             type_node = next(
-                (c for c in decl.named_children
-                 if c.type in ("type_identifier", "pointer_type", "generic_type")),
+                (
+                    c
+                    for c in decl.named_children
+                    if c.type in ("type_identifier", "pointer_type", "generic_type")
+                ),
                 None,
             )
         return self._type_name(type_node)
 
-    def _type_name(self, node: "Node | None") -> str | None:
+    def _type_name(self, node: Node | None) -> str | None:
         if node is None:
             return None
         if node.type == "type_identifier":
@@ -309,7 +321,7 @@ class GoExtractor:
             return self._type_name(base)
         return None
 
-    def _enclosing_type_name(self, node: "Node") -> str | None:
+    def _enclosing_type_name(self, node: Node) -> str | None:
         """Name of the type_spec that owns this field declaration."""
         current = node.parent
         while current is not None:
@@ -319,7 +331,7 @@ class GoExtractor:
             current = current.parent
         return None
 
-    def _caller(self, node: "Node", ctx: FileContext) -> str | None:
+    def _caller(self, node: Node, ctx: FileContext) -> str | None:
         """FQN of the enclosing func/method, or None for package level."""
         current = node.parent
         while current is not None:
@@ -337,6 +349,6 @@ class GoExtractor:
             current = current.parent
         return None
 
-    def _signature(self, node: "Node") -> str:
+    def _signature(self, node: Node) -> str:
         first_line = node_text(node).split("\n", 1)[0].rstrip("{").strip()
         return truncate(first_line, 120)

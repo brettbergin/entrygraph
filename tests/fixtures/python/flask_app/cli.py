@@ -1,7 +1,6 @@
 """CLI entrypoint for the fixture app."""
 
 import click
-
 from app.services import run_report
 
 

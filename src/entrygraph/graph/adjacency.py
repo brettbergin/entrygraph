@@ -37,8 +37,14 @@ class AdjacencyCache:
         self.reverse: dict[int, list[Hop]] = {}
 
     @classmethod
-    def build(cls, session: Session, generation: int, kinds: frozenset[str],
-              min_confidence: int = 0, include_cha: bool = True) -> "AdjacencyCache":
+    def build(
+        cls,
+        session: Session,
+        generation: int,
+        kinds: frozenset[str],
+        min_confidence: int = 0,
+        include_cha: bool = True,
+    ) -> AdjacencyCache:
         cache = cls(generation, kinds)
         conditions = [
             Edge.kind.in_([EdgeKind(k) for k in kinds]),
@@ -48,14 +54,21 @@ class AdjacencyCache:
         if not include_cha:  # class-hierarchy candidates are opt-in speculative edges
             conditions.append((Edge.via.is_(None)) | (Edge.via != "cha"))
         stmt = select(
-            Edge.src_symbol_id, Edge.dst_symbol_id, Edge.kind, Edge.line,
-            Edge.confidence, Edge.id, Edge.via,
+            Edge.src_symbol_id,
+            Edge.dst_symbol_id,
+            Edge.kind,
+            Edge.line,
+            Edge.confidence,
+            Edge.id,
+            Edge.via,
         ).where(*conditions)
         for src, dst, kind, line, confidence, edge_id, via in session.execute(stmt):
             cache.forward.setdefault(src, []).append(
-                Hop(dst, kind.value, line, confidence, edge_id, via))
+                Hop(dst, kind.value, line, confidence, edge_id, via)
+            )
             cache.reverse.setdefault(dst, []).append(
-                Hop(src, kind.value, line, confidence, edge_id, via))
+                Hop(src, kind.value, line, confidence, edge_id, via)
+            )
         for adjacency in (cache.forward, cache.reverse):
             for hops in adjacency.values():
                 hops.sort(key=lambda h: (h.dst, h.line))

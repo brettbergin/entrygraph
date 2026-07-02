@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from entrygraph.extract.base import FileContext
 from entrygraph.extract.python import PythonExtractor
 from entrygraph.kinds import SymbolKind
@@ -13,8 +11,9 @@ EXTRACTOR = PythonExtractor()
 def extract(source: str, path: str = "app/mod.py"):
     module_path, is_package = EXTRACTOR.module_path_for(path)
     src = source.encode()
-    ctx = FileContext(path=path, language="python", module_path=module_path,
-                      source=src, is_package=is_package)
+    ctx = FileContext(
+        path=path, language="python", module_path=module_path, source=src, is_package=is_package
+    )
     return EXTRACTOR.extract(parse("python", src), ctx)
 
 
@@ -84,7 +83,7 @@ def test_imports_and_aliases():
 
 def test_calls_receivers_and_previews():
     x = extract(
-        '''
+        """
 import subprocess as sub
 
 def run_it(cmd):
@@ -94,7 +93,7 @@ def run_it(cmd):
 class C:
     def m(self):
         self.other()
-'''
+"""
     )
     calls = {r.callee_text: r for r in x.references if r.kind == "call"}
     assert calls["helper"].receiver_text is None
@@ -108,13 +107,13 @@ class C:
 
 def test_decorators_captured():
     x = extract(
-        '''
+        """
 import app_framework as fw
 
 @fw.route("/x", methods=["GET"])
 def handler():
     pass
-'''
+"""
     )
     handler = next(s for s in x.symbols if s.name == "handler")
     assert handler.decorators == ['@fw.route("/x", methods=["GET"])']

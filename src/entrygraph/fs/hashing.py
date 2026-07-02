@@ -57,11 +57,7 @@ def diff_files(
                 diff.hashes[wf.path] = hash_file(wf.abs_path)
             diff.added.append(wf)
             continue
-        if (
-            not paranoid
-            and prior.size_bytes == wf.size_bytes
-            and prior.mtime_ns == wf.mtime_ns
-        ):
+        if not paranoid and prior.size_bytes == wf.size_bytes and prior.mtime_ns == wf.mtime_ns:
             diff.unchanged.append(wf)
             diff.hashes[wf.path] = prior.content_hash
             continue

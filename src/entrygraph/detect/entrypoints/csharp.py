@@ -72,9 +72,7 @@ def _aspnet_controller_routes(x: FileExtraction) -> list[EntrypointHint]:
                 break
         else:
             # No Http* verb attribute; a bare [Route("...")] still exposes it.
-            route_dec = next(
-                (d for d in method.decorators if _ROUTE_ATTR.match(d)), None
-            )
+            route_dec = next((d for d in method.decorators if _ROUTE_ATTR.match(d)), None)
             if route_dec is not None:
                 hints.append(
                     EntrypointHint(

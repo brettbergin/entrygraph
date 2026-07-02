@@ -1,7 +1,7 @@
 name: CI
 
-# Test pull requests and non-main branch pushes. main is covered by the test
-# gate in release.yml, so it's excluded here to avoid duplicate runs.
+# One job per quality gate. main is covered by release.yml's own test gate, so
+# it's excluded here to avoid duplicate runs.
 on:
   pull_request: {}
   push:
@@ -12,6 +12,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - name: ruff format --check
+        run: uv run --extra dev ruff format --check .
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - name: ruff check
+        run: uv run --extra dev ruff check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - name: mypy
+        run: uv run --extra dev mypy
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -23,5 +53,25 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Run test suite
-        run: uv run --extra dev pytest -q
+      - name: pytest + coverage
+        run: uv run --extra dev pytest -q --cov=entrygraph --cov-report=term-missing
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - name: bandit
+        run: uv run --extra dev bandit -c pyproject.toml -r src/entrygraph -q
+
+  mdformat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - name: mdformat --check
+        run: uv run --extra dev mdformat --check $(git ls-files '*.md')

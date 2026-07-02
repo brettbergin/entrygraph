@@ -7,12 +7,12 @@ PyPI — no manual version edits, no tokens.
 ## How it works
 
 1. A merge lands on `main` → [`.github/workflows/release.yml`](.github/workflows/release.yml) runs.
-2. The test suite must pass (gate).
-3. The workflow finds the latest `vX.Y.Z` tag and computes the next **patch**
+1. The test suite must pass (gate).
+1. The workflow finds the latest `vX.Y.Z` tag and computes the next **patch**
    version (`v0.1.4` → `v0.1.5`). With no tags yet, the first release is `v0.1.0`.
-4. It creates and pushes that tag. [`hatch-vcs`](https://github.com/ofek/hatch-vcs)
+1. It creates and pushes that tag. [`hatch-vcs`](https://github.com/ofek/hatch-vcs)
    derives the package version from the tag, so nothing is committed back to `main`.
-5. `uv build` produces the sdist + wheel, which are published to PyPI via
+1. `uv build` produces the sdist + wheel, which are published to PyPI via
    **Trusted Publishing (OIDC)** and attached to a GitHub Release.
 
 Pull requests are tested separately by [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
@@ -26,15 +26,15 @@ This lets GitHub Actions publish without an API token. Because the project
 doesn't exist on PyPI yet, add it as a **pending** publisher:
 
 1. Log in to PyPI → <https://pypi.org/manage/account/publishing/>.
-2. Under "Add a new pending publisher", enter:
-   | Field | Value |
-   | --- | --- |
-   | PyPI Project Name | `entrygraph` |
-   | Owner | `brettbergin` |
-   | Repository name | `entrygraph` |
-   | Workflow name | `release.yml` |
-   | Environment name | *(leave blank)* |
-3. Save. The first successful run creates the project and binds the publisher.
+1. Under "Add a new pending publisher", enter:
+   | Field             | Value           |
+   | ----------------- | --------------- |
+   | PyPI Project Name | `entrygraph`    |
+   | Owner             | `brettbergin`   |
+   | Repository name   | `entrygraph`    |
+   | Workflow name     | `release.yml`   |
+   | Environment name  | *(leave blank)* |
+1. Save. The first successful run creates the project and binds the publisher.
 
 > The PyPI project name `entrygraph` must be available (or already owned by you).
 > If it's taken, rename the project in `pyproject.toml` before the first release.

@@ -17,8 +17,9 @@ EXTRACTOR = JavaScriptExtractor()
 def extract(source: str, path: str = "src/sample.js", lang: str = "javascript"):
     module_path, is_package = EXTRACTOR.module_path_for(path)
     src = source.encode()
-    ctx = FileContext(path=path, language=lang, module_path=module_path,
-                      source=src, is_package=is_package)
+    ctx = FileContext(
+        path=path, language=lang, module_path=module_path, source=src, is_package=is_package
+    )
     return EXTRACTOR.extract(parse(lang, src), ctx)
 
 
@@ -73,8 +74,7 @@ def test_relative_import_resolution():
 
 def test_calls_with_receivers():
     x = extract(
-        "import cp from 'child_process';\n"
-        "function run() { cp.execSync('ls'); helper(); }\n"
+        "import cp from 'child_process';\nfunction run() { cp.execSync('ls'); helper(); }\n"
     )
     calls = {r.callee_text: r for r in x.references if r.kind == "call"}
     assert calls["cp.execSync"].receiver_text == "cp"
@@ -110,10 +110,10 @@ def test_reexport_and_callback_and_computed_call():
     x = extract(
         'export { A, B as C } from "./widgets";\n'
         'export * from "./other";\n'
-        'function boot() {\n'
-        '  setTimeout(onTick, 10);\n'
-        '  registry[name]();\n'
-        '}\n'
+        "function boot() {\n"
+        "  setTimeout(onTick, 10);\n"
+        "  registry[name]();\n"
+        "}\n"
     )
     named = {(r.exported_name, r.alias) for r in x.reexports if not r.is_star}
     assert ("A", None) in named and ("B", "C") in named
@@ -130,7 +130,8 @@ def test_typescript_extraction_works():
         "  async findUser(id: string): Promise<User> { return this.repo.get(id); }\n"
         "}\n"
         "export function boot(): void { new UserService().findUser('1'); }\n",
-        path="src/svc.ts", lang="typescript",
+        path="src/svc.ts",
+        lang="typescript",
     )
     names = {s.name for s in x.symbols}
     assert {"UserService", "findUser", "boot"} <= names
@@ -140,7 +141,8 @@ def test_typescript_extraction_works():
 def test_tsx_extraction_works():
     x = extract(
         "export function App() { return doRender(); }\n",
-        path="src/App.tsx", lang="tsx",
+        path="src/App.tsx",
+        lang="tsx",
     )
     assert any(s.name == "App" for s in x.symbols)
     assert any(r.callee_name == "doRender" for r in x.references)

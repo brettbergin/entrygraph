@@ -11,6 +11,7 @@ import json
 import re
 import tomllib
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -98,7 +99,7 @@ def parse_pom_xml(text: str) -> set[str]:
 
 
 def parse_build_gradle(text: str) -> set[str]:
-    return {m for m in _GRADLE_DEP.findall(text)}
+    return set(_GRADLE_DEP.findall(text))
 
 
 def parse_gemfile(text: str) -> set[str]:
@@ -127,11 +128,12 @@ def parse_packages_config(text: str) -> set[str]:
         root = ET.fromstring(text)
     except ET.ParseError:
         return set()
-    return {
-        el.get("id").lower()
-        for el in root.iter()
-        if el.tag.split("}")[-1] == "package" and el.get("id")
-    }
+    ids: set[str] = set()
+    for el in root.iter():
+        pid = el.get("id")
+        if el.tag.split("}")[-1] == "package" and pid:
+            ids.add(pid.lower())
+    return ids
 
 
 def parse_composer_json(text: str) -> set[str]:
@@ -193,7 +195,7 @@ class ManifestDeps:
         return getattr(self, language, set())
 
 
-_MANIFEST_SPECS: list[tuple[str, str, object]] = [  # (glob, ecosystem, parser fn)
+_MANIFEST_SPECS: list[tuple[str, str, Callable[[str], set[str]]]] = [  # (glob, ecosystem, parser)
     ("requirements*.txt", "python", parse_requirements_txt),
     ("pyproject.toml", "python", parse_pyproject_toml),
     ("package.json", "javascript", parse_package_json),
@@ -220,8 +222,10 @@ def parse_manifests(root: str | Path) -> ManifestDeps:
             for manifest in root.glob(glob):
                 if not manifest.is_file():
                     continue
-                if any(part in ("node_modules", "vendor", ".venv", "venv", "target", "packages")
-                       for part in manifest.parts):
+                if any(
+                    part in ("node_modules", "vendor", ".venv", "venv", "target", "packages")
+                    for part in manifest.parts
+                ):
                     continue
                 try:
                     text = manifest.read_text(encoding="utf-8", errors="replace")
