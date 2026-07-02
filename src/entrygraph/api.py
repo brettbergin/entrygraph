@@ -299,7 +299,9 @@ class CodeGraph:
             registry = self._registry(session)
             edge_map = self._edge_rows(session, raw_paths)
             tainted_sources = self._tainted_source_ids(session, sources)
-            excluded_nodes = self._nodes_with_open_frontier(session, all_ids, kinds, floor)
+            excluded_nodes = self._nodes_with_open_frontier(
+                session, all_ids, kinds, floor, include_cha
+            )
             sibling_calls = self._out_call_qnames(session, all_ids)
             built = [
                 self._materialize_path(
@@ -535,21 +537,31 @@ class CodeGraph:
 
     @staticmethod
     def _nodes_with_open_frontier(
-        session: Session, node_ids: set[int], kinds: tuple[str, ...], floor: int
+        session: Session,
+        node_ids: set[int],
+        kinds: tuple[str, ...],
+        floor: int,
+        include_cha: bool,
     ) -> set[int]:
-        """Path nodes that have outgoing call edges the confidence filter excluded
-        (or dynamic placeholders) — i.e. reachability may continue past them."""
+        """Path nodes that have outgoing call edges the traverser excluded — i.e.
+        reachability may continue past them. Covers edges below the confidence
+        floor, dynamic placeholders, and (when CHA is off) class-hierarchy edges,
+        which sit at FUZZY confidence and so aren't caught by the floor at the
+        default FUZZY floor."""
         if not node_ids:
             return set()
         from entrygraph.kinds import EdgeKind
 
         kind_enums = [EdgeKind(k) for k in kinds if k in {e.value for e in EdgeKind}]
+        excluded = (models.Edge.confidence < floor) | (models.Edge.via == "dynamic")
+        if not include_cha:
+            excluded = excluded | (models.Edge.via == "cha")
         rows = session.execute(
             select(models.Edge.src_symbol_id).where(
                 models.Edge.src_symbol_id.in_(node_ids),
                 models.Edge.dst_symbol_id.is_not(None),
                 models.Edge.kind.in_(kind_enums),
-                (models.Edge.confidence < floor) | (models.Edge.via == "dynamic"),
+                excluded,
             )
         ).scalars()
         return set(rows)
