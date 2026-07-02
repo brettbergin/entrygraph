@@ -8,16 +8,15 @@ dynamic = ["version"]  # derived from git tags by hatch-vcs (see [tool.hatch.ver
 description = "Language-agnostic code graph: query symbols, entrypoints, and source-to-sink call paths from a SQLite index"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 authors = [{ name = "Brett Bergin", email = "brettberginbc@yahoo.com" }]
 keywords = ["code-analysis", "call-graph", "tree-sitter", "static-analysis", "entrypoints"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
