@@ -1,0 +1,106 @@
+# Built-in C# (.NET) sink/source catalog.
+# Patterns are brace-globs matched against canonical callee qnames:
+#   resolved external calls    -> "cs:System.Diagnostics.Process.Start"
+#   unresolved attribute calls -> "cs:*.ExecuteReader"   (unknown receiver)
+#   unresolved bare/type calls -> "cs:Process.Start" / "cs:SqlCommand"
+#
+# Static calls (Process.Start) and receiver-agnostic member calls
+# (cmd.ExecuteReader) land on different guesses, so most entries carry both a
+# bare (`cs:Type.Method`) and a receiver-agnostic (`cs:*.Method`) form. Object
+# creations (`new SqlCommand()`) key on the constructed type name.
+
+[[sink]]
+id = "csharp.command-exec"
+category = "command_exec"
+severity = "high"
+callee = "cs:{Process.Start,*.Process.Start,ProcessStartInfo,*.ProcessStartInfo}"
+description = "OS command execution (Process.Start / ProcessStartInfo)"
+
+[[sink]]
+id = "csharp.sql-command"
+category = "sql"
+severity = "medium"
+callee = "cs:{SqlCommand,*.SqlCommand,MySqlCommand,NpgsqlCommand,SqliteCommand}"
+description = "SQL command construction (ADO.NET command types)"
+
+[[sink]]
+id = "csharp.sql-execute"
+category = "sql"
+severity = "medium"
+callee = "cs:*.{ExecuteReader,ExecuteNonQuery,ExecuteScalar,ExecuteReaderAsync,ExecuteNonQueryAsync}"
+description = "SQL statement execution (receiver-agnostic)"
+
+[[sink]]
+id = "csharp.sql-ef-raw"
+category = "sql"
+severity = "medium"
+callee = "cs:*.{FromSqlRaw,ExecuteSqlRaw,ExecuteSqlRawAsync}"
+description = "EF Core raw SQL execution"
+
+[[sink]]
+id = "csharp.deserialization"
+category = "deserialization"
+severity = "medium"
+callee = "cs:{BinaryFormatter,*.BinaryFormatter,SoapFormatter,NetDataContractSerializer,ObjectStateFormatter,LosFormatter}"
+description = "Unsafe .NET deserialization formatter"
+
+[[sink]]
+id = "csharp.deserialization.call"
+category = "deserialization"
+severity = "medium"
+callee = "cs:*.{Deserialize,ReadObject}"
+description = "Deserialization call (Formatter.Deserialize / DataContract.ReadObject)"
+
+[[sink]]
+id = "csharp.code-eval"
+category = "code_eval"
+severity = "critical"
+callee = "cs:{CSharpScript.EvaluateAsync,Assembly.Load,*.Assembly.Load,Activator.CreateInstance,*.Activator.CreateInstance}"
+description = "Dynamic code evaluation / dynamic type loading"
+
+[[sink]]
+id = "csharp.xxe"
+category = "xxe"
+severity = "medium"
+callee = "cs:{XmlDocument,*.XmlDocument,XmlTextReader}"
+description = "XML parser susceptible to XXE (XmlDocument / XmlTextReader)"
+
+[[sink]]
+id = "csharp.xxe.loadxml"
+category = "xxe"
+severity = "medium"
+callee = "cs:*.LoadXml"
+description = "XML load with a potentially attacker-controlled document"
+
+[[sink]]
+id = "csharp.path-traversal"
+category = "path_traversal"
+severity = "medium"
+callee = "cs:File.{WriteAllText,WriteAllBytes,Delete,Move,ReadAllText,ReadAllBytes}"
+description = "File access with a potentially attacker-controlled path"
+
+[[sink]]
+id = "csharp.ssrf"
+category = "ssrf"
+severity = "medium"
+callee = "cs:{*.GetAsync,*.PostAsync,*.SendAsync,WebRequest.Create}"
+description = "Outbound HTTP request (HttpClient / WebRequest)"
+
+[[sink]]
+id = "csharp.ldap"
+category = "ldap"
+severity = "medium"
+callee = "cs:{DirectorySearcher,*.DirectorySearcher}"
+description = "LDAP query (DirectorySearcher)"
+
+[[source]]
+id = "csharp.input"
+category = "http_input"
+callee = "cs:*.{ReadLine,ReadFromJsonAsync,ReadAsStringAsync}"
+description = "Request/console input"
+
+[[source]]
+id = "csharp.env"
+category = "env_input"
+callee = "cs:Environment.GetEnvironmentVariable"
+description = "Environment variable input"

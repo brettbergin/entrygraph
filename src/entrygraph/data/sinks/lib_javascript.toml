@@ -1,0 +1,34 @@
+# Library summaries for JS/TS third-party wrappers. See lib_python.toml header.
+
+[[sink]]
+id = "lib.js.knex.raw"
+category = "sql"
+severity = "medium"
+callee = "js:{knex.raw,*.knex.raw}"
+description = "Knex raw SQL query"
+library = "knex"
+require_arg_hint = "\\+|\\$\\{|`"
+
+[[sink]]
+id = "lib.js.sequelize.query"
+category = "sql"
+severity = "medium"
+callee = "js:{sequelize.query,*.sequelize.query}"
+description = "Sequelize raw query"
+library = "sequelize"
+
+[[sink]]
+id = "lib.js.shelljs.exec"
+category = "command_exec"
+severity = "high"
+callee = "js:{shelljs.exec,shell.exec,*.shelljs.exec}"
+description = "ShellJS command execution"
+library = "shelljs"
+
+[[sink]]
+id = "lib.js.execa"
+category = "command_exec"
+severity = "high"
+callee = "js:{execa,execa.command,execa.sync,execa.commandSync}"
+description = "execa subprocess execution"
+library = "execa"

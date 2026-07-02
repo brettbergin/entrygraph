@@ -1,0 +1,125 @@
+# Built-in PHP sink/source catalog.
+# Patterns are brace-globs matched against canonical callee qnames:
+#   resolved external calls    -> "php:App.Services.Runner.run"
+#   unresolved receiver calls  -> "php:*.query"
+#   unresolved bare calls      -> "php:shell_exec"
+#
+# Namespace separators (`\`) are normalized to `.` upstream, so globs are
+# dot-based. NOTE: `$_GET` / `$_POST` / `$_REQUEST` / `$_COOKIE` superglobals
+# are *variable reads*, not function calls, so they never surface as call
+# references and cannot be modeled as sources here — taint from them must be
+# tracked structurally, which is out of scope for this catalog.
+
+[[sink]]
+id = "php.command-exec"
+category = "command_exec"
+severity = "high"
+callee = "php:{exec,system,shell_exec,passthru,popen,proc_open,pcntl_exec}"
+description = "OS command execution"
+
+[[sink]]
+id = "php.code-eval"
+category = "code_eval"
+severity = "critical"
+callee = "php:{eval,assert,create_function}"
+description = "Dynamic code evaluation"
+
+[[sink]]
+id = "php.code-eval.callback"
+category = "code_eval"
+severity = "critical"
+callee = "php:{call_user_func,call_user_func_array}"
+require_arg_hint = "\\$"
+description = "Dynamic callback invocation with a non-literal callable"
+
+[[sink]]
+id = "php.code-inclusion"
+category = "code_inclusion"
+severity = "critical"
+callee = "php:{include,include_once,require,require_once}"
+require_arg_hint = "\\$"
+description = "Dynamic file inclusion with a non-literal path"
+
+[[sink]]
+id = "php.deserialization"
+category = "deserialization"
+severity = "high"
+callee = "php:unserialize"
+description = "Unsafe deserialization"
+
+[[sink]]
+id = "php.sql"
+category = "sql"
+severity = "high"
+callee = "php:{mysqli_query,mysqli_multi_query,pg_query,sqlite_query}"
+description = "SQL statement execution"
+
+[[sink]]
+id = "php.sql.pdo-query"
+category = "sql"
+severity = "high"
+callee = "php:*.{query,exec}"
+description = "PDO/DB query execution (receiver-agnostic)"
+
+[[sink]]
+id = "php.sql.pdo-prepare"
+category = "sql"
+severity = "low"
+callee = "php:*.prepare"
+description = "PDO prepared statement (receiver-agnostic)"
+
+[[sink]]
+id = "php.path-traversal"
+category = "path_traversal"
+severity = "medium"
+callee = "php:{file_get_contents,file_put_contents,fopen,readfile,unlink}"
+require_arg_hint = "\\$"
+description = "Filesystem access with a non-literal path"
+
+[[sink]]
+id = "php.ssrf"
+category = "ssrf"
+severity = "medium"
+callee = "php:{curl_exec,curl_init,fsockopen}"
+description = "Server-side request"
+
+[[sink]]
+id = "php.template-injection"
+category = "template_injection"
+severity = "high"
+callee = "php:*.render"
+require_arg_hint = "\\$"
+description = "Template rendering with non-literal input (receiver-agnostic)"
+
+[[sink]]
+id = "php.ldap"
+category = "ldap"
+severity = "medium"
+callee = "php:{ldap_search,ldap_bind}"
+description = "LDAP operation"
+
+[[sink]]
+id = "php.xxe"
+category = "xxe"
+severity = "medium"
+callee = "php:{simplexml_load_string,simplexml_load_file}"
+description = "XML parsing susceptible to XXE"
+
+[[sink]]
+id = "php.weak-crypto"
+category = "weak_crypto"
+severity = "low"
+callee = "php:{md5,sha1,mt_rand,rand}"
+description = "Weak hashing / insecure randomness"
+
+[[source]]
+id = "php.filter-input"
+category = "http_input"
+callee = "php:{filter_input,filter_input_array}"
+description = "Filtered request input"
+
+[[source]]
+id = "php.laravel.request"
+category = "http_input"
+callee = "php:*.{input,query,post,cookie,header}"
+description = "Laravel request accessors"

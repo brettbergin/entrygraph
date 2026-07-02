@@ -1,0 +1,39 @@
+# Library summaries: known third-party wrappers that reach a dangerous sink
+# internally. entrygraph stops at the repo boundary, so a call into one of these
+# would otherwise terminate at the wrapper. Modelled as ordinary sinks keyed on
+# the wrapper's canonical callee, with `library` set for provenance.
+#
+# Rule of thumb: receiver-agnostic `*.name` patterns only for DISTINCTIVE method
+# names; generic names must be module-qualified.
+
+[[sink]]
+id = "lib.py.fabric.run"
+category = "command_exec"
+severity = "high"
+callee = "py:{fabric.api.run,fabric.api.sudo,fabric.api.local,fabric.operations.run,fabric.operations.sudo,*.Connection.run,*.Connection.sudo}"
+description = "Fabric remote/local command execution"
+library = "fabric"
+
+[[sink]]
+id = "lib.py.paramiko.exec"
+category = "command_exec"
+severity = "high"
+callee = "py:*.exec_command"
+description = "Paramiko SSH remote command execution"
+library = "paramiko"
+
+[[sink]]
+id = "lib.py.sh"
+category = "command_exec"
+severity = "high"
+callee = "py:{sh.Command,sh.bash,sh.sh}"
+description = "sh module dynamic command invocation"
+library = "sh"
+
+[[sink]]
+id = "lib.py.invoke.run"
+category = "command_exec"
+severity = "high"
+callee = "py:{invoke.run,invoke.sudo,*.Context.run,*.Context.sudo}"
+description = "Invoke task-runner command execution"
+library = "invoke"

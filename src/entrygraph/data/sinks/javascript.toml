@@ -1,0 +1,112 @@
+# Built-in JavaScript / TypeScript sink catalog.
+# Canonical callees: import-expanded externals like "js:child_process.exec",
+# unresolved attribute calls like "js:*.query", bare calls like "js:eval".
+
+[[sink]]
+id = "js.command-exec.child_process"
+category = "command_exec"
+severity = "high"
+callee = "js:child_process.{exec,execSync,spawn,spawnSync,execFile,execFileSync}"
+description = "Child process execution"
+
+[[sink]]
+id = "js.command-exec.member"
+category = "command_exec"
+severity = "high"
+callee = "js:*.{exec,execSync,spawn,spawnSync}"
+description = "Child process execution (member call)"
+
+[[sink]]
+id = "js.code-eval"
+category = "code_eval"
+severity = "critical"
+callee = "js:{eval,Function}"
+description = "Dynamic code evaluation"
+
+[[sink]]
+id = "js.sql-query"
+category = "sql"
+severity = "medium"
+callee = "js:*.{query,execute,raw}"
+description = "SQL query execution (receiver-agnostic)"
+
+[[sink]]
+id = "js.file-write"
+category = "file_write"
+severity = "low"
+callee = "js:{fs.writeFile,fs.writeFileSync,fs.appendFile,fs.rm,fs.rmSync,fs.unlink}"
+description = "Filesystem mutation"
+
+[[sink]]
+id = "js.network-out"
+category = "network_out"
+severity = "low"
+callee = "js:{fetch,axios.get,axios.post,http.get,https.get}"
+description = "Outbound network request"
+
+[[source]]
+id = "js.express.req"
+category = "http_input"
+callee = "js:*.{body,query,params}"
+description = "Express request input"
+
+# --- sanitizers (S3): neutralize/reduce taint for a sink category ---
+[[sanitizer]]
+id = "js.sanitize.sqlstring"
+category = "sql"
+callee = "js:{sqlstring.escape,mysql.escape,*.escapeId,*.escape}"
+effect = "reduces"
+description = "SQL string escaping"
+
+[[sanitizer]]
+id = "js.sanitize.shellescape"
+category = "command_exec"
+callee = "js:{shell-quote.quote,shellescape}"
+effect = "neutralizes"
+description = "Shell argument quoting"
+
+[[sanitizer]]
+id = "js.sanitize.html-escape"
+category = "template_injection"
+callee = "js:{escape-html,he.encode,*.escapeHtml}"
+effect = "reduces"
+description = "HTML entity escaping"
+
+# --- C5 deepening ---
+[[sink]]
+id = "js.ssrf"
+category = "ssrf"
+severity = "medium"
+callee = "js:{axios.{request,put,delete,patch},got,http.request,https.request,undici.{request,fetch}}"
+require_arg_hint = "\\+|\\$\\{|`"
+description = "Server-side request with a non-literal URL"
+
+[[sink]]
+id = "js.path-traversal"
+category = "path_traversal"
+severity = "medium"
+callee = "js:fs.{readFile,readFileSync,createReadStream,open,openSync}"
+require_arg_hint = "\\+|\\$\\{|`"
+description = "File read with a non-literal path"
+
+[[sink]]
+id = "js.template-injection"
+category = "template_injection"
+severity = "high"
+callee = "js:{ejs.render,handlebars.compile,pug.render,nunjucks.renderString,lodash.template}"
+description = "Template rendering / compilation"
+
+[[sink]]
+id = "js.code-eval.vm"
+category = "code_eval"
+severity = "critical"
+callee = "js:vm.{runInNewContext,runInThisContext,runInContext}"
+description = "Node vm dynamic code execution"
+
+[[sink]]
+id = "js.weak-crypto"
+category = "weak_crypto"
+severity = "low"
+callee = "js:crypto.createHash"
+require_arg_hint = "md5|sha1"
+description = "Weak hashing algorithm"

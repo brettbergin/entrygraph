@@ -1,0 +1,68 @@
+# Built-in Rust sink/source catalog.
+# Patterns are brace-globs matched against canonical callee qnames. Rust qnames
+# normalize `::` -> `.`, so:
+#   import-expanded external calls -> "rs:std.process.Command.new"
+#   unresolved method calls        -> "rs:*.Command.new"
+#   macro invocations              -> "rs:sqlx.query" (the trailing `!` is stripped)
+# `use std::fs` binds `fs`, so file sinks list both `std.fs.*` and `fs.*` aliases.
+
+[[sink]]
+id = "rust.command-exec"
+category = "command_exec"
+severity = "high"
+callee = "rs:{std.process.Command.new,Command.new,*.Command.new}"
+description = "Subprocess construction via std::process::Command (sink on the builder, not spawn/output)"
+
+[[sink]]
+id = "rust.sql-query"
+category = "sql"
+severity = "medium"
+callee = "rs:{sqlx.query,sqlx.query_as,sqlx.query_scalar,sqlx.raw_sql,diesel.sql_query,*.sql_query}"
+description = "SQL execution (matches both fn calls and sqlx!/diesel! macros after `!`-stripping)"
+
+[[sink]]
+id = "rust.path-traversal"
+category = "path_traversal"
+severity = "medium"
+callee = "rs:std.fs.{write,read,read_to_string,remove_file,remove_dir_all,copy,rename}"
+description = "Filesystem access via std::fs (verify the path is not attacker-controlled)"
+
+[[sink]]
+id = "rust.file-alias"
+category = "path_traversal"
+severity = "medium"
+callee = "rs:fs.{write,read,read_to_string,remove_file}"
+description = "Filesystem access via a `use std::fs` alias"
+
+[[sink]]
+id = "rust.ssrf"
+category = "ssrf"
+severity = "low"
+callee = "rs:{reqwest.get,reqwest.blocking.get}"
+description = "Outbound HTTP request via reqwest"
+
+[[sink]]
+id = "rust.dynamic-load"
+category = "dynamic_load"
+severity = "medium"
+callee = "rs:{libloading.Library.new,*.Library.new}"
+description = "Dynamic library / shared object load via libloading"
+
+[[sink]]
+id = "rust.deserialization"
+category = "deserialization"
+severity = "medium"
+callee = "rs:{bincode.deserialize,serde_yaml.from_str}"
+description = "Deserialization of untrusted input"
+
+[[source]]
+id = "rust.env"
+category = "env_input"
+callee = "rs:{std.env.args,env.args,std.env.var,env.var}"
+description = "Process arguments / environment variable input"
+
+[[source]]
+id = "rust.stdin"
+category = "stdin_input"
+callee = "rs:{std.io.stdin,io.stdin}"
+description = "Standard input"

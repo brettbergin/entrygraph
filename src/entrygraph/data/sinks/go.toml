@@ -1,0 +1,87 @@
+# Built-in Go sink/source catalog.
+# Patterns are brace-globs matched against canonical callee qnames:
+#   import-expanded external calls -> "go:os/exec.Command"
+#   unresolved selector calls      -> "go:*.Query"
+#   unresolved bare calls          -> "go:panic"
+
+[[sink]]
+id = "go.command-exec.exec"
+category = "command_exec"
+severity = "high"
+callee = "go:os/exec.{Command,CommandContext}"
+description = "Subprocess execution via os/exec"
+
+[[sink]]
+id = "go.command-exec.os"
+category = "command_exec"
+severity = "high"
+callee = "go:os.StartProcess"
+description = "OS process spawn"
+
+[[sink]]
+id = "go.sql-query"
+category = "sql"
+severity = "medium"
+callee = "go:*.{Query,QueryRow,Exec,QueryContext,ExecContext,QueryRowContext}"
+description = "SQL statement execution (receiver-agnostic; database/sql)"
+
+[[sink]]
+id = "go.file-write"
+category = "file_write"
+severity = "low"
+callee = "go:os.{OpenFile,WriteFile,Create,Remove,RemoveAll}"
+description = "Filesystem mutation"
+
+[[sink]]
+id = "go.network-out"
+category = "network_out"
+severity = "low"
+callee = "go:net/http.{Get,Post,PostForm,Head}"
+description = "Outbound network request"
+
+[[source]]
+id = "go.nethttp.request"
+category = "http_input"
+callee = "go:*.{FormValue,PostFormValue,Query}"
+description = "HTTP request input"
+
+# --- C5 deepening ---
+[[sink]]
+id = "go.path-traversal"
+category = "path_traversal"
+severity = "medium"
+callee = "go:{os.Open,os.ReadFile,io/ioutil.{ReadFile,WriteFile}}"
+description = "File access (verify the path is not attacker-controlled)"
+
+[[sink]]
+id = "go.ssrf"
+category = "ssrf"
+severity = "medium"
+callee = "go:net/http.{NewRequest,NewRequestWithContext}"
+description = "Outbound HTTP request construction"
+
+[[sink]]
+id = "go.weak-crypto"
+category = "weak_crypto"
+severity = "low"
+callee = "go:{crypto/md5.{New,Sum},crypto/sha1.{New,Sum},crypto/des.NewCipher,crypto/rc4.NewCipher,math/rand.{Int,Intn,Float64}}"
+description = "Weak crypto or non-cryptographic RNG"
+
+[[sink]]
+id = "go.template-injection"
+category = "template_injection"
+severity = "medium"
+callee = "go:text/template.{New,Must}"
+description = "text/template (unescaped) rendering"
+
+[[source]]
+id = "go.gin.input"
+category = "http_input"
+callee = "go:*.{Param,GetHeader,Bind,BindJSON,ShouldBind,ShouldBindJSON}"
+description = "Gin request input"
+
+[[source]]
+id = "go.env"
+category = "env_input"
+callee = "go:os.Getenv"
+description = "Environment variable input"

@@ -1,0 +1,92 @@
+# Built-in Java sink/source catalog.
+# Patterns are brace-globs matched against canonical callee qnames:
+#   resolved external calls    -> "java:com.example.Foo.bar"
+#   unresolved attribute calls -> "java:*.exec"     (unknown receiver)
+#   unresolved bare calls      -> "java:doThing"
+#
+# Runtime.getRuntime().exec(...) and new ProcessBuilder(...).start() both have
+# unknown receivers, so they land on "java:*.exec" / "java:*.start"-style
+# guesses; the receiver-agnostic patterns below catch them.
+
+[[sink]]
+id = "java.command-exec"
+category = "command_exec"
+severity = "high"
+callee = "java:{*.exec,Runtime.exec,ProcessBuilder,*.ProcessBuilder}"
+description = "OS command execution (Runtime.exec / ProcessBuilder)"
+
+[[sink]]
+id = "java.sql-execute"
+category = "sql"
+severity = "medium"
+callee = "java:*.{executeQuery,executeUpdate,execute,executeLargeUpdate,executeBatch}"
+description = "SQL statement execution (receiver-agnostic)"
+
+[[sink]]
+id = "java.deserialization"
+category = "deserialization"
+severity = "high"
+callee = "java:*.readObject"
+description = "Unsafe Java deserialization (ObjectInputStream.readObject)"
+
+[[sink]]
+id = "java.code-eval"
+category = "code_eval"
+severity = "critical"
+callee = "java:*.eval"
+description = "Dynamic code evaluation (ScriptEngine.eval)"
+
+# --- C5 deepening ---
+[[sink]]
+id = "java.ssrf"
+category = "ssrf"
+severity = "medium"
+callee = "java:*.{openConnection,openStream}"
+description = "Outbound connection (URL.openConnection / openStream)"
+
+[[sink]]
+id = "java.xxe"
+category = "xxe"
+severity = "medium"
+callee = "java:*.{newDocumentBuilder,newSAXParser,newXMLReader,createXMLStreamReader}"
+description = "XML parser factory susceptible to XXE"
+
+[[sink]]
+id = "java.deserialization.extra"
+category = "deserialization"
+severity = "high"
+callee = "java:{XMLDecoder,*.XMLDecoder,*.readUnshared,*.enableDefaultTyping}"
+description = "Unsafe deserialization (XMLDecoder / Jackson default typing)"
+
+[[sink]]
+id = "java.jndi"
+category = "jndi"
+severity = "medium"
+callee = "java:*.lookup"
+description = "JNDI lookup (InitialContext.lookup)"
+
+[[sink]]
+id = "java.expression-injection"
+category = "template_injection"
+severity = "high"
+callee = "java:*.{parseExpression,evaluate,createTemplate}"
+description = "Expression/template evaluation (SpEL / Velocity / Freemarker)"
+
+[[sink]]
+id = "java.path-traversal"
+category = "path_traversal"
+severity = "medium"
+callee = "java:{FileInputStream,*.FileInputStream,FileReader,*.FileReader,Files.readAllBytes,*.Files.readAllBytes,Paths.get}"
+description = "File access with a potentially attacker-controlled path"
+
+[[source]]
+id = "java.servlet.input"
+category = "http_input"
+callee = "java:*.{getParameter,getParameterValues,getHeader,getQueryString,getInputStream,getReader,getCookies}"
+description = "Servlet request input"
+
+[[source]]
+id = "java.env"
+category = "env_input"
+callee = "java:System.getenv"
+description = "Environment variable input"
