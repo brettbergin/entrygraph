@@ -252,6 +252,7 @@ class GoExtractor:
             else:
                 continue  # call of a call / index expr / etc. — not statically resolvable
             args = node.child_by_field_name("arguments")
+            caller = self._caller(node, ctx)
             out.references.append(
                 RawReference(
                     kind="call",
@@ -259,11 +260,12 @@ class GoExtractor:
                     callee_name=callee_name,
                     receiver_text=receiver,
                     span=span_of(node),
-                    caller_qualified_name=self._caller(node, ctx),
+                    caller_qualified_name=caller,
                     arg_count=len(args.named_children) if args is not None else 0,
                     arg_preview=truncate(node_text(args)) if args is not None else None,
                 )
             )
+            self._emit_callbacks(args, caller, out)
 
         for node in caps.get("composite.type", []):
             text = node_text(node)  # e.g. "cobra.Command"
@@ -275,6 +277,28 @@ class GoExtractor:
                     receiver_text=text.rsplit(".", 1)[0] if "." in text else None,
                     span=span_of(node),
                     caller_qualified_name=self._caller(node, ctx),
+                )
+            )
+
+    def _emit_callbacks(self, args: Node | None, caller: str | None, out: FileExtraction) -> None:
+        """Bare-identifier arguments passed to a call — a function value that may be
+        invoked later, e.g. ``http.HandleFunc("/", handler)``. Resolution keeps only
+        those binding to a project function, so passing a plain data value is a
+        harmless no-op edge."""
+        if args is None:
+            return
+        for arg in args.named_children:
+            if arg.type != "identifier":
+                continue
+            name = node_text(arg)
+            out.references.append(
+                RawReference(
+                    kind="callback",
+                    callee_text=name,
+                    callee_name=name,
+                    receiver_text=None,
+                    span=span_of(arg),
+                    caller_qualified_name=caller,
                 )
             )
 

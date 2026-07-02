@@ -167,6 +167,29 @@ func helper() {}
     assert "ls" in exec_call.arg_preview
 
 
+def test_function_value_argument_is_a_callback():
+    # http.HandleFunc("/", handler) passes `handler` as a value; it must be
+    # emitted as a callback so the handler is reachable from the registration site.
+    x = extract(
+        """
+package server
+
+import "net/http"
+
+func register() {
+	http.HandleFunc("/run", handler)
+}
+
+func handler(w http.ResponseWriter, r *http.Request) {}
+"""
+    )
+    callbacks = {r.callee_name: r for r in x.references if r.kind == "callback"}
+    assert "handler" in callbacks
+    assert callbacks["handler"].caller_qualified_name == "cmd.server.register"
+    # string/other literal args are not callbacks
+    assert "/run" not in callbacks
+
+
 def test_partial_tree_still_extracts():
     x = extract("package p\n\nfunc good() {}\n\nfunc broken( {\n")
     assert not x.parse_ok
