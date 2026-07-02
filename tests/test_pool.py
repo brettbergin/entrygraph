@@ -41,7 +41,7 @@ def test_parse_phase_falls_back_when_pool_breaks(monkeypatch: pytest.MonkeyPatch
     to_index = _walked(scanner._PARALLEL_THRESHOLD + 5)
 
     def fake_extract_one(wf: WalkedFile):
-        return (wf.path, object(), True)
+        return (wf.path, object(), True, "deadbeef")  # (path, extraction, is_package, hash)
 
     class _BrokenPool:
         def __init__(self, *args, **kwargs):
@@ -59,6 +59,7 @@ def test_parse_phase_falls_back_when_pool_breaks(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(scanner, "extract_one", fake_extract_one)
     monkeypatch.setattr(scanner, "ProcessPoolExecutor", _BrokenPool)
 
-    results = scanner._parse_phase(to_index, max_workers=4)
+    extractions, hashes = scanner._parse_phase(to_index, max_workers=4)
 
-    assert [r[0] for r in results] == [wf.path for wf in to_index]
+    assert [e[0] for e in extractions] == [wf.path for wf in to_index]
+    assert hashes == {wf.path: "deadbeef" for wf in to_index}

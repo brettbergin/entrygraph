@@ -6,6 +6,11 @@ import hashlib
 from dataclasses import dataclass, field
 
 from entrygraph.fs.walker import WalkedFile
+from entrygraph.parsing.parsers import supported
+
+
+def hash_bytes(data: bytes) -> str:
+    return hashlib.blake2b(data, digest_size=16).hexdigest()
 
 
 def hash_file(abs_path: str) -> str:
@@ -14,6 +19,14 @@ def hash_file(abs_path: str) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _worker_hashes(wf: WalkedFile) -> bool:
+    """True if the parse worker will read this file and can hash it there, so the
+    diff phase should not read it a second time. False for skipped files and
+    recognized-but-not-extracted ones (markdown/toml/...), which the worker never
+    reads — those are hashed here."""
+    return not wf.skip_reason and wf.language is not None and supported(wf.language)
 
 
 @dataclass(slots=True)
@@ -53,7 +66,9 @@ def diff_files(
         seen.add(wf.path)
         prior = known.get(wf.path)
         if prior is None:
-            if not wf.skip_reason:
+            # supported+unskipped files are hashed by the parse worker (avoids a
+            # second read); everything else the worker won't read is hashed here.
+            if not wf.skip_reason and not _worker_hashes(wf):
                 diff.hashes[wf.path] = hash_file(wf.abs_path)
             diff.added.append(wf)
             continue

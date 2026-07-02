@@ -73,6 +73,35 @@ def test_no_change_refresh_preserves_detection_confidence(repo, tmp_path):
     engine.dispose()
 
 
+def test_worker_hashes_enable_paranoid_no_change(repo, tmp_path):
+    # the parse worker now computes each file's content_hash (instead of the diff
+    # phase reading the file a second time). A paranoid refresh re-hashes every
+    # file and compares to the stored hash; it must find nothing changed, proving
+    # the worker-supplied hashes were stored correctly (not empty/placeholder).
+    engine = make_engine(tmp_path / "inc.db")
+    index_repository(repo, engine)
+    stats = index_repository(repo, engine, incremental=True, paranoid=True)
+    assert stats.files_indexed == 0
+    engine.dispose()
+
+
+def test_worker_hashes_predicate():
+    # only supported+unskipped files are hashed by the worker; everything else the
+    # worker never reads is hashed in the diff phase.
+    from entrygraph.fs.hashing import _worker_hashes
+    from entrygraph.fs.walker import WalkedFile
+
+    def wf(language, skip=None):
+        return WalkedFile(
+            path="x", abs_path="/x", language=language, size_bytes=1, mtime_ns=0, skip_reason=skip
+        )
+
+    assert _worker_hashes(wf("python")) is True
+    assert _worker_hashes(wf("python", "binary")) is False  # skipped -> worker won't read
+    assert _worker_hashes(wf("markdown")) is False  # recognized for stats, not extracted
+    assert _worker_hashes(wf(None)) is False
+
+
 def test_edit_file_matches_full_reindex(repo, tmp_path):
     engine = make_engine(tmp_path / "inc.db")
     index_repository(repo, engine)

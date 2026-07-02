@@ -104,7 +104,10 @@ def index_repository(
             _load_existing_symbols(session, repo.id, table)
 
         to_index = diff.to_index
-        extractions = _parse_phase(to_index, max_workers)
+        extractions, worker_hashes = _parse_phase(to_index, max_workers)
+        # the diff phase deferred hashing of parsed files to the worker; fold the
+        # results back in so file rows get their content_hash.
+        diff.hashes.update(worker_hashes)
 
         # ---- persist file rows (skipped + indexed + unchanged metadata) ----
         file_id_by_path = _write_files(session, repo, walked, diff, alloc, incremental)
@@ -195,7 +198,7 @@ def _pool_context():
 
 def _extract_sequential(
     to_index: list[WalkedFile],
-) -> list[tuple[str, FileExtraction, bool]]:
+) -> list[tuple[str, FileExtraction, bool, str]]:
     results = []
     for wf in to_index:
         result = extract_one(wf)
@@ -204,9 +207,9 @@ def _extract_sequential(
     return results
 
 
-def _parse_phase(
+def _collect_extractions(
     to_index: list[WalkedFile], max_workers: int | None
-) -> list[tuple[str, FileExtraction, bool]]:
+) -> list[tuple[str, FileExtraction, bool, str]]:
     if not to_index:
         return []
     workers = max_workers if max_workers is not None else (os.cpu_count() or 2)
@@ -225,6 +228,19 @@ def _parse_phase(
         # spawn, or a sandbox with no subprocess support). Degrade to correct,
         # single-threaded extraction rather than crashing the whole index.
         return _extract_sequential(to_index)
+
+
+def _parse_phase(
+    to_index: list[WalkedFile], max_workers: int | None
+) -> tuple[list[tuple[str, FileExtraction, bool]], dict[str, str]]:
+    """Extract to_index files, returning (extractions, content hashes by path).
+
+    The worker hashes each file it reads, so hashes flow back here instead of the
+    diff phase reading every file a second time."""
+    raw = _collect_extractions(to_index, max_workers)
+    extractions = [(path, x, pkg) for path, x, pkg, _h in raw]
+    hashes = {path: h for path, _x, _pkg, h in raw}
+    return extractions, hashes
 
 
 def _load_or_create_repo(session: Session, root: Path, incremental: bool) -> Repository:
