@@ -23,8 +23,177 @@ Dockerfile).
 pip install entrygraph        # or: uv pip install entrygraph
 ```
 
-Requires Python ≥ 3.11. Depends on `sqlalchemy`, `tree-sitter`,
-`tree-sitter-language-pack`, and `pathspec`.
+Requires Python ≥ 3.11. Installs the `entrygraph` command (you can also run it as
+`uv run entrygraph …` or `python -m entrygraph …`).
+
+## Quick start (CLI)
+
+Index a repo once, then query the resulting `.entrygraph.db` as often as you
+like. Every query command takes `--db PATH` (defaults to discovering
+`.entrygraph.db`) and `--json` for machine-readable output.
+
+### `index` — build the graph
+
+Walk the tree and extract symbols, imports, and calls into `.entrygraph.db`.
+Incremental by default (only changed files are reparsed); `--full` rebuilds.
+
+```bash
+entrygraph index .
+```
+
+```
+╭───────────────── ✓ indexed acme-api ──────────────────╮
+│ files    5 indexed, 0 skipped, 0 deleted of 5 scanned │
+│ graph    32 symbols  34 edges  5 entrypoints          │
+│ db       /path/to/acme-api/.entrygraph.db             │
+╰─────────────────────── 0.137s ────────────────────────╯
+```
+
+### `detect` — languages & frameworks
+
+Byte-share per language plus framework detections scored from manifest
+dependencies and code signals.
+
+```bash
+entrygraph detect
+```
+
+```
+Languages
+┏━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
+┃LANGUAGE ┃ FILES ┃ SHARE              ┃
+┡━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
+│python   │     5 │ ████████████ 100.0%│
+└─────────┴───────┴────────────────────┘
+Frameworks
+┏━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
+┃FRAMEWORK ┃ LANGUAGE ┃ CONFIDENCE     ┃
+┡━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
+│flask     │ python   │ █████████░ 0.94│
+│click     │ python   │ █████████░ 0.94│
+└──────────┴──────────┴────────────────┘
+```
+
+### `entrypoints` — your attack surface
+
+Every HTTP route, CLI command, task, lambda, middleware, and `main` — with its
+framework, method, route, and handler symbol. Filter with `--kind`,
+`--framework`, or `--route`.
+
+```bash
+entrypoints --kind http_route      # or: --framework flask / --route '/api/*'
+```
+
+```
+┏━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃KIND        ┃ FRAMEWORK ┃ METHOD   ┃ ROUTE            ┃ HANDLER                 ┃
+┡━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│http_route  │ flask     │ GET      │ /users/<user_id> │ app.routes.get_user     │
+│http_route  │ flask     │ GET      │ /health          │ app.routes.health       │
+│http_route  │ flask     │ GET,POST │ /reports         │ app.routes.create_report│
+│cli_command │ click     │          │                  │ cli.report              │
+│main        │           │          │                  │ cli                     │
+└────────────┴───────────┴──────────┴──────────────────┴─────────────────────────┘
+5 entrypoint(s)
+```
+
+### `symbols`, `callers`, `callees` — search & walk the call graph
+
+`symbols` globs on name or qualified name (filter by `--kind`/`--file`);
+`callers`/`callees` walk the call graph (`--depth N`).
+
+```bash
+entrygraph symbols --kind class --name 'Report*'
+entrygraph callers app.services.run_report        # who calls it
+entrygraph callees app.services.run_report        # what it calls
+```
+
+```
+┏━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━┓
+┃KIND  ┃ QNAME                     ┃ FILE            ┃ LINE┃
+┡━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━┩
+│class │ app.services.ReportRunner │ app/services.py │   10│
+└──────┴───────────────────────────┴─────────────────┴─────┘
+```
+
+### `paths` — source → sink reachability
+
+The security workhorse: *can anything reach a dangerous sink?* Paths are
+**risk-ranked** (highest first) and drawn as call trees — the sink node is
+flagged (`⚑`), each hop shows its resolution confidence
+(`exact`/`import`/`fuzzy`/`unresolved`), and badges mark constant-argument sinks
+and speculative edges.
+
+```bash
+entrygraph paths --source '*' --sink-category command_exec
+```
+
+```
+7 path(s)  * → category:command_exec
+
+[1] ■ risk 0.73  app.services.ReportRunner.render_and_execute
+└── → py:subprocess.run   line 22  import  ⚑ py.command-exec.subprocess
+[4] ■ risk 0.50  app.services.run_report
+└── → app.services.ReportRunner.start   line 27  fuzzy
+    └── → app.services.ReportRunner.render_and_execute   line 17  exact
+        └── → py:subprocess.run   line 22  import  ⚑ py.command-exec.subprocess
+[5] ■ risk 0.49  app.routes.create_report
+└── → app.services.run_report   line 20  import
+    └── → app.services.ReportRunner.start   line 27  fuzzy
+        └── → app.services.ReportRunner.render_and_execute   line 17  exact
+            └── → py:subprocess.run   line 22  import  ⚑ py.command-exec.subprocess
+```
+
+- **CI gate**: exits `0` when a path is found, `1` when none —
+  `entrygraph paths --source '*' --sink-category command_exec && echo reachable`.
+- **Precision/recall dial**: by default only high-confidence edges are traversed.
+  Widen with `--include-unresolved` (wildcard `py:*.execute` sinks + dynamic
+  calls) or `--include-fuzzy` (speculative class-hierarchy edges); drop
+  neutralized paths with `--prune-sanitized`.
+- Target an exact sink with `--sink py:subprocess.run` instead of a category.
+
+### `stats` & `--json`
+
+```bash
+entrygraph stats
+entrygraph --help          # every command and flag
+```
+
+```
+╭─────────────── index stats ────────────────╮
+│ ┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓ │
+│ ┃metric           ┃                 value┃ │
+│ ┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩ │
+│ │repo_root        │ /path/to/acme-api    │ │
+│ │files            │                     5│ │
+│ │symbols          │                    32│ │
+│ │edges            │                    34│ │
+│ │entrypoints      │                     5│ │
+│ │sink_edges       │                     2│ │
+│ └─────────────────┴──────────────────────┘ │
+╰────────────────────────────────────────────╯
+```
+
+Add `--json` to any query command for machine-readable output (paths include
+`risk_score` and `may_continue`):
+
+```json
+[
+  {
+    "risk_score": 0.4887,
+    "may_continue": false,
+    "symbols": [
+      "app.routes.create_report", "app.services.run_report",
+      "app.services.ReportRunner.start",
+      "app.services.ReportRunner.render_and_execute", "py:subprocess.run"
+    ],
+    "lines": [20, 27, 17, 22]
+  }
+]
+```
+
+> Colored tables, share/confidence bars, and risk-tree highlighting render in a
+> real terminal; piped or `--json` output is plain text.
 
 ## Python API
 
@@ -59,7 +228,7 @@ graph.references("app.models.CONST")                # inbound edges of any kind
 paths = graph.paths(source="app.routes.*", sink_category="command_exec")
 for p in paths:
     print(p.risk_score, p.render(), "(+may continue)" if p.may_continue else "")
-    # 0.72 app.routes.create_report -> app.services.run_report (line 20)
+    # 0.49 app.routes.create_report -> app.services.run_report (line 20)
     #   -> ...ReportRunner.render_and_execute (line 17) -> py:subprocess.run (line 22)
 
 graph.reachable(source="app.routes.upload", sink="py:subprocess.run")   # -> bool
@@ -83,31 +252,6 @@ graph.sql("SELECT ...")       # textual query -> list[dict]
 
 Every result is a frozen, immutable dataclass detached from the DB session, so
 results are safe to hold and trivial to serialize.
-
-## CLI
-
-Human-readable output is rendered with [Rich](https://github.com/Textualize/rich) —
-colored tables, language/confidence bars, a progress spinner while indexing, and
-risk-ranked reachability rendered as call trees (sink nodes highlighted, per-hop
-confidence, sanitizer/const-arg badges). Piped or `--json` output stays plain.
-
-```bash
-entrygraph index PATH [--full] [--paranoid]     # incremental by default
-entrygraph detect
-entrygraph symbols --kind class --name 'User*'
-entrygraph entrypoints --framework flask
-entrygraph callers  app.services.run_report --depth 2
-entrygraph callees  app.services.run_report
-entrygraph paths --source 'app.routes.*' --sink-category command_exec
-entrygraph stats
-```
-
-Add `--json` to any query command for machine-readable output. `entrygraph paths`
-exits 0 when a path is found and 1 when none is — handy in CI:
-
-```bash
-entrygraph paths --source '*' --sink-category command_exec && echo "reachable!"
-```
 
 ## How it works
 
