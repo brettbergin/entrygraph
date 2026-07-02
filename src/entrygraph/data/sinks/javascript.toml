@@ -71,3 +71,42 @@ category = "template_injection"
 callee = "js:{escape-html,he.encode,*.escapeHtml}"
 effect = "reduces"
 description = "HTML entity escaping"
+
+# --- C5 deepening ---
+[[sink]]
+id = "js.ssrf"
+category = "ssrf"
+severity = "medium"
+callee = "js:{axios.{request,put,delete,patch},got,http.request,https.request,undici.{request,fetch}}"
+require_arg_hint = "\\+|\\$\\{|`"
+description = "Server-side request with a non-literal URL"
+
+[[sink]]
+id = "js.path-traversal"
+category = "path_traversal"
+severity = "medium"
+callee = "js:fs.{readFile,readFileSync,createReadStream,open,openSync}"
+require_arg_hint = "\\+|\\$\\{|`"
+description = "File read with a non-literal path"
+
+[[sink]]
+id = "js.template-injection"
+category = "template_injection"
+severity = "high"
+callee = "js:{ejs.render,handlebars.compile,pug.render,nunjucks.renderString,lodash.template}"
+description = "Template rendering / compilation"
+
+[[sink]]
+id = "js.code-eval.vm"
+category = "code_eval"
+severity = "critical"
+callee = "js:vm.{runInNewContext,runInThisContext,runInContext}"
+description = "Node vm dynamic code execution"
+
+[[sink]]
+id = "js.weak-crypto"
+category = "weak_crypto"
+severity = "low"
+callee = "js:crypto.createHash"
+require_arg_hint = "md5|sha1"
+description = "Weak hashing algorithm"

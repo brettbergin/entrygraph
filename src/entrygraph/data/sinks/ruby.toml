@@ -44,3 +44,59 @@ id = "rb.sinatra.params"
 category = "http_input"
 callee = "rb:*.params*"
 description = "Sinatra/Rails request params"
+
+# --- C5 deepening ---
+# NOTE: `X::Y.method` receivers canonicalize to `rb:*.method` when unresolved,
+# so receiver-agnostic patterns (with arg hints) are used for stdlib sinks.
+[[sink]]
+id = "rb.command-exec.open3"
+category = "command_exec"
+severity = "high"
+callee = "rb:*.{capture2,capture2e,capture3,popen2,popen3,popen2e}"
+description = "Open3 command execution"
+
+[[sink]]
+id = "rb.deserialization"
+category = "deserialization"
+severity = "high"
+callee = "rb:*.{load,restore,unsafe_load,object_load}"
+require_arg_hint = "params|\\#\\{|@|\\("
+description = "Unsafe deserialization (Marshal/YAML/Oj)"
+
+[[sink]]
+id = "rb.code-eval.send"
+category = "code_eval"
+severity = "high"
+callee = "rb:*.{send,public_send,constantize,const_get}"
+require_arg_hint = "params|\\#\\{|@"
+description = "Dynamic dispatch / constant resolution from input"
+
+[[sink]]
+id = "rb.path-traversal"
+category = "path_traversal"
+severity = "medium"
+callee = "rb:*.{read,open,write,binread}"
+require_arg_hint = "params|\\#\\{|\\+"
+description = "File access with a non-literal path"
+
+[[sink]]
+id = "rb.ssrf"
+category = "ssrf"
+severity = "medium"
+callee = "rb:*.{get_response,post_form}"
+description = "Net::HTTP outbound request"
+
+[[sink]]
+id = "rb.template-injection"
+category = "template_injection"
+severity = "high"
+callee = "rb:*.{new,result}"
+require_arg_hint = "\\#\\{"
+description = "ERB template built from interpolated input"
+
+[[source]]
+id = "rb.env"
+category = "env_input"
+callee = "rb:*.{fetch}"
+require_arg_hint = "ENV"
+description = "Environment variable input"

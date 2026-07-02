@@ -100,3 +100,61 @@ category = "command_exec"
 callee = "py:shutil.which"
 effect = "reduces"
 description = "Resolving an executable path via allowlist lookup"
+
+# --- C5 deepening ---
+[[sink]]
+id = "py.ssrf"
+category = "ssrf"
+severity = "medium"
+callee = "py:{requests.{get,post,put,delete,patch,request},urllib.request.{urlopen,Request},httpx.{get,post,request,stream}}"
+require_arg_hint = "\\+|%|format|f['\"]"
+description = "Server-side request with a non-literal URL"
+
+[[sink]]
+id = "py.path-traversal"
+category = "path_traversal"
+severity = "medium"
+callee = "py:{open,io.open}"
+require_arg_hint = "\\+|%|format\\(|f['\"]"
+description = "File open with a non-literal path"
+
+[[sink]]
+id = "py.xxe"
+category = "xxe"
+severity = "medium"
+callee = "py:{xml.etree.ElementTree.{parse,fromstring},lxml.etree.{parse,fromstring,XML},xml.dom.minidom.{parse,parseString},xml.sax.{parse,parseString}}"
+description = "XML parsing susceptible to XXE"
+
+[[sink]]
+id = "py.weak-crypto"
+category = "weak_crypto"
+severity = "low"
+callee = "py:hashlib.{md5,sha1}"
+description = "Weak hashing algorithm"
+
+[[sink]]
+id = "py.deserialization.extra"
+category = "deserialization"
+severity = "high"
+callee = "py:{dill,cloudpickle,joblib}.{load,loads}"
+description = "Unsafe deserialization (dill/cloudpickle/joblib)"
+
+[[sink]]
+id = "py.template-injection.libs"
+category = "template_injection"
+severity = "high"
+callee = "py:{jinja2.Template,mako.template.Template,django.template.Template}"
+description = "Template constructed from a string"
+
+[[sink]]
+id = "py.dynamic-import"
+category = "code_eval"
+severity = "medium"
+callee = "py:{importlib.import_module,__import__}"
+description = "Dynamic module import"
+
+[[source]]
+id = "py.env"
+category = "env_input"
+callee = "py:{os.getenv,os.environ.get}"
+description = "Environment variable input"
