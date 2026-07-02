@@ -73,3 +73,34 @@ def test_engines_agree_on_path_set(graph):
 def test_unknown_engine_raises(graph):
     with pytest.raises(ValueError):
         graph.paths(source="app.routes.*", sink="py:subprocess.run", engine="bogus")
+
+
+# ---------------- S4: enrichment / risk scoring / confidence gating ----------------
+
+def test_paths_carry_risk_score(graph):
+    paths = graph.paths(source="app.routes.create_report", sink="py:subprocess.run")
+    assert paths
+    assert paths[0].risk_score is not None and paths[0].risk_score > 0
+
+
+def test_default_floor_excludes_wildcard_sinks_but_flag_includes(graph):
+    # find_user -> py:*.execute is an UNRESOLVED wildcard sink (confidence 0)
+    default = graph.paths(source="app.db.find_user", sink="py:*.execute")
+    opted_in = graph.paths(source="app.db.find_user", sink="py:*.execute",
+                           include_unresolved=True)
+    assert default == []
+    assert opted_in
+
+
+def test_sink_terminal_edge_carries_sink_id(graph):
+    paths = graph.paths(source="app.routes.create_report", sink="py:subprocess.run")
+    terminal = paths[0].edges[-1]
+    assert terminal.sink_id == "py.command-exec.subprocess"
+
+
+def test_engines_agree_on_risk_ranked_paths(graph):
+    mem = graph.paths(source="app.routes.create_report", sink="py:subprocess.run",
+                      engine="memory")
+    sql = graph.paths(source="app.routes.create_report", sink="py:subprocess.run",
+                      engine="sql")
+    assert [round(p.risk_score, 4) for p in mem] == [round(p.risk_score, 4) for p in sql]

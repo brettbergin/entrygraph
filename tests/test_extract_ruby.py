@@ -194,10 +194,13 @@ def test_source_reaches_command_exec_sink(graph):
     #   app -> Runner#run_report (FUZZY) -> render_and_execute (EXACT)
     #       -> system (rb:*.system, command_exec sink)
     # Fuzzy resolution makes this best-effort; assert the full path is found.
-    reached = graph.reachable(source="app", sink_category="command_exec")
+    # rb:*.system is a receiver-agnostic UNRESOLVED sink placeholder -> opt in.
+    reached = graph.reachable(source="app", sink_category="command_exec",
+                              include_unresolved=True)
     assert reached, "expected the sinatra route module to reach a command_exec sink"
 
-    paths = graph.paths(source="app", sink_category="command_exec")
+    paths = graph.paths(source="app", sink_category="command_exec",
+                        include_unresolved=True)
     assert paths, "expected at least one source->sink call path"
     qnames = [s.qname for s in paths[0].symbols]
     assert "services.runner.Services.Runner.run_report" in qnames

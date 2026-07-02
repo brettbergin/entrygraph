@@ -24,6 +24,8 @@ from entrygraph.errors import (
     SymbolNotFoundError,
 )
 from entrygraph.graph.adjacency import AdjacencyCache, Hop
+from entrygraph.graph.scoring import is_constant_args, score_path
+from entrygraph.kinds import Confidence
 from entrygraph.results import (
     CallPath,
     DetectedFramework,
@@ -41,6 +43,32 @@ from entrygraph.results import (
 DEFAULT_DB_NAME = ".entrygraph.db"
 
 SourceSpec = "str | Symbol | Entrypoint | list[str | Symbol | Entrypoint]"
+
+
+def _traversal_params(
+    min_confidence: int | None, include_fuzzy: bool, include_unresolved: bool
+) -> tuple[int, bool]:
+    """Derive (confidence floor, include_cha) for traversal.
+
+    Default floor is FUZZY: EXACT/IMPORT/unique-name-FUZZY edges are traversed,
+    which keeps ordinary method dispatch on a local variable reachable. The
+    speculative class-hierarchy fan-out (via="cha") stays hidden until
+    `include_fuzzy=True`. `include_unresolved=True` lowers the floor to 0, which
+    admits UNRESOLVED wildcard-sink guesses (`py:*.execute`) and dynamic-call
+    placeholders. An explicit `min_confidence` int overrides the floor.
+    """
+    if min_confidence is not None:
+        floor = min_confidence
+    elif include_unresolved:
+        floor = int(Confidence.UNRESOLVED)
+    else:
+        floor = int(Confidence.FUZZY)
+    return floor, include_fuzzy
+
+
+def _fully_sanitized(path: CallPath) -> bool:
+    """True if the terminal hop was neutralized by a sanitizer (risk driven to 0)."""
+    return path.risk_score == 0.0
 
 
 class CodeGraph:
@@ -214,19 +242,49 @@ class CodeGraph:
         max_depth: int = 25,
         max_paths: int = 10,
         edge_kinds: tuple[str, ...] = ("calls",),
-        min_confidence: int = 0,
+        min_confidence: int | None = None,
+        include_fuzzy: bool = False,
+        include_unresolved: bool = False,
+        include_callbacks: bool = False,
+        prune_sanitized: bool = False,
         engine: str = "memory",
     ) -> list[CallPath]:
+        """Enumerate source->sink call paths, risk-ranked (highest first).
+
+        By default only EXACT/IMPORT edges are traversed; `include_fuzzy` /
+        `include_unresolved` lower the confidence floor (an explicit
+        `min_confidence` int overrides the flags). `include_callbacks` also
+        follows PASSED_AS_CALLBACK edges. Each returned path carries a heuristic
+        `risk_score` and a `may_continue` flag; `prune_sanitized` drops paths
+        neutralized by a registered sanitizer.
+        """
+        floor, include_cha = _traversal_params(min_confidence, include_fuzzy, include_unresolved)
+        kinds = (*edge_kinds, "callback") if include_callbacks else edge_kinds
         with self._session_factory() as session:
             sources = self._spec_to_ids(session, source)
             sinks = self._sink_ids(session, sink, sink_category)
             if not sources or not sinks:
                 return []
-            traverser = self._traverser(session, engine, edge_kinds, min_confidence)
+            traverser = self._traverser(session, engine, kinds, floor, include_cha)
             raw_paths = traverser.paths(sources, sinks, max_depth=max_depth, max_paths=max_paths)
+            if not raw_paths:
+                return []
             all_ids = {node for path in raw_paths for node, _ in path}
             symbol_map = q.symbols_by_ids(session, all_ids)
-        return [self._to_call_path(path, symbol_map) for path in raw_paths]
+            registry = self._registry(session)
+            edge_map = self._edge_rows(session, raw_paths)
+            tainted_sources = self._tainted_source_ids(session, sources)
+            excluded_nodes = self._nodes_with_open_frontier(session, all_ids, kinds, floor)
+            built = [
+                self._materialize_path(
+                    path, symbol_map, edge_map, registry, tainted_sources, excluded_nodes
+                )
+                for path in raw_paths
+            ]
+        results = [cp for cp in built if not (prune_sanitized and _fully_sanitized(cp))]
+        results.sort(key=lambda p: (-(p.risk_score or 0.0), len(p.symbols),
+                                    [s.id for s in p.symbols]))
+        return results
 
     def reachable(
         self,
@@ -236,15 +294,20 @@ class CodeGraph:
         sink_category: str | None = None,
         max_depth: int = 25,
         edge_kinds: tuple[str, ...] = ("calls",),
-        min_confidence: int = 0,
+        min_confidence: int | None = None,
+        include_fuzzy: bool = False,
+        include_unresolved: bool = False,
+        include_callbacks: bool = False,
         engine: str = "memory",
     ) -> bool:
+        floor, include_cha = _traversal_params(min_confidence, include_fuzzy, include_unresolved)
+        kinds = (*edge_kinds, "callback") if include_callbacks else edge_kinds
         with self._session_factory() as session:
             sources = self._spec_to_ids(session, source)
             sinks = self._sink_ids(session, sink, sink_category)
             if not sources or not sinks:
                 return False
-            traverser = self._traverser(session, engine, edge_kinds, min_confidence)
+            traverser = self._traverser(session, engine, kinds, floor, include_cha)
             return traverser.reachable(sources, sinks, max_depth)
 
     # ---------------- maintenance ----------------
@@ -304,23 +367,23 @@ class CodeGraph:
         return gen or 0
 
     def _traverser(self, session: Session, engine: str, edge_kinds: tuple[str, ...],
-                min_confidence: int):
+                min_confidence: int, include_cha: bool = True):
         if engine == "sql":
             from entrygraph.graph.cte import CteEngine
 
-            return CteEngine(session, frozenset(edge_kinds), min_confidence)
+            return CteEngine(session, frozenset(edge_kinds), min_confidence, include_cha)
         if engine != "memory":
             raise ValueError(f"unknown reachability engine {engine!r} (use 'memory' or 'sql')")
-        return self._cache(session, edge_kinds, min_confidence)
+        return self._cache(session, edge_kinds, min_confidence, include_cha)
 
     def _cache(self, session: Session, edge_kinds: tuple[str, ...],
-               min_confidence: int) -> AdjacencyCache:
+               min_confidence: int, include_cha: bool = True) -> AdjacencyCache:
         kinds = frozenset(edge_kinds)
         generation = self._generation(session)
-        key = (kinds | {f"minconf:{min_confidence}"}, generation)
+        key = (kinds | {f"minconf:{min_confidence}", f"cha:{include_cha}"}, generation)
         cache = self._adjacency.get(key)
         if cache is None:
-            cache = AdjacencyCache.build(session, generation, kinds, min_confidence)
+            cache = AdjacencyCache.build(session, generation, kinds, min_confidence, include_cha)
             self._adjacency = {k: v for k, v in self._adjacency.items() if k[1] == generation}
             self._adjacency[key] = cache
         return cache
@@ -368,12 +431,119 @@ class CodeGraph:
             symbol_map = q.symbols_by_ids(session, found)
         return sorted(symbol_map.values(), key=lambda s: s.qname)
 
+    def _registry(self, session: Session):
+        from entrygraph.detect.taint import registry_for_repo
+
+        repo = session.execute(select(models.Repository)).scalars().first()
+        return registry_for_repo(repo.root_path if repo else None)
+
     @staticmethod
-    def _to_call_path(path: list[tuple[int, "Hop | None"]],
-                      symbol_map: dict[int, Symbol]) -> CallPath:
+    def _edge_rows(session: Session, raw_paths) -> dict[int, "models.Edge"]:
+        edge_ids = {hop.edge_id for path in raw_paths for _, hop in path if hop and hop.edge_id}
+        if not edge_ids:
+            return {}
+        rows = session.execute(
+            select(models.Edge).where(models.Edge.id.in_(edge_ids))
+        ).scalars().all()
+        return {r.id: r for r in rows}
+
+    @staticmethod
+    def _tainted_source_ids(session: Session, sources: set[int]) -> set[int]:
+        """Source symbol ids that are entrypoints with known user-controlled params."""
+        if not sources:
+            return set()
+        rows = session.execute(
+            select(models.Entrypoint.symbol_id, models.Entrypoint.extra).where(
+                models.Entrypoint.symbol_id.in_(sources)
+            )
+        ).all()
+        tainted: set[int] = set()
+        for sid, extra in rows:
+            if extra and json.loads(extra).get("tainted_params"):
+                tainted.add(sid)
+        return tainted
+
+    @staticmethod
+    def _nodes_with_open_frontier(
+        session: Session, node_ids: set[int], kinds: tuple[str, ...], floor: int
+    ) -> set[int]:
+        """Path nodes that have outgoing call edges the confidence filter excluded
+        (or dynamic placeholders) — i.e. reachability may continue past them."""
+        if not node_ids:
+            return set()
+        from entrygraph.kinds import EdgeKind
+
+        kind_enums = [EdgeKind(k) for k in kinds if k in {e.value for e in EdgeKind}]
+        rows = session.execute(
+            select(models.Edge.src_symbol_id).where(
+                models.Edge.src_symbol_id.in_(node_ids),
+                models.Edge.dst_symbol_id.is_not(None),
+                models.Edge.kind.in_(kind_enums),
+                (models.Edge.confidence < floor) | (models.Edge.via == "dynamic"),
+            )
+        ).scalars()
+        return set(rows)
+
+    def _materialize_path(
+        self, path, symbol_map, edge_map, registry, tainted_sources, excluded_nodes
+    ) -> CallPath:
         symbols = tuple(symbol_map[node] for node, _ in path)
-        edges = tuple(
-            PathEdge(kind=hop.kind, line=hop.line, confidence=hop.confidence)
-            for _, hop in path[1:]
+        hops = [hop for _, hop in path[1:]]
+        rows = [edge_map.get(hop.edge_id) if hop else None for hop in hops]
+
+        # sink is the terminal edge; its category drives sanitizer matching
+        terminal = rows[-1] if rows else None
+        sink_id = terminal.sink_id if terminal else None
+        sink_category = registry.sinks[sink_id].category if sink_id in registry.sinks else None
+        terminal_const = is_constant_args(terminal.arg_preview) if terminal else False
+
+        # sanitizer detection: any on-path symbol OR sibling call matching a
+        # sanitizer for the sink's category
+        sanitized_ids, sanitized_effect = self._path_sanitizers(
+            symbols, rows, registry, sink_category
         )
-        return CallPath(symbols=symbols, edges=edges)
+
+        path_edges: list[PathEdge] = []
+        for i, hop in enumerate(hops):
+            row = rows[i]
+            is_terminal = i == len(hops) - 1
+            path_edges.append(
+                PathEdge(
+                    kind=hop.kind,
+                    line=hop.line,
+                    confidence=hop.confidence,
+                    sink_id=row.sink_id if row else None,
+                    via=row.via if row else hop.via,
+                    arg_preview=row.arg_preview if row else None,
+                    constant_args=terminal_const if is_terminal else False,
+                    sanitized_by=tuple(sanitized_ids) if is_terminal else (),
+                )
+            )
+
+        risk = score_path(
+            hop_confidences=[h.confidence for h in hops],
+            hop_vias=[(rows[i].via if rows[i] else h.via) for i, h in enumerate(hops)],
+            sink_severity=registry.severity_of(sink_id),
+            sanitized_effect=sanitized_effect,
+            constant_args=terminal_const,
+            source_tainted=path[0][0] in tainted_sources,
+        )
+        may_continue = any(node in excluded_nodes for node, _ in path)
+        return CallPath(symbols=symbols, edges=tuple(path_edges),
+                        risk_score=risk, may_continue=may_continue)
+
+    @staticmethod
+    def _path_sanitizers(symbols, rows, registry, sink_category):
+        """Return (matched sanitizer ids, strongest effect) for the sink category."""
+        if not sink_category:
+            return [], None
+        matched: list = []
+        candidates = [s.qname for s in symbols] + [r.dst_qname for r in rows if r is not None]
+        for qname in candidates:
+            for san in registry.match_sanitizers(qname):
+                if san.category == sink_category:
+                    matched.append(san)
+        if not matched:
+            return [], None
+        effect = "neutralizes" if any(s.effect == "neutralizes" for s in matched) else "reduces"
+        return [s.id for s in matched], effect

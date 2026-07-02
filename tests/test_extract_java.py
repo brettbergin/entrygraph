@@ -288,9 +288,12 @@ def test_exec_call_is_tagged_as_sink(indexed):
 def test_route_reaches_command_exec_sink(indexed):
     engine, _ = indexed
     graph = CodeGraph(engine)
+    # java:*.exec is a receiver-agnostic UNRESOLVED sink placeholder, so opt in
+    # to unresolved-edge traversal.
     paths = graph.paths(
         source="com.example.UserController.createReport",
         sink_category="command_exec",
+        include_unresolved=True,
     )
     assert paths, "expected a route -> exec reachability path"
     path = paths[0]

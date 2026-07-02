@@ -19,10 +19,12 @@ _SEP = ","
 
 
 class CteEngine:
-    def __init__(self, session: Session, kinds: frozenset[str], min_confidence: int = 0) -> None:
+    def __init__(self, session: Session, kinds: frozenset[str], min_confidence: int = 0,
+                 include_cha: bool = True) -> None:
         self.session = session
         self.kind_values = [EdgeKind(k).value for k in kinds]
         self.min_confidence = min_confidence
+        self.include_cha = include_cha
 
     def reachable(self, sources: set[int], sinks: set[int], max_depth: int) -> bool:
         if sources & sinks:
@@ -40,22 +42,27 @@ class CteEngine:
         rows = self.session.execute(
             text(
                 """
-                WITH RECURSIVE walk(node, nodes, lines, kinds, depth) AS (
+                WITH RECURSIVE walk(node, nodes, lines, kinds, ids, confs, depth) AS (
                     SELECT e.dst_symbol_id,
                            :sep || e.src_symbol_id || :sep || e.dst_symbol_id || :sep,
                            :sep || e.line || :sep,
                            :sep || e.kind || :sep,
+                           :sep || e.id || :sep,
+                           :sep || e.confidence || :sep,
                            1
                     FROM edges e
                     WHERE e.src_symbol_id IN :sources
                       AND e.dst_symbol_id IS NOT NULL
                       AND e.kind IN :kinds
                       AND e.confidence >= :minconf
+                      AND (:include_cha OR e.via IS NULL OR e.via != 'cha')
                     UNION ALL
                     SELECT e.dst_symbol_id,
                            w.nodes || e.dst_symbol_id || :sep,
                            w.lines || e.line || :sep,
                            w.kinds || e.kind || :sep,
+                           w.ids || e.id || :sep,
+                           w.confs || e.confidence || :sep,
                            w.depth + 1
                     FROM walk w
                     JOIN edges e ON e.src_symbol_id = w.node
@@ -63,9 +70,10 @@ class CteEngine:
                       AND e.dst_symbol_id IS NOT NULL
                       AND e.kind IN :kinds
                       AND e.confidence >= :minconf
+                      AND (:include_cha OR e.via IS NULL OR e.via != 'cha')
                       AND w.nodes NOT LIKE '%' || :sep || e.dst_symbol_id || :sep || '%'
                 )
-                SELECT nodes, lines, kinds, depth FROM walk
+                SELECT nodes, lines, kinds, ids, confs, depth FROM walk
                 WHERE node IN :sinks
                 ORDER BY depth
                 """
@@ -79,15 +87,16 @@ class CteEngine:
                 "sinks": list(sinks),
                 "kinds": self.kind_values,
                 "minconf": self.min_confidence,
+                "include_cha": 1 if self.include_cha else 0,
                 "max_depth": max_depth,
                 "sep": _SEP,
             },
         ).all()
 
-        for nodes_str, lines_str, kinds_str, _depth in rows:
+        for nodes_str, lines_str, kinds_str, ids_str, confs_str, _depth in rows:
             if len(results) >= max_paths:
                 break
-            path = self._decode(nodes_str, lines_str, kinds_str)
+            path = self._decode(nodes_str, lines_str, kinds_str, ids_str, confs_str)
             if path is not None:
                 results.append(path)
 
@@ -95,13 +104,20 @@ class CteEngine:
         return results[:max_paths]
 
     @staticmethod
-    def _decode(nodes_str, lines_str, kinds_str) -> list[tuple[int, Hop | None]] | None:
+    def _decode(
+        nodes_str, lines_str, kinds_str, ids_str, confs_str
+    ) -> list[tuple[int, Hop | None]] | None:
         node_ids = [int(x) for x in nodes_str.strip(_SEP).split(_SEP) if x]
         lines = [int(x) for x in lines_str.strip(_SEP).split(_SEP) if x]
         kinds = [x for x in kinds_str.strip(_SEP).split(_SEP) if x]
+        edge_ids = [int(x) for x in ids_str.strip(_SEP).split(_SEP) if x]
+        confs = [int(x) for x in confs_str.strip(_SEP).split(_SEP) if x]
         if len(lines) != len(node_ids) - 1:
             return None
         path: list[tuple[int, Hop | None]] = [(node_ids[0], None)]
         for i in range(1, len(node_ids)):
-            path.append((node_ids[i], Hop(node_ids[i], kinds[i - 1], lines[i - 1], 0)))
+            path.append(
+                (node_ids[i], Hop(node_ids[i], kinds[i - 1], lines[i - 1],
+                                  confs[i - 1], edge_ids[i - 1]))
+            )
         return path

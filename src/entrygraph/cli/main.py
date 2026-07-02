@@ -142,10 +142,14 @@ def cmd_paths(args) -> int:
             max_depth=args.max_depth,
             max_paths=args.max_paths,
             min_confidence=args.min_confidence,
+            include_fuzzy=args.include_fuzzy,
+            include_unresolved=args.include_unresolved,
+            prune_sanitized=args.prune_sanitized,
         )
     if args.json:
         print(to_json([
             {"length": len(p.symbols), "min_confidence": p.min_confidence,
+             "risk_score": p.risk_score, "may_continue": p.may_continue,
              "symbols": [s.qname for s in p.symbols],
              "lines": [e.line for e in p.edges]}
             for p in paths
@@ -154,7 +158,9 @@ def cmd_paths(args) -> int:
         if not paths:
             print("(no paths found)")
         for i, path in enumerate(paths, 1):
-            print(f"[{i}] {path.render()}")
+            risk = f"risk={path.risk_score:.2f} " if path.risk_score is not None else ""
+            cont = " (+may continue)" if path.may_continue else ""
+            print(f"[{i}] {risk}{path.render()}{cont}")
     return 0 if paths else 1
 
 
@@ -228,7 +234,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="named sink category (e.g. command_exec, sql)")
     p.add_argument("--max-depth", dest="max_depth", type=int, default=25)
     p.add_argument("--max-paths", dest="max_paths", type=int, default=10)
-    p.add_argument("--min-confidence", dest="min_confidence", type=int, default=0)
+    p.add_argument("--min-confidence", dest="min_confidence", type=int, default=None,
+                   help="explicit confidence floor (overrides --include-* flags)")
+    p.add_argument("--include-fuzzy", dest="include_fuzzy", action="store_true",
+                   help="also traverse speculative class-hierarchy (CHA) edges")
+    p.add_argument("--include-unresolved", dest="include_unresolved", action="store_true",
+                   help="also traverse unresolved wildcard-sink and dynamic-call edges")
+    p.add_argument("--prune-sanitized", dest="prune_sanitized", action="store_true",
+                   help="drop paths neutralized by a registered sanitizer")
     p.set_defaults(func=cmd_paths)
 
     p = sub.add_parser("stats", help="index statistics")
