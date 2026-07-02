@@ -13,12 +13,15 @@ from pathlib import Path
 from entrygraph.extract.base import FileContext
 from entrygraph.extract.ir import FileExtraction
 from entrygraph.extract.registry import extractor_for
+from entrygraph.fs.hashing import hash_bytes
 from entrygraph.fs.walker import WalkedFile
 from entrygraph.parsing.parsers import parse, supported
 
 
-def extract_one(walked: WalkedFile) -> tuple[str, FileExtraction, bool] | None:
-    """Parse+extract one file -> (path, extraction, is_package), or None to skip."""
+def extract_one(walked: WalkedFile) -> tuple[str, FileExtraction, bool, str] | None:
+    """Parse+extract one file -> (path, extraction, is_package, content_hash), or
+    None to skip. The hash is computed from the bytes read here so the diff phase
+    doesn't read the same file a second time just to hash it."""
     language = walked.language
     if walked.skip_reason or not language or not supported(language):
         return None
@@ -29,6 +32,7 @@ def extract_one(walked: WalkedFile) -> tuple[str, FileExtraction, bool] | None:
         source = Path(walked.abs_path).read_bytes()
     except OSError:
         return None
+    content_hash = hash_bytes(source)
     module_path, is_package = extractor.module_path_for(walked.path)
     tree = parse(language, source)
     ctx = FileContext(
@@ -38,10 +42,10 @@ def extract_one(walked: WalkedFile) -> tuple[str, FileExtraction, bool] | None:
         source=source,
         is_package=is_package,
     )
-    return walked.path, extractor.extract(tree, ctx), is_package
+    return walked.path, extractor.extract(tree, ctx), is_package, content_hash
 
 
-def extract_batch(batch: list[WalkedFile]) -> list[tuple[str, FileExtraction, bool]]:
+def extract_batch(batch: list[WalkedFile]) -> list[tuple[str, FileExtraction, bool, str]]:
     results = []
     for walked in batch:
         result = extract_one(walked)
