@@ -72,6 +72,32 @@ def test_relative_import_resolution():
     assert any(i.module == "db.conn" for i in x.imports)
 
 
+def test_commonjs_require_bindings():
+    x = extract(
+        "const cp = require('child_process');\n"
+        "const { exec, spawn: launch } = require('child_process');\n"
+        "const express = require('express');\n"
+        "require('./side-effect');\n"
+        "const rel = require('../db/conn');\n",
+        path="src/routes/users.js",
+    )
+    imports = {(i.module, i.imported_name, i.alias) for i in x.imports}
+    assert ("child_process", None, "cp") in imports  # default -> module binding
+    assert ("child_process", "exec", "exec") in imports  # destructured
+    assert ("child_process", "spawn", "launch") in imports  # destructured + rename
+    assert ("express", None, "express") in imports
+    assert ("db.conn", None, "rel") in imports  # relative resolved to dotted, bound to `rel`
+    # side-effect require still registers the module (framework signal source)
+    assert any(m == "routes.side-effect" and n is None for m, n, _ in imports)
+
+
+def test_commonjs_require_emits_framework_signal():
+    # regression: CommonJS `require('express')` used to yield no import at all,
+    # so express was undetectable in pure-CJS apps.
+    x = extract("const express = require('express');\n")
+    assert ("import", "express") in x.framework_signals
+
+
 def test_calls_with_receivers():
     x = extract(
         "import cp from 'child_process';\nfunction run() { cp.execSync('ls'); helper(); }\n"
