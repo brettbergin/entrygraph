@@ -329,6 +329,7 @@ class CSharpExtractor:
             receiver = None
             callee_text = node_text(fn)
         args = node.child_by_field_name("arguments")
+        caller = self._caller(node, ctx)
         out.references.append(
             RawReference(
                 kind="call",
@@ -336,11 +337,35 @@ class CSharpExtractor:
                 callee_name=callee_name,
                 receiver_text=receiver,
                 span=span_of(node),
-                caller_qualified_name=self._caller(node, ctx),
+                caller_qualified_name=caller,
                 arg_count=len(args.named_children) if args is not None else 0,
                 arg_preview=truncate(node_text(args)) if args is not None else None,
             )
         )
+        self._emit_callbacks(args, caller, out)
+
+    def _emit_callbacks(self, args: Node | None, caller: str | None, out: FileExtraction) -> None:
+        """Method-group arguments passed to a call — a function value invoked later,
+        e.g. ``app.MapPost("/run", Handler)`` (minimal APIs). Each C# argument wraps
+        its expression; a bare identifier is a method group. Resolution keeps only
+        those binding to a project method."""
+        if args is None:
+            return
+        for arg in args.named_children:
+            expr = arg.named_children[0] if arg.type == "argument" and arg.named_children else arg
+            if expr is None or expr.type != "identifier":
+                continue
+            name = node_text(expr)
+            out.references.append(
+                RawReference(
+                    kind="callback",
+                    callee_text=name,
+                    callee_name=name,
+                    receiver_text=None,
+                    span=span_of(expr),
+                    caller_qualified_name=caller,
+                )
+            )
 
     def _add_object_creation(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
         type_node = node.child_by_field_name("type")

@@ -202,6 +202,27 @@ public class C
     assert calls["SqlCommand"].receiver_text is None
 
 
+def test_method_group_argument_is_a_callback():
+    # app.MapPost("/run", Handler) passes `Handler` as a method group; it must be
+    # a callback so the handler is reachable from the registration site.
+    x = extract(
+        """
+namespace App {
+    class Program {
+        static void Setup(object app) {
+            app.MapPost("/run", Handler);
+        }
+        static void Handler() {}
+    }
+}
+"""
+    )
+    callbacks = {r.callee_name: r for r in x.references if r.kind == "callback"}
+    assert "Handler" in callbacks
+    assert callbacks["Handler"].caller_qualified_name == "App.Program.Setup"
+    assert "/run" not in callbacks  # string literal arg is not a callback
+
+
 # ---------------- unit: partial class (duplicate qnames) ----------------
 
 
