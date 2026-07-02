@@ -7,8 +7,15 @@ main functions, tasks, lambda handlers), and **source → sink call-graph
 reachability** ("can any HTTP route reach `subprocess.run`?").
 
 Language-agnostic via [tree-sitter](https://tree-sitter.github.io/); first-class
-support for **Python, JavaScript/TypeScript, Go, Java, and Ruby**, with language
-*and* framework detection.
+support for **Python, JavaScript/TypeScript, Go, Java, Ruby, C#, PHP, and
+Rust**, with language *and* framework detection.
+
+Reachability is a heuristic taint tier, not just call-edge closure: paths are
+**risk-ranked**, **sanitizers** prune or discount them, **class-hierarchy
+analysis** recovers virtual dispatch, and confidence flags trade recall for
+precision. Entrypoints include decorator/attribute routes, call-based route
+registration, middleware, and config-file handlers (serverless, SAM, Procfile,
+Dockerfile).
 
 ## Install
 
@@ -48,14 +55,23 @@ graph.callers("app.services.run_report")            # who calls it
 graph.callees("app.services.run_report", depth=3)   # what it (transitively) calls
 graph.references("app.models.CONST")                # inbound edges of any kind
 
-# Source -> sink reachability
+# Source -> sink reachability (paths are risk-ranked, highest first)
 paths = graph.paths(source="app.routes.*", sink_category="command_exec")
 for p in paths:
-    print(p.render())
-    # app.routes.create_report -> app.services.run_report (line 20)
+    print(p.risk_score, p.render(), "(+may continue)" if p.may_continue else "")
+    # 0.72 app.routes.create_report -> app.services.run_report (line 20)
     #   -> ...ReportRunner.render_and_execute (line 17) -> py:subprocess.run (line 22)
 
 graph.reachable(source="app.routes.upload", sink="py:subprocess.run")   # -> bool
+
+# Precision/recall dial. By default only EXACT/IMPORT and unique-name FUZZY
+# edges are traversed. Opt into wider (noisier) traversal:
+graph.paths(source="app.routes.*", sink_category="sql",
+            include_unresolved=True)   # follow py:*.execute wildcard-sink guesses
+graph.paths(source="app.routes.*", sink_category="command_exec",
+            include_fuzzy=True)        # follow speculative class-hierarchy (CHA) edges
+graph.paths(source="app.routes.*", sink_category="command_exec",
+            prune_sanitized=True)      # drop paths neutralized by a shlex.quote etc.
 
 # Incremental re-index (only changed/added/deleted files are reparsed)
 graph.refresh()
@@ -112,9 +128,14 @@ entrygraph paths --source '*' --sink-category command_exec && echo "reachable!"
 
 ## Extending
 
-- **Custom sinks/sources** — drop an `entrygraph.toml` in the repo root with
-  `[[sink]]` / `[[source]]` tables (same schema as the built-in
-  `data/sinks/*.toml`), or call `entrygraph.detect.taint.register_sink(...)`.
+- **Custom sinks/sources/sanitizers** — drop an `entrygraph.toml` in the repo
+  root with `[[sink]]` / `[[source]]` / `[[sanitizer]]` tables (same schema as
+  the built-in `data/sinks/*.toml`), or call
+  `entrygraph.detect.taint.register_sink(...)` / `register_sanitizer(...)`. A
+  `[[sanitizer]]` with `effect = "neutralizes"` prunes a path for its category;
+  `effect = "reduces"` only discounts the risk score. Third-party wrapper
+  libraries that reach a sink internally are covered by `data/sinks/lib_*.toml`
+  "library summaries" (same schema, with a `library = "..."` tag).
 - **New frameworks / entrypoints** — register a `FrameworkSpec` and an
   `EntrypointRule`; adding a framework is usually a few lines.
 - **New languages** — add a `<lang>/{definitions,imports,calls}.scm` query set

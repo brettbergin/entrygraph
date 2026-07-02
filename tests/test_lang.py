@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from entrygraph.fs.lang import RepoLanguageProfile, detect_language
+from entrygraph.fs.lang import EXTRACTABLE, RepoLanguageProfile, detect_language
 
 
 def test_extension_detection():
@@ -10,6 +10,14 @@ def test_extension_detection():
     assert detect_language("lib/task.rake") == "ruby"
     assert detect_language("README.md") == "markdown"
     assert detect_language("data.bin") is None
+
+
+def test_new_language_extensions():
+    assert detect_language("src/App.cs") == "csharp"
+    assert detect_language("src/index.php") == "php"
+    assert detect_language("templates/view.phtml") == "php"
+    assert detect_language("src/main.rs") == "rust"
+    assert {"csharp", "php", "rust"} <= EXTRACTABLE
 
 
 def test_filename_detection():
