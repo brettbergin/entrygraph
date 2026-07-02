@@ -81,6 +81,7 @@ class JavaScriptExtractor:
                 RawSymbol(kind=SymbolKind.CLASS, name=name, qualified_name=qname,
                           span=span_of(node), parent_qualified_name=parent_q,
                           signature=self._signature(node), bases=bases,
+                          decorators=self._decorators(node),
                           is_exported=self._exported(node))
             )
             for base in bases:
@@ -131,7 +132,7 @@ class JavaScriptExtractor:
         out.symbols.append(
             RawSymbol(kind=kind, name=name, qualified_name=qname, span=span_of(node),
                       parent_qualified_name=parent_q, signature=self._signature(node),
-                      is_exported=self._exported(node))
+                      decorators=self._decorators(node), is_exported=self._exported(node))
         )
 
     # ---------------- imports ----------------
@@ -332,6 +333,27 @@ class JavaScriptExtractor:
 
     def _signature(self, node) -> str:
         return truncate(node_text(node).split("\n", 1)[0].rstrip("{").strip(), 120)
+
+    def _decorators(self, node) -> list[str]:
+        """Raw text of `decorator` nodes immediately preceding `node`.
+
+        Decorators are siblings that appear just before their target — class
+        decorators inside the enclosing `export_statement`/`program`, method
+        decorators inside the `class_body`. A non-decorator sibling resets the
+        run, so each target only picks up its own decorators.
+        """
+        parent = node.parent
+        if parent is None:
+            return []
+        decs: list[str] = []
+        for child in parent.named_children:
+            if child.start_byte == node.start_byte and child.end_byte == node.end_byte:
+                return decs
+            if child.type == "decorator":
+                decs.append(node_text(child))
+            else:
+                decs = []
+        return decs
 
     def _heritage(self, node) -> tuple[list[str], list[str]]:
         """Return (extends bases, implements interfaces).

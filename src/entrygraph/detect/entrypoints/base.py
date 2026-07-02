@@ -38,11 +38,16 @@ def register(rule: EntrypointRule) -> None:
     _RULES.append(rule)
 
 
+# TypeScript/TSX reuse the JavaScript rule set (one extractor drives all three).
+_LANG_ALIASES = {"typescript": "javascript", "tsx": "javascript"}
+
+
 def rules_for(language: str, detected_frameworks: set[str]) -> list[EntrypointRule]:
+    lang = _LANG_ALIASES.get(language, language)
     return [
         r
         for r in _RULES
-        if r.language == language
+        if r.language == lang
         and (r.framework is None or r.framework in detected_frameworks)
     ]
 

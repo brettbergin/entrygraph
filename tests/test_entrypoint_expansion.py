@@ -139,3 +139,20 @@ def test_sidekiq_worker_rule():
     rules = {r.id: r for r in rules_for("ruby", {"sidekiq"})}
     hints = rules["ruby.sidekiq.worker"].match(x)
     assert hints and hints[0].kind is EntrypointKind.TASK
+
+
+def test_nestjs_decorator_routes_with_controller_prefix():
+    from entrygraph.detect.entrypoints import rules_for
+    from entrygraph.extract.base import FileContext
+    from entrygraph.extract.javascript import JavaScriptExtractor
+    from entrygraph.parsing.parsers import parse
+    src = (b"@Controller('users')\nexport class UsersController {\n"
+           b"  @Get(':id')\n  findOne(id) { return this.svc.find(id); }\n"
+           b"  @Post()\n  create() {}\n}\n")
+    ctx = FileContext(path="src/users.controller.ts", language="typescript",
+                      module_path="users.controller", source=src, is_package=False)
+    x = JavaScriptExtractor().extract(parse("typescript", src), ctx)
+    rules = {r.id: r for r in rules_for("javascript", {"nestjs"})}
+    hints = {h.http_methods[0]: h.route for h in rules["javascript.nestjs.route"].match(x)}
+    assert hints["GET"] == "/users/:id"   # controller prefix + method path
+    assert hints["POST"] == "/users"

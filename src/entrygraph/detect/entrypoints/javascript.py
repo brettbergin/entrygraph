@@ -132,7 +132,17 @@ def _express_middleware(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
+_NEST_CONTROLLER = re.compile(r"^@Controller\b")
+
+
 def _nest_routes(x: FileExtraction) -> list[EntrypointHint]:
+    # controller class qname -> its @Controller('prefix') path prefix
+    prefixes: dict[str, str] = {}
+    for symbol in x.symbols:
+        if symbol.kind is SymbolKind.CLASS:
+            for decorator in symbol.decorators:
+                if _NEST_CONTROLLER.match(decorator):
+                    prefixes[symbol.qualified_name] = (first_string_arg(decorator) or "").strip("/")
     hints = []
     for symbol in x.symbols:
         if symbol.kind is not SymbolKind.METHOD:
@@ -140,12 +150,15 @@ def _nest_routes(x: FileExtraction) -> list[EntrypointHint]:
         for decorator in symbol.decorators:
             m = _NEST_DECORATOR.match(decorator)
             if m:
+                prefix = prefixes.get(symbol.parent_qualified_name or "", "")
+                path = (first_string_arg(decorator) or "").strip("/")
+                route = "/" + "/".join(p for p in (prefix, path) if p)
                 hints.append(
                     EntrypointHint(
                         rule_id="javascript.nestjs.route",
                         kind=EntrypointKind.HTTP_ROUTE,
                         handler_qualified_name=symbol.qualified_name,
-                        route=first_string_arg(decorator) or "",
+                        route=route,
                         http_methods=[m.group(1).upper()],
                         framework="nestjs",
                     )
