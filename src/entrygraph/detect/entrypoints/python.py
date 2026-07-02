@@ -208,6 +208,78 @@ def _lambda_handlers(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
+_VIEW_CONFIG = re.compile(r"^@view_config\b")
+_DRAMATIQ_ACTOR = re.compile(r"^@(?:dramatiq\.actor|actor)\b")
+_AIRFLOW_TASK = re.compile(r"^@(?:task|dag)\b")
+_AIOHTTP_ADD = frozenset({"add_get", "add_post", "add_put", "add_delete", "add_route"})
+
+
+def _sanic_bottle_routes(framework: str):
+    """@app.route / @app.get style routes, framework-labelled (sanic, bottle)."""
+
+    def matcher(x: FileExtraction) -> list[EntrypointHint]:
+        hints = []
+        for symbol, decorator in _decorated(x):
+            route = methods = None
+            if _FLASK_ROUTE.match(decorator):
+                route, methods = first_string_arg(decorator), methods_kwarg(decorator) or ["GET"]
+            else:
+                verb = _HTTP_VERB.match(decorator)
+                if verb:
+                    route, methods = first_string_arg(decorator), [verb.group(2).upper()]
+            if route is not None:
+                hints.append(EntrypointHint(
+                    rule_id=f"python.{framework}.route", kind=EntrypointKind.HTTP_ROUTE,
+                    handler_qualified_name=symbol.qualified_name, route=route,
+                    http_methods=methods, framework=framework,
+                    metadata=_taint_meta(symbol, "http_route")))
+        return hints
+
+    return matcher
+
+
+def _decorator_rule(pattern, rule_id, kind, framework):
+    """Simple decorator-matched entrypoint (pyramid view, dramatiq actor, airflow task)."""
+
+    def matcher(x: FileExtraction) -> list[EntrypointHint]:
+        hints = []
+        for symbol, decorator in _decorated(x):
+            if pattern.match(decorator):
+                hints.append(EntrypointHint(
+                    rule_id=rule_id, kind=kind,
+                    handler_qualified_name=symbol.qualified_name,
+                    name=symbol.name, framework=framework,
+                    route=first_string_arg(decorator) if kind is EntrypointKind.HTTP_ROUTE else None,
+                    metadata=_taint_meta(symbol, kind.value)))
+        return hints
+
+    return matcher
+
+
+def _aiohttp_routes(x: FileExtraction) -> list[EntrypointHint]:
+    """router.add_get('/x', handler) / @routes.get('/x') registrations."""
+    hints = []
+    for ref in x.references:
+        if ref.kind == "call" and ref.callee_name in _AIOHTTP_ADD and ref.arg_preview:
+            route = first_string_arg("(" + ref.arg_preview.lstrip("("))
+            hints.append(EntrypointHint(
+                rule_id="python.aiohttp.route", kind=EntrypointKind.HTTP_ROUTE,
+                handler_qualified_name=None, route=route or "",
+                http_methods=[ref.callee_name.replace("add_", "").upper()], framework="aiohttp",
+                metadata={"registration": ref.arg_preview}))
+    for symbol, decorator in _decorated(x):
+        verb = _HTTP_VERB.match(decorator.replace("@routes.", "@r."))
+        if decorator.startswith("@routes.") and verb:
+            route = first_string_arg(decorator)
+            if route is not None:
+                hints.append(EntrypointHint(
+                    rule_id="python.aiohttp.route", kind=EntrypointKind.HTTP_ROUTE,
+                    handler_qualified_name=symbol.qualified_name, route=route,
+                    http_methods=[verb.group(2).upper()], framework="aiohttp",
+                    metadata=_taint_meta(symbol, "http_route")))
+    return hints
+
+
 def _main_guard(x: FileExtraction) -> list[EntrypointHint]:
     if ("main_guard", x.module_path) not in x.framework_signals:
         return []
@@ -241,5 +313,23 @@ register(EntrypointRule("python.celery.task", "python", "celery",
                         EntrypointKind.TASK, _celery_tasks))
 register(EntrypointRule("python.lambda.handler", "python", "aws-lambda",
                         EntrypointKind.LAMBDA_HANDLER, _lambda_handlers))
+register(EntrypointRule("python.sanic.route", "python", "sanic",
+                        EntrypointKind.HTTP_ROUTE, _sanic_bottle_routes("sanic")))
+register(EntrypointRule("python.bottle.route", "python", "bottle",
+                        EntrypointKind.HTTP_ROUTE, _sanic_bottle_routes("bottle")))
+register(EntrypointRule("python.aiohttp.route", "python", "aiohttp",
+                        EntrypointKind.HTTP_ROUTE, _aiohttp_routes))
+register(EntrypointRule("python.pyramid.view", "python", "pyramid",
+                        EntrypointKind.HTTP_ROUTE,
+                        _decorator_rule(_VIEW_CONFIG, "python.pyramid.view",
+                                        EntrypointKind.HTTP_ROUTE, "pyramid")))
+register(EntrypointRule("python.dramatiq.actor", "python", "dramatiq",
+                        EntrypointKind.TASK,
+                        _decorator_rule(_DRAMATIQ_ACTOR, "python.dramatiq.actor",
+                                        EntrypointKind.TASK, "dramatiq")))
+register(EntrypointRule("python.airflow.task", "python", "airflow",
+                        EntrypointKind.TASK,
+                        _decorator_rule(_AIRFLOW_TASK, "python.airflow.task",
+                                        EntrypointKind.TASK, "airflow")))
 register(EntrypointRule("python.core.main", "python", None,
                         EntrypointKind.MAIN, _main_guard))

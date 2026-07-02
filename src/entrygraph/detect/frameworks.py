@@ -132,6 +132,126 @@ FRAMEWORKS: list[FrameworkSpec] = [
     FrameworkSpec("rake", "ruby", (
         FrameworkSignal("file_presence", "Rakefile", 0.6),
     )),
+    # --- C6: additional framework specs ---
+    # Python
+    FrameworkSpec("tornado", "python", (
+        FrameworkSignal("manifest_dep", "tornado", 0.8),
+        FrameworkSignal("import", "tornado", 0.7),
+    )),
+    FrameworkSpec("aiohttp", "python", (
+        FrameworkSignal("manifest_dep", "aiohttp", 0.8),
+        FrameworkSignal("import", "aiohttp", 0.7),
+    )),
+    FrameworkSpec("bottle", "python", (
+        FrameworkSignal("manifest_dep", "bottle", 0.8),
+        FrameworkSignal("import", "bottle", 0.7),
+    )),
+    FrameworkSpec("pyramid", "python", (
+        FrameworkSignal("manifest_dep", "pyramid", 0.8),
+        FrameworkSignal("import", "pyramid", 0.7),
+    )),
+    FrameworkSpec("sanic", "python", (
+        FrameworkSignal("manifest_dep", "sanic", 0.8),
+        FrameworkSignal("import", "sanic", 0.7),
+    )),
+    FrameworkSpec("dramatiq", "python", (
+        FrameworkSignal("manifest_dep", "dramatiq", 0.8),
+        FrameworkSignal("import", "dramatiq", 0.7),
+    )),
+    FrameworkSpec("rq", "python", (
+        FrameworkSignal("manifest_dep", "rq", 0.8),
+        FrameworkSignal("import", "rq", 0.7),
+    )),
+    FrameworkSpec("airflow", "python", (
+        FrameworkSignal("manifest_dep", "apache-airflow", 0.8),
+        FrameworkSignal("import", "airflow", 0.7),
+        FrameworkSignal("file_presence", "*dags/*", 0.2),
+    )),
+    # JS/TS
+    FrameworkSpec("koa", "javascript", (
+        FrameworkSignal("manifest_dep", "koa", 0.8),
+        FrameworkSignal("import", "koa", 0.7),
+    )),
+    FrameworkSpec("hapi", "javascript", (
+        FrameworkSignal("manifest_dep", "@hapi/hapi", 0.8),
+        FrameworkSignal("import", "@hapi/hapi", 0.7),
+    )),
+    FrameworkSpec("remix", "javascript", (
+        FrameworkSignal("manifest_dep", "@remix-run/*", 0.8),
+        FrameworkSignal("file_presence", "app/routes/*", 0.3),
+    )),
+    FrameworkSpec("hono", "javascript", (
+        FrameworkSignal("manifest_dep", "hono", 0.8),
+        FrameworkSignal("import", "hono", 0.7),
+    )),
+    FrameworkSpec("electron", "javascript", (
+        FrameworkSignal("manifest_dep", "electron", 0.8),
+        FrameworkSignal("import", "electron", 0.7),
+    )),
+    FrameworkSpec("socket.io", "javascript", (
+        FrameworkSignal("manifest_dep", "socket.io", 0.8),
+        FrameworkSignal("import", "socket.io", 0.7),
+    )),
+    # Go
+    FrameworkSpec("fiber", "go", (
+        FrameworkSignal("manifest_dep", "github.com/gofiber/fiber*", 0.8),
+        FrameworkSignal("import", "github.com/gofiber/fiber*", 0.7),
+    )),
+    FrameworkSpec("chi", "go", (
+        FrameworkSignal("manifest_dep", "github.com/go-chi/chi*", 0.8),
+        FrameworkSignal("import", "github.com/go-chi/chi*", 0.7),
+    )),
+    FrameworkSpec("gorilla-mux", "go", (
+        FrameworkSignal("manifest_dep", "github.com/gorilla/mux", 0.8),
+        FrameworkSignal("import", "github.com/gorilla/mux", 0.7),
+    )),
+    FrameworkSpec("grpc-go", "go", (
+        FrameworkSignal("manifest_dep", "google.golang.org/grpc", 0.8),
+        FrameworkSignal("import", "google.golang.org/grpc", 0.7),
+    )),
+    FrameworkSpec("urfave-cli", "go", (
+        FrameworkSignal("manifest_dep", "github.com/urfave/cli*", 0.8),
+        FrameworkSignal("import", "github.com/urfave/cli*", 0.7),
+    )),
+    # Java
+    FrameworkSpec("micronaut", "java", (
+        FrameworkSignal("manifest_dep", "*micronaut*", 0.8),
+        FrameworkSignal("import", "io.micronaut*", 0.7),
+    )),
+    FrameworkSpec("quarkus", "java", (
+        FrameworkSignal("manifest_dep", "*quarkus*", 0.8),
+        FrameworkSignal("import", "io.quarkus*", 0.7),
+    )),
+    FrameworkSpec("vertx", "java", (
+        FrameworkSignal("manifest_dep", "*vertx*", 0.8),
+        FrameworkSignal("import", "io.vertx*", 0.7),
+    )),
+    FrameworkSpec("servlet-api", "java", (
+        FrameworkSignal("import", "javax.servlet*", 0.7),
+        FrameworkSignal("import", "jakarta.servlet*", 0.7),
+        FrameworkSignal("file_presence", "*web.xml", 0.3),
+    )),
+    FrameworkSpec("dropwizard", "java", (
+        FrameworkSignal("manifest_dep", "*dropwizard*", 0.8),
+        FrameworkSignal("import", "io.dropwizard*", 0.7),
+    )),
+    # Ruby
+    FrameworkSpec("hanami", "ruby", (
+        FrameworkSignal("manifest_dep", "hanami", 0.8),
+        FrameworkSignal("import", "hanami", 0.7),
+    )),
+    FrameworkSpec("grape", "ruby", (
+        FrameworkSignal("manifest_dep", "grape", 0.8),
+        FrameworkSignal("import", "grape", 0.7),
+    )),
+    FrameworkSpec("sidekiq", "ruby", (
+        FrameworkSignal("manifest_dep", "sidekiq", 0.8),
+        FrameworkSignal("import", "sidekiq", 0.7),
+    )),
+    FrameworkSpec("rack", "ruby", (
+        FrameworkSignal("manifest_dep", "rack", 0.8),
+        FrameworkSignal("file_presence", "config.ru", 0.6),
+    )),
 ]
 
 

@@ -96,3 +96,46 @@ def test_bind_handler_forms():
     assert bind_handler("python -m app.main", symbols, modules) == 6
     assert bind_handler("gunicorn app.wsgi:application", symbols, modules) == 7
     assert bind_handler("uvicorn nonexistent:app", symbols, modules) is None
+
+
+# ---------------- C6: new-framework entrypoint rules ----------------
+
+def _js_ext(references=(), symbols=(), path="src/app.js"):
+    return FileExtraction(path=path, language="javascript", module_path="app",
+                          parse_ok=True, error_count=0, symbols=list(symbols),
+                          references=list(references))
+
+
+def test_koa_route_rule():
+    from entrygraph.detect.entrypoints import rules_for
+    ref = RawReference(kind="call", callee_text="router.get", callee_name="get",
+                       receiver_text="router", span=SPAN, caller_qualified_name="app.h",
+                       arg_preview="('/ping', handler)")
+    rules = {r.id: r for r in rules_for("javascript", {"koa"})}
+    hints = rules["javascript.koa.route"].match(_js_ext([ref]))
+    assert hints and hints[0].route == "/ping" and hints[0].framework == "koa"
+
+
+def test_lambda_js_handler_rule():
+    from entrygraph.detect.entrypoints import rules_for
+    sym = RawSymbol(kind=SymbolKind.FUNCTION, name="handler",
+                    qualified_name="app.handler", span=SPAN, is_exported=True)
+    rules = {r.id: r for r in rules_for("javascript", {"aws-lambda-js"})}
+    hints = rules["javascript.aws-lambda.handler"].match(_js_ext(symbols=[sym]))
+    assert hints and hints[0].kind is EntrypointKind.LAMBDA_HANDLER
+
+
+def test_sidekiq_worker_rule():
+    from entrygraph.detect.entrypoints import rules_for
+    inc = RawReference(kind="call", callee_text="include", callee_name="include",
+                       receiver_text=None, span=SPAN,
+                       caller_qualified_name="workers.EmailWorker",
+                       arg_preview="(Sidekiq::Worker)")
+    perform = RawSymbol(kind=SymbolKind.METHOD, name="perform",
+                        qualified_name="workers.EmailWorker.perform", span=SPAN,
+                        parent_qualified_name="workers.EmailWorker")
+    x = FileExtraction(path="workers.rb", language="ruby", module_path="workers",
+                       parse_ok=True, error_count=0, symbols=[perform], references=[inc])
+    rules = {r.id: r for r in rules_for("ruby", {"sidekiq"})}
+    hints = rules["ruby.sidekiq.worker"].match(x)
+    assert hints and hints[0].kind is EntrypointKind.TASK

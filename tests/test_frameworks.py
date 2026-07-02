@@ -54,3 +54,29 @@ def test_file_presence_signal():
     )
     rails = next(d for d in detected if d.name == "rails")
     assert any("config/routes.rb" in e for e in rails.evidence)
+
+
+# ---------------- C6: additional framework specs ----------------
+
+def test_c6_new_frameworks_detected():
+    cases = [
+        ("python", {"tornado"}, ("python", "tornado"), "tornado"),
+        ("javascript", {"koa"}, ("javascript", "koa"), "koa"),
+        ("go", {"github.com/go-chi/chi"}, ("go", "github.com/go-chi/chi"), "chi"),
+        ("java", {"io.micronaut.micronaut-core"}, ("java", "io.micronaut.http"), "micronaut"),
+        ("ruby", {"sidekiq"}, ("ruby", "sidekiq"), "sidekiq"),
+    ]
+    for lang, deps, import_sig, name in cases:
+        manifests = ManifestDeps(**{lang if lang != "javascript" else "javascript": deps})
+        detected = {d.name for d in detect_frameworks(
+            manifests, import_signals={import_sig}, file_paths=[],
+            languages_present={lang})}
+        assert name in detected, f"{name} not detected"
+
+
+def test_c6_file_presence_frameworks():
+    detected = {d.name for d in detect_frameworks(
+        ManifestDeps(), import_signals=set(),
+        file_paths=["config.ru", "app/routes/index.tsx"],
+        languages_present={"ruby", "javascript"})}
+    assert "rack" in detected

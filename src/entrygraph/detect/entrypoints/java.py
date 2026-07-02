@@ -111,6 +111,48 @@ def _jaxrs_routes(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
+_MICRONAUT_CONTROLLER = re.compile(r"^@Controller\b")
+_MICRONAUT_MAPPING = re.compile(r"^@(Get|Post|Put|Delete|Patch)\b")
+_SERVLET_METHODS = frozenset({"doGet", "doPost", "doPut", "doDelete"})
+
+
+def _micronaut_routes(x: FileExtraction) -> list[EntrypointHint]:
+    types = _type_symbols(x)
+    controllers = {t.qualified_name for t in types
+                   if _annotation_names(t.decorators, _MICRONAUT_CONTROLLER)}
+    if not controllers:
+        return []
+    hints = []
+    for method in _methods(x):
+        if method.parent_qualified_name not in controllers:
+            continue
+        for decorator in method.decorators:
+            m = _MICRONAUT_MAPPING.match(decorator)
+            if m:
+                hints.append(EntrypointHint(
+                    rule_id="java.micronaut.route", kind=EntrypointKind.HTTP_ROUTE,
+                    handler_qualified_name=method.qualified_name,
+                    route=first_string_arg(decorator) or "",
+                    http_methods=[m.group(1).upper()], framework="micronaut"))
+    return hints
+
+
+def _servlet_routes(x: FileExtraction) -> list[EntrypointHint]:
+    """Classes extending HttpServlet expose doGet/doPost/... as HTTP handlers."""
+    servlets = {t.qualified_name for t in _type_symbols(x)
+                if any("HttpServlet" in b for b in t.bases)}
+    if not servlets:
+        return []
+    hints = []
+    for method in _methods(x):
+        if method.parent_qualified_name in servlets and method.name in _SERVLET_METHODS:
+            hints.append(EntrypointHint(
+                rule_id="java.servlet.route", kind=EntrypointKind.HTTP_ROUTE,
+                handler_qualified_name=method.qualified_name, route="",
+                http_methods=[method.name.replace("do", "").upper()], framework="servlet-api"))
+    return hints
+
+
 def _java_main(x: FileExtraction) -> list[EntrypointHint]:
     hints = []
     for method in _methods(x):
@@ -137,5 +179,9 @@ register(EntrypointRule("java.spring.route", "java", "spring-boot",
                         EntrypointKind.HTTP_ROUTE, _spring_routes))
 register(EntrypointRule("java.jaxrs", "java", "jax-rs",
                         EntrypointKind.HTTP_ROUTE, _jaxrs_routes))
+register(EntrypointRule("java.micronaut.route", "java", "micronaut",
+                        EntrypointKind.HTTP_ROUTE, _micronaut_routes))
+register(EntrypointRule("java.servlet.route", "java", "servlet-api",
+                        EntrypointKind.HTTP_ROUTE, _servlet_routes))
 register(EntrypointRule("java.core.main", "java", None,
                         EntrypointKind.MAIN, _java_main))
