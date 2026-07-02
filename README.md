@@ -86,6 +86,11 @@ results are safe to hold and trivial to serialize.
 
 ## CLI
 
+Human-readable output is rendered with [Rich](https://github.com/Textualize/rich) —
+colored tables, language/confidence bars, a progress spinner while indexing, and
+risk-ranked reachability rendered as call trees (sink nodes highlighted, per-hop
+confidence, sanitizer/const-arg badges). Piped or `--json` output stays plain.
+
 ```bash
 entrygraph index PATH [--full] [--paranoid]     # incremental by default
 entrygraph detect

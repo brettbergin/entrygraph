@@ -47,11 +47,14 @@ def test_entrypoints_json(db, capsys):
 
 
 def test_paths_exit_codes(db, capsys):
-    # reachable -> exit 0 and prints a chain
+    # reachable -> exit 0 and renders a tree ending at the sink, with a risk score
     rc = main(["paths", "--db", db, "--source", "app.routes.create_report",
                "--sink", "py:subprocess.run"])
     assert rc == 0
-    assert "->" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "py:subprocess.run" in out          # sink node rendered
+    assert "risk" in out                        # risk indicator present
+    assert "app.routes.create_report" in out    # source node rendered
 
     # unreachable -> exit 1
     rc = main(["paths", "--db", db, "--source", "app.routes.health",
