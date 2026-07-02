@@ -81,6 +81,7 @@ class CodeGraph:
         self._session_factory = make_session_factory(engine)
         self._adjacency: dict[tuple[frozenset[str], int], AdjacencyCache] = {}
         self._last_index_stats: IndexStats | None = None
+        self._registry_cache: tuple[tuple, object] | None = None
 
     # ---------------- construction ----------------
 
@@ -468,10 +469,7 @@ class CodeGraph:
     def _sink_ids(self, session: Session, sink, sink_category: str | None) -> set[int]:
         ids = self._spec_to_ids(session, sink) if sink is not None else set()
         if sink_category is not None:
-            from entrygraph.detect.taint import registry_for_repo
-
-            repo = session.execute(select(models.Repository)).scalars().first()
-            registry = registry_for_repo(repo.root_path if repo else None)
+            registry = self._registry(session)
             sink_ids = registry.ids_for_category(sink_category)
             if sink_ids:
                 rows = session.execute(
@@ -496,10 +494,36 @@ class CodeGraph:
         return sorted(symbol_map.values(), key=lambda s: s.qname)
 
     def _registry(self, session: Session):
-        from entrygraph.detect.taint import registry_for_repo
+        """The repo's sink/source/sanitizer registry, cached on the instance.
+
+        Rebuilding runs `merged_with`, which recompiles every pattern's regex — so
+        without caching a single `paths()` call recompiled the whole catalog up to
+        three times. The cache is keyed on the repo root, the `entrygraph.toml`
+        mtime (so config edits are picked up), and the counts of process-global
+        registered patterns (so `register_sink()` invalidates it)."""
+        from entrygraph.detect import taint
 
         repo = session.execute(select(models.Repository)).scalars().first()
-        return registry_for_repo(repo.root_path if repo else None)
+        root = repo.root_path if repo else None
+        config_mtime = None
+        if root is not None:
+            try:
+                config_mtime = (Path(root) / "entrygraph.toml").stat().st_mtime_ns
+            except OSError:
+                config_mtime = None
+        key = (
+            root,
+            config_mtime,
+            len(taint._user_sinks),
+            len(taint._user_sources),
+            len(taint._user_sanitizers),
+        )
+        cached = self._registry_cache
+        if cached is None or cached[0] != key:
+            registry = taint.registry_for_repo(root)
+            self._registry_cache = (key, registry)
+            return registry
+        return cached[1]
 
     @staticmethod
     def _edge_rows(session: Session, raw_paths) -> dict[int, models.Edge]:
