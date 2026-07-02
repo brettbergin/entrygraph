@@ -66,9 +66,36 @@ class WalkedFile:
     skip_reason: str | None = None  # too_large | binary | minified | None
 
 
+def _collect_gitignores(root: Path) -> list[Path]:
+    """`.gitignore` paths found via a pruned walk.
+
+    NOT ``root.rglob(".gitignore")`` — that recursively descends into ``.git``,
+    ``node_modules``, ``vendor`` etc. (the huge trees the indexer prunes) on every
+    run, often costing more than the real walk. Skipping those dirs is also more
+    correct: a ``.gitignore`` inside an un-indexed subtree must not contribute
+    repo-wide patterns."""
+    found: list[Path] = []
+    stack = [str(root)]
+    while stack:
+        try:
+            entries = list(os.scandir(stack.pop()))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    if entry.name not in PRUNED_DIRS and not entry.name.startswith(".git"):
+                        stack.append(entry.path)
+                elif entry.name == ".gitignore" and entry.is_file(follow_symlinks=False):
+                    found.append(Path(entry.path))
+            except OSError:
+                continue
+    return found
+
+
 def _load_gitignore(root: Path) -> pathspec.GitIgnoreSpec | None:
     patterns: list[str] = []
-    for ignore_file in sorted(root.rglob(".gitignore")):
+    for ignore_file in sorted(_collect_gitignores(root)):
         try:
             rel_dir = ignore_file.parent.relative_to(root).as_posix()
         except ValueError:  # pragma: no cover - symlink escape

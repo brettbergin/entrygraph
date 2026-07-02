@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from entrygraph.fs.walker import MAX_FILE_BYTES, walk_repo
+from entrygraph.fs.walker import MAX_FILE_BYTES, _collect_gitignores, walk_repo
 
 
 def _make(root: Path, rel: str, content: bytes = b"print('hi')\n") -> None:
@@ -39,6 +39,19 @@ def test_walk_respects_gitignore(tmp_path: Path):
     assert "secret.py" not in paths
     assert "generated/gen.py" not in paths
     assert "sub/ignored_here.py" not in paths
+
+
+def test_collect_gitignores_skips_pruned_dirs(tmp_path: Path):
+    # .gitignore collection must not descend into .git / node_modules / vendor
+    # (the whole point of not using rglob) — those trees are never indexed.
+    (tmp_path / ".gitignore").write_text("x\n")
+    _make(tmp_path, "sub/.gitignore", b"y\n")
+    _make(tmp_path, "node_modules/.gitignore", b"z\n")
+    _make(tmp_path, ".git/.gitignore", b"w\n")
+    _make(tmp_path, "vendor/nested/.gitignore", b"v\n")
+
+    found = {p.relative_to(tmp_path).as_posix() for p in _collect_gitignores(tmp_path)}
+    assert found == {".gitignore", "sub/.gitignore"}
 
 
 def test_walk_gates(tmp_path: Path):
