@@ -238,11 +238,76 @@ class JavaScriptExtractor:
                         )
         for node in caps.get("export.from", []):
             self._reexport(node, ctx, out)
+        for node in caps.get("require", []):
+            self._commonjs_require(node, ctx, out)
 
         for imp in out.imports:
             out.framework_signals.append(
                 ("import", imp.module.split(".")[0] if "." in imp.module else imp.module)
             )
+
+    def _commonjs_require(self, call, ctx, out) -> None:
+        """CommonJS `require('m')` bindings -> RawImport, mirroring ESM handling.
+
+        ``const cp = require('m')``          -> whole module bound to ``cp``
+        ``const { x, y: z } = require('m')`` -> named imports ``x`` and ``y`` (as ``z``)
+        bare / chained / reassigned          -> module-only (side-effect) import,
+        which still yields the framework signal even when no alias can be bound.
+        """
+        args = call.child_by_field_name("arguments")
+        spec = None
+        if args is not None:
+            for child in args.named_children:
+                if child.type == "string":
+                    spec = node_text(child).strip("'\"`")
+                    break
+        if not spec:
+            return  # dynamic require (variable/template arg) — target unknowable
+        module = self._resolve_module(spec, ctx)
+        span = span_of(call)
+
+        parent = call.parent
+        name_node = None
+        if parent is not None and parent.type == "variable_declarator":
+            name_node = parent.child_by_field_name("name")
+        elif parent is not None and parent.type == "assignment_expression":
+            name_node = parent.child_by_field_name("left")
+
+        if name_node is not None and name_node.type == "identifier":
+            # Bind the alias to the module itself (same as an ESM default import),
+            # so `const cp = require('child_process'); cp.exec()` canonicalizes to
+            # child_process.exec.
+            out.imports.append(
+                RawImport(module=module, imported_name=None, alias=node_text(name_node), span=span)
+            )
+            return
+        if name_node is not None and name_node.type == "object_pattern":
+            for child in name_node.named_children:
+                if child.type == "shorthand_property_identifier_pattern":  # { exec }
+                    nm = node_text(child)
+                    out.imports.append(
+                        RawImport(module=module, imported_name=nm, alias=nm, span=span)
+                    )
+                elif child.type == "pair_pattern":  # { exec: run }
+                    key = child.child_by_field_name("key")
+                    value = child.child_by_field_name("value")
+                    if key is None:
+                        continue
+                    alias = (
+                        node_text(value)
+                        if value is not None and value.type == "identifier"
+                        else node_text(key)
+                    )
+                    out.imports.append(
+                        RawImport(
+                            module=module, imported_name=node_text(key), alias=alias, span=span
+                        )
+                    )
+            return
+        # bare `require('m')`, `require('m').foo`, `module.exports = require('m')`, etc.
+        out.imports.append(
+            RawImport(module=module, imported_name=None, alias=module.split(".")[-1], span=span)
+        )
 
     def _reexport(self, node, ctx, out) -> None:
         """`export { X as Y } from "./m"` / `export * from "./m"` -> RawReexport."""
