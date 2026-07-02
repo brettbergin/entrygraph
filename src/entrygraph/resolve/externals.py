@@ -20,6 +20,9 @@ LANG_PREFIX = {
     "go": "go",
     "java": "java",
     "ruby": "rb",
+    "csharp": "cs",
+    "php": "php",
+    "rust": "rs",
 }
 
 

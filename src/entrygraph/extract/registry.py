@@ -15,6 +15,9 @@ _EXTRACTOR_SPECS = [
     ("entrygraph.extract.golang", "GoExtractor"),
     ("entrygraph.extract.java", "JavaExtractor"),
     ("entrygraph.extract.ruby", "RubyExtractor"),
+    ("entrygraph.extract.csharp", "CSharpExtractor"),
+    ("entrygraph.extract.php", "PhpExtractor"),
+    ("entrygraph.extract.rust", "RustExtractor"),
 ]
 
 

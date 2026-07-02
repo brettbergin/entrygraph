@@ -23,6 +23,9 @@ _GRAMMAR_NAMES = {
     "go": "go",
     "java": "java",
     "ruby": "ruby",
+    "csharp": "csharp",
+    "php": "php",
+    "rust": "rust",
 }
 
 

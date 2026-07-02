@@ -252,6 +252,50 @@ FRAMEWORKS: list[FrameworkSpec] = [
         FrameworkSignal("manifest_dep", "rack", 0.8),
         FrameworkSignal("file_presence", "config.ru", 0.6),
     )),
+    # --- C2/C3/C4: C#, PHP, Rust ---
+    FrameworkSpec("aspnetcore", "csharp", (
+        FrameworkSignal("manifest_dep", "microsoft.aspnetcore*", 0.8),
+        FrameworkSignal("import", "Microsoft.AspNetCore*", 0.7),
+        FrameworkSignal("file_presence", "*appsettings.json", 0.2),
+    )),
+    FrameworkSpec("ef-core", "csharp", (
+        FrameworkSignal("manifest_dep", "microsoft.entityframeworkcore*", 0.8),
+        FrameworkSignal("import", "Microsoft.EntityFrameworkCore*", 0.7),
+    )),
+    FrameworkSpec("laravel", "php", (
+        FrameworkSignal("manifest_dep", "laravel/framework", 0.8),
+        FrameworkSignal("file_presence", "artisan", 0.5),
+        FrameworkSignal("file_presence", "routes/web.php", 0.3),
+    )),
+    FrameworkSpec("symfony", "php", (
+        FrameworkSignal("manifest_dep", "symfony/framework-bundle", 0.8),
+        FrameworkSignal("manifest_dep", "symfony/*", 0.5),
+        FrameworkSignal("file_presence", "bin/console", 0.4),
+    )),
+    FrameworkSpec("wordpress", "php", (
+        FrameworkSignal("file_presence", "wp-config.php", 0.7),
+        FrameworkSignal("symbol_name", "wp_*", 0.2),
+    )),
+    FrameworkSpec("actix-web", "rust", (
+        FrameworkSignal("manifest_dep", "actix-web", 0.8),
+        FrameworkSignal("import", "actix_web", 0.7),
+    )),
+    FrameworkSpec("axum", "rust", (
+        FrameworkSignal("manifest_dep", "axum", 0.8),
+        FrameworkSignal("import", "axum", 0.7),
+    )),
+    FrameworkSpec("rocket", "rust", (
+        FrameworkSignal("manifest_dep", "rocket", 0.8),
+        FrameworkSignal("import", "rocket", 0.7),
+    )),
+    FrameworkSpec("clap", "rust", (
+        FrameworkSignal("manifest_dep", "clap", 0.8),
+        FrameworkSignal("import", "clap", 0.7),
+    )),
+    FrameworkSpec("tokio", "rust", (
+        FrameworkSignal("manifest_dep", "tokio", 0.8),
+        FrameworkSignal("import", "tokio", 0.7),
+    )),
 ]
 
 

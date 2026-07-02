@@ -10,7 +10,10 @@ import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-EXTRACTABLE = frozenset({"python", "javascript", "typescript", "tsx", "go", "java", "ruby"})
+EXTRACTABLE = frozenset(
+    {"python", "javascript", "typescript", "tsx", "go", "java", "ruby",
+     "csharp", "php", "rust"}
+)
 
 _EXTENSION_MAP = {
     ".py": "python",
@@ -39,6 +42,7 @@ _EXTENSION_MAP = {
     ".kt": "kotlin",
     ".swift": "swift",
     ".php": "php",
+    ".phtml": "php",
     ".scala": "scala",
     ".sh": "shell",
     ".bash": "shell",
