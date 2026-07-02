@@ -19,7 +19,7 @@ from entrygraph.extract.ir import (
     RawSymbol,
 )
 from entrygraph.kinds import SymbolKind
-from entrygraph.parsing.queries import captures, load_query
+from entrygraph.parsing.queries import captures, load_query_for
 
 if TYPE_CHECKING:  # pragma: no cover
     from tree_sitter import Node, Tree
@@ -63,7 +63,7 @@ class JavaScriptExtractor:
     # ---------------- definitions ----------------
 
     def _definitions(self, root, ctx, out) -> None:
-        caps = captures(load_query("javascript", "definitions"), root)
+        caps = captures(load_query_for(ctx.language, "javascript", "definitions"), root)
 
         for node in caps.get("def.function", []):
             self._add_callable(node, ctx, out, SymbolKind.FUNCTION)
@@ -137,7 +137,7 @@ class JavaScriptExtractor:
     # ---------------- imports ----------------
 
     def _imports(self, root, ctx, out) -> None:
-        caps = captures(load_query("javascript", "imports"), root)
+        caps = captures(load_query_for(ctx.language, "javascript", "imports"), root)
         for node in caps.get("import", []):
             source = node.child_by_field_name("source")
             if source is None:
@@ -228,7 +228,7 @@ class JavaScriptExtractor:
     # ---------------- calls ----------------
 
     def _calls(self, root, ctx, out) -> None:
-        caps = captures(load_query("javascript", "calls"), root)
+        caps = captures(load_query_for(ctx.language, "javascript", "calls"), root)
         for node in caps.get("call", []):
             fn = node.child_by_field_name("function")
             if fn is None:

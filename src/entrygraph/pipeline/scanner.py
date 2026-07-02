@@ -137,6 +137,24 @@ def index_repository(
 
 # ---------------- phase helpers ----------------
 
+def _pool_context():
+    """multiprocessing context for the parse pool.
+
+    Prefer ``fork`` where available (POSIX): unlike the ``spawn`` default on
+    macOS/Windows, fork does not re-import the caller's ``__main__`` module, so
+    ``CodeGraph.index()`` works from any calling context — scripts without an
+    ``if __name__ == "__main__"`` guard, notebooks, web request handlers — rather
+    than raising a bootstrapping RuntimeError and re-running top-level code in
+    every worker. tree-sitter parsers are created lazily inside each worker, so
+    there is no pre-fork C state to corrupt.
+    """
+    import multiprocessing as mp
+
+    if "fork" in mp.get_all_start_methods():
+        return mp.get_context("fork")
+    return mp.get_context()  # spawn (Windows); callers must guard __main__
+
+
 def _parse_phase(
     to_index: list[WalkedFile], max_workers: int | None
 ) -> list[tuple[str, FileExtraction, bool]]:
@@ -153,7 +171,7 @@ def _parse_phase(
 
     batches = [to_index[i : i + _BATCH] for i in range(0, len(to_index), _BATCH)]
     results = []
-    with ProcessPoolExecutor(max_workers=workers) as pool:
+    with ProcessPoolExecutor(max_workers=workers, mp_context=_pool_context()) as pool:
         for batch_result in pool.map(extract_batch, batches):
             results.extend(batch_result)
     return results

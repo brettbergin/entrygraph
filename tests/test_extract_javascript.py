@@ -120,3 +120,27 @@ def test_reexport_and_callback_and_computed_call():
     assert any(r.is_star for r in x.reexports)
     assert any(r.kind == "callback" and r.callee_name == "onTick" for r in x.references)
     assert any(r.kind == "dynamic_call" and r.callee_name == "<computed>" for r in x.references)
+
+
+def test_typescript_extraction_works():
+    # Regression: TS files are parsed with the TS grammar but reuse the JS query
+    # sources; those must be compiled against the TS grammar or captures are empty.
+    x = extract(
+        "export class UserService {\n"
+        "  async findUser(id: string): Promise<User> { return this.repo.get(id); }\n"
+        "}\n"
+        "export function boot(): void { new UserService().findUser('1'); }\n",
+        path="src/svc.ts", lang="typescript",
+    )
+    names = {s.name for s in x.symbols}
+    assert {"UserService", "findUser", "boot"} <= names
+    assert any(r.kind == "call" and r.callee_name == "findUser" for r in x.references)
+
+
+def test_tsx_extraction_works():
+    x = extract(
+        "export function App() { return doRender(); }\n",
+        path="src/App.tsx", lang="tsx",
+    )
+    assert any(s.name == "App" for s in x.symbols)
+    assert any(r.callee_name == "doRender" for r in x.references)
