@@ -66,9 +66,13 @@ def _traversal_params(
     return floor, include_fuzzy
 
 
-def _fully_sanitized(path: CallPath) -> bool:
-    """True if the terminal hop was neutralized by a sanitizer (risk driven to 0)."""
-    return path.risk_score == 0.0
+def _has_sanitizer(path: CallPath) -> bool:
+    """True if a category sanitizer is called on the path (heuristic, no dataflow).
+
+    Drives ``--prune-sanitized``. Sanitizer matches only discount risk (never zero
+    it), so pruning is an explicit opt-in that trades recall for noise reduction
+    rather than a silent, certain "this path is safe" claim."""
+    return any(e.sanitized_by for e in path.edges)
 
 
 class CodeGraph:
@@ -296,13 +300,20 @@ class CodeGraph:
             edge_map = self._edge_rows(session, raw_paths)
             tainted_sources = self._tainted_source_ids(session, sources)
             excluded_nodes = self._nodes_with_open_frontier(session, all_ids, kinds, floor)
+            sibling_calls = self._out_call_qnames(session, all_ids)
             built = [
                 self._materialize_path(
-                    path, symbol_map, edge_map, registry, tainted_sources, excluded_nodes
+                    path,
+                    symbol_map,
+                    edge_map,
+                    registry,
+                    tainted_sources,
+                    excluded_nodes,
+                    sibling_calls,
                 )
                 for path in raw_paths
             ]
-        results = [cp for cp in built if not (prune_sanitized and _fully_sanitized(cp))]
+        results = [cp for cp in built if not (prune_sanitized and _has_sanitizer(cp))]
         results.sort(
             key=lambda p: (-(p.risk_score or 0.0), len(p.symbols), [s.id for s in p.symbols])
         )
@@ -543,8 +554,38 @@ class CodeGraph:
         ).scalars()
         return set(rows)
 
+    @staticmethod
+    def _out_call_qnames(session: Session, node_ids: set[int]) -> dict[int, list[str]]:
+        """For each node, the callee qnames of its outgoing CALLS edges.
+
+        Used for sanitizer detection: a sanitizer is usually a *sibling* call of
+        an on-path function (`shlex.quote(x)` then `subprocess.run(...)`), not a
+        node on the source->sink path itself, so it never appears among the path's
+        own hops."""
+        if not node_ids:
+            return {}
+        from entrygraph.kinds import EdgeKind
+
+        rows = session.execute(
+            select(models.Edge.src_symbol_id, models.Edge.dst_qname).where(
+                models.Edge.src_symbol_id.in_(node_ids),
+                models.Edge.kind == EdgeKind.CALLS,
+            )
+        ).all()
+        out: dict[int, list[str]] = {}
+        for sid, dst_qname in rows:
+            out.setdefault(sid, []).append(dst_qname)
+        return out
+
     def _materialize_path(
-        self, path, symbol_map, edge_map, registry, tainted_sources, excluded_nodes
+        self,
+        path,
+        symbol_map,
+        edge_map,
+        registry,
+        tainted_sources,
+        excluded_nodes,
+        sibling_calls,
     ) -> CallPath:
         symbols = tuple(symbol_map[node] for node, _ in path)
         hops = [hop for _, hop in path[1:]]
@@ -556,10 +597,11 @@ class CodeGraph:
         sink_category = registry.sinks[sink_id].category if sink_id in registry.sinks else None
         terminal_const = is_constant_args(terminal.arg_preview) if terminal else False
 
-        # sanitizer detection: any on-path symbol OR sibling call matching a
-        # sanitizer for the sink's category
+        # sanitizer detection: a sanitizer for the sink's category called by any
+        # on-path node (its own hops OR a sibling call)
+        sibling_qnames = {q for node, _ in path for q in sibling_calls.get(node, ())}
         sanitized_ids, sanitized_effect = self._path_sanitizers(
-            symbols, rows, registry, sink_category
+            symbols, rows, sibling_qnames, registry, sink_category
         )
 
         path_edges: list[PathEdge] = []
@@ -593,17 +635,28 @@ class CodeGraph:
         )
 
     @staticmethod
-    def _path_sanitizers(symbols, rows, registry, sink_category):
-        """Return (matched sanitizer ids, strongest effect) for the sink category."""
+    def _path_sanitizers(symbols, rows, sibling_qnames, registry, sink_category):
+        """Return (matched sanitizer ids, effect) for the sink category.
+
+        Candidates are every callee reachable from an on-path node: the path's own
+        hops plus sibling calls (`sibling_qnames`). The effect is capped at
+        ``"reduces"`` regardless of the catalog's ``effect`` — with no dataflow we
+        cannot prove the sanitized value is the one reaching the sink, so a match
+        discounts risk but never drives it to zero (which would silently hide a
+        real path). ``--prune-sanitized`` is the explicit, heuristic opt-in to
+        drop these."""
         if not sink_category:
             return [], None
         matched: list = []
-        candidates = [s.qname for s in symbols] + [r.dst_qname for r in rows if r is not None]
+        candidates = (
+            [s.qname for s in symbols]
+            + [r.dst_qname for r in rows if r is not None]
+            + list(sibling_qnames)
+        )
         for qname in candidates:
             for san in registry.match_sanitizers(qname):
                 if san.category == sink_category:
                     matched.append(san)
         if not matched:
             return [], None
-        effect = "neutralizes" if any(s.effect == "neutralizes" for s in matched) else "reduces"
-        return [s.id for s in matched], effect
+        return [s.id for s in matched], "reduces"

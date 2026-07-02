@@ -151,8 +151,11 @@ entrygraph paths --source '*' --sink-category command_exec
   `--source-category http_input` / `env`) — `entrygraph paths --source-category http_input --sink-category sql`. Combine with `--source` to union both.
 - **Precision/recall dial**: by default only high-confidence edges are traversed.
   Widen with `--include-unresolved` (wildcard `py:*.execute` sinks + dynamic
-  calls) or `--include-fuzzy` (speculative class-hierarchy edges); drop
-  neutralized paths with `--prune-sanitized`.
+  calls) or `--include-fuzzy` (speculative class-hierarchy edges).
+- **Sanitizers**: a registered sanitizer for the sink's category called on a
+  path (e.g. `shlex.quote`) *discounts* its risk score — heuristically, since
+  there is no dataflow, so it never zeroes the risk or hides the path.
+  `--prune-sanitized` opts into dropping those paths entirely.
 - Target an exact sink with `--sink py:subprocess.run` instead of a category.
 
 ### `stats` & `--json`
@@ -243,7 +246,7 @@ graph.paths(source="app.routes.*", sink_category="sql",
 graph.paths(source="app.routes.*", sink_category="command_exec",
             include_fuzzy=True)        # follow speculative class-hierarchy (CHA) edges
 graph.paths(source="app.routes.*", sink_category="command_exec",
-            prune_sanitized=True)      # drop paths neutralized by a shlex.quote etc.
+            prune_sanitized=True)      # drop paths where a shlex.quote etc. is called
 
 # Incremental re-index (only changed/added/deleted files are reparsed)
 graph.refresh()
@@ -284,9 +287,11 @@ results are safe to hold and trivial to serialize.
   root with `[[sink]]` / `[[source]]` / `[[sanitizer]]` tables (same schema as
   the built-in `data/sinks/*.toml`), or call
   `entrygraph.detect.taint.register_sink(...)` / `register_sanitizer(...)`. A
-  `[[sanitizer]]` with `effect = "neutralizes"` prunes a path for its category;
-  `effect = "reduces"` only discounts the risk score. Third-party wrapper
-  libraries that reach a sink internally are covered by `data/sinks/lib_*.toml`
+  `[[sanitizer]]` called on a path discounts its risk score for that category;
+  since reachability has no dataflow, the discount is capped (a match never
+  zeroes risk or hides a path — use `--prune-sanitized` to drop them explicitly).
+  Third-party wrapper libraries that reach a sink internally are covered by
+  `data/sinks/lib_*.toml`
   "library summaries" (same schema, with a `library = "..."` tag).
 - **New frameworks / entrypoints** — register a `FrameworkSpec` and an
   `EntrypointRule`; adding a framework is usually a few lines.

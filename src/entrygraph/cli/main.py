@@ -415,7 +415,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--prune-sanitized",
         dest="prune_sanitized",
         action="store_true",
-        help="drop paths neutralized by a registered sanitizer",
+        help="drop paths where a category sanitizer is called (heuristic, no dataflow)",
     )
     p.set_defaults(func=cmd_paths)
 
