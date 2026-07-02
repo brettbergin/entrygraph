@@ -206,6 +206,7 @@ class JavaExtractor:
                 receiver = None
                 callee_text = callee_name
             args = node.child_by_field_name("arguments")
+            caller = self._caller(node, ctx)
             out.references.append(
                 RawReference(
                     kind="call",
@@ -213,11 +214,12 @@ class JavaExtractor:
                     callee_name=callee_name,
                     receiver_text=receiver,
                     span=span_of(node),
-                    caller_qualified_name=self._caller(node, ctx),
+                    caller_qualified_name=caller,
                     arg_count=len(args.named_children) if args is not None else 0,
                     arg_preview=truncate(node_text(args)) if args is not None else None,
                 )
             )
+            self._emit_callbacks(args, caller, out)
 
         for node in caps.get("new", []):
             type_node = node.child_by_field_name("type")
@@ -236,6 +238,33 @@ class JavaExtractor:
                     caller_qualified_name=self._caller(node, ctx),
                     arg_count=len(args.named_children) if args is not None else 0,
                     arg_preview=truncate(node_text(args)) if args is not None else None,
+                )
+            )
+
+    def _emit_callbacks(self, args: Node | None, caller: str | None, out: FileExtraction) -> None:
+        """Method-reference arguments passed to a call — a method value invoked
+        later, e.g. ``r.get("/run", this::handle)`` or ``stream.map(App::parse)``.
+        The qualifier becomes the receiver (``this`` resolves to the enclosing
+        class; a type/instance qualifier resolves by unique method name), so the
+        handler gets an inbound edge. Resolution keeps only project methods."""
+        if args is None:
+            return
+        for arg in args.named_children:
+            if arg.type != "method_reference":
+                continue
+            children = arg.named_children
+            if len(children) < 2 or children[-1].type != "identifier":
+                continue
+            receiver = node_text(children[0])  # "this" | "App" | "obj"
+            name = node_text(children[-1])
+            out.references.append(
+                RawReference(
+                    kind="callback",
+                    callee_text=f"{receiver}::{name}",
+                    callee_name=name,
+                    receiver_text=receiver,
+                    span=span_of(arg),
+                    caller_qualified_name=caller,
                 )
             )
 
