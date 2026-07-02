@@ -16,7 +16,7 @@ PyPI — no manual version edits, no tokens.
    **Trusted Publishing (OIDC)** and attached to a GitHub Release.
 
 Pull requests are tested separately by [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
-across Python 3.11–3.13, so broken code never reaches `main`.
+across Python 3.13–3.14, so broken code never reaches `main`.
 
 ## One-time setup (required before the first release)
 

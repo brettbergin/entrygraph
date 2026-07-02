@@ -23,7 +23,7 @@ Dockerfile).
 pip install entrygraph        # or: uv pip install entrygraph
 ```
 
-Requires Python ≥ 3.11. Installs the `entrygraph` command (you can also run it as
+Requires Python ≥ 3.13. Installs the `entrygraph` command (you can also run it as
 `uv run entrygraph …` or `python -m entrygraph …`).
 
 ## Quick start (CLI)
