@@ -305,12 +305,13 @@ def _write_files(
         for path, fid in session.execute(select(File.path, File.id).where(File.repo_id == repo.id)):
             file_id_by_path[path] = fid
 
-    reindexed = {w.path for w in diff.to_index} | {
+    to_index_paths = {w.path for w in diff.to_index}
+    reindexed = to_index_paths | {
         w.path for w in walked if w.skip_reason and w.path not in file_id_by_path
     }
     new_rows = []
     for wf in walked:
-        if wf.path in file_id_by_path and wf.path not in {w.path for w in diff.to_index}:
+        if wf.path in file_id_by_path and wf.path not in to_index_paths:
             continue  # unchanged; row already present
         if wf.path not in reindexed and not wf.skip_reason:
             continue

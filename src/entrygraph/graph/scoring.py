@@ -33,7 +33,7 @@ _LENGTH_DECAY = 0.97
 _CONST_TOKEN = re.compile(
     r"""^(
         \s | , | = | \( | \) | \[ | \] | \{ | \} | : |
-        '[^']*' | "[^"]*" | `[^`]*` |
+        '[^']*' | "[^"]*" | `(?:[^`$]|\$(?!\{))*` |   # backtick: no ${...} interpolation
         \d[\d_.eExXaAbBcCdDfF]* |
         True|False|None|null|true|false|nil |
         [A-Za-z_]\w*\s*=          # kwarg name before '='

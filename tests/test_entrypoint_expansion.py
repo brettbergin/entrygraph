@@ -160,6 +160,17 @@ def test_lambda_js_handler_rule():
     assert hints and hints[0].kind is EntrypointKind.LAMBDA_HANDLER
 
 
+def test_typer_command_reports_typer_not_click():
+    # typer reuses click's decorator shape; the hint must carry framework/rule_id
+    # for typer, not be mislabeled as click.
+    sym = _sym("serve", "cli.serve")
+    sym.decorators = ["@app.command()"]
+    hints = _run("python.typer.command", _extraction([sym]), frameworks=frozenset({"typer"}))
+    assert hints
+    assert hints[0].framework == "typer"
+    assert hints[0].rule_id == "python.typer.command"
+
+
 def test_sidekiq_worker_rule():
     from entrygraph.detect.entrypoints import rules_for
 

@@ -78,6 +78,17 @@ def test_parse_manifests_fixture():
     assert "requirements.txt" in deps.sources
 
 
+def test_parse_manifests_reads_js_workspace_packages(tmp_path: Path):
+    # `packages/<name>/package.json` is the standard JS workspace layout and must
+    # not be excluded (regression: "packages" was in the skip list).
+    pkg = tmp_path / "packages" / "api"
+    pkg.mkdir(parents=True)
+    (pkg / "package.json").write_text('{"dependencies": {"express": "^4"}}')
+    deps = parse_manifests(tmp_path)
+    assert "express" in deps.javascript
+    assert "packages/api/package.json" in deps.sources
+
+
 # ---------------- C1: C#, PHP, Rust manifests ----------------
 from entrygraph.detect.manifests import (  # noqa: E402
     parse_cargo_toml,

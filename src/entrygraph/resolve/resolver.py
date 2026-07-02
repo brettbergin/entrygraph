@@ -71,6 +71,7 @@ class FileResolver:
         self.module_symbol_id = module_symbol_id
         self.table = table
         self.externals = externals
+        self.is_package = is_package
         self.prefix = LANG_PREFIX.get(extraction.language, extraction.language)
         self.import_map, self.wildcard_modules = build_import_map(extraction, is_package)
 
@@ -122,7 +123,9 @@ class FileResolver:
         seen: set[str] = set()
         for imp in self.x.imports:
             module = (
-                expand_relative(imp, self.x.module_path, False) if imp.is_relative else imp.module
+                expand_relative(imp, self.x.module_path, self.is_package)
+                if imp.is_relative
+                else imp.module
             )
             if not module or module in seen:
                 continue

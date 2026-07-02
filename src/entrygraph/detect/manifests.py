@@ -223,9 +223,11 @@ def parse_manifests(root: str | Path) -> ManifestDeps:
                 if not manifest.is_file():
                     continue
                 if any(
-                    part in ("node_modules", "vendor", ".venv", "venv", "target", "packages")
+                    part in ("node_modules", "vendor", ".venv", "venv", "target")
                     for part in manifest.parts
                 ):
+                    # note: "packages" is intentionally NOT excluded — it is the
+                    # standard JS workspace layout (packages/<name>/package.json).
                     continue
                 try:
                     text = manifest.read_text(encoding="utf-8", errors="replace")
