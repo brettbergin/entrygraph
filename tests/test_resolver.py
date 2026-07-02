@@ -20,7 +20,7 @@ def make_table() -> SymbolTable:
     return table
 
 
-def make_resolver(table, refs=(), imports=(), module="app.routes", module_id=2):
+def make_resolver(table, refs=(), imports=(), module="app.routes", module_id=2, sink_registry=None):
     x = FileExtraction(
         path="app/routes.py",
         language="python",
@@ -31,7 +31,7 @@ def make_resolver(table, refs=(), imports=(), module="app.routes", module_id=2):
         references=list(refs),
     )
     externals = ExternalRegistry(iter(range(100, 200)).__next__)
-    return FileResolver(x, module_id, table, externals), externals
+    return FileResolver(x, module_id, table, externals, sink_registry=sink_registry), externals
 
 
 def ref(callee_text, callee_name=None, receiver=None, caller=None, kind="call"):
@@ -178,6 +178,36 @@ def test_unresolved_gets_prefixed_placeholder():
     by_qname = {e.dst_qname: e for e in edges}
     assert "py:eval" in by_qname
     assert by_qname["py:eval"].confidence is Confidence.UNRESOLVED
+
+
+def test_sink_named_attribute_call_is_not_fuzzy_bound():
+    # `cursor.execute(...)` guesses to the sink `py:*.execute`. Even though a
+    # unique project method `Runner.execute` (id 12) exists, we must NOT fuzzy-bind
+    # to it — that would rewrite dst_qname and erase the SQL sink. Keep the guess.
+    from entrygraph.detect.taint import builtin_registry
+
+    table = make_table()
+    resolver, _ = make_resolver(
+        table, [ref("cursor.execute", receiver="cursor")], sink_registry=builtin_registry()
+    )
+    call = next(e for e in resolver.resolve() if e.kind is EdgeKind.CALLS and e.via != "cha")
+    assert call.dst_qname == "py:*.execute"
+    assert call.confidence is Confidence.UNRESOLVED
+    assert call.dst_symbol_id != 12
+
+
+def test_non_sink_attribute_call_still_fuzzy_binds_with_registry():
+    # `obj.render` is not a sink, so unique-name fuzzy binding still applies even
+    # with a sink registry present — the fix is targeted to sink names only.
+    from entrygraph.detect.taint import builtin_registry
+
+    table = make_table()
+    resolver, _ = make_resolver(
+        table, [ref("obj.render", receiver="obj")], sink_registry=builtin_registry()
+    )
+    call = next(e for e in resolver.resolve() if e.kind is EdgeKind.CALLS)
+    assert call.dst_symbol_id == 13  # Runner.render
+    assert call.confidence is Confidence.FUZZY
 
 
 def test_relative_import_expansion():

@@ -17,6 +17,7 @@ incremental re-resolution can heal them when the target appears.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from entrygraph.extract.ir import FileExtraction, RawReference
 from entrygraph.kinds import Confidence, EdgeKind, SymbolKind
@@ -28,6 +29,9 @@ from entrygraph.resolve.hierarchy import (
     expand_relative,
 )
 from entrygraph.resolve.symbol_table import SymbolTable
+
+if TYPE_CHECKING:
+    from entrygraph.detect.taint import SinkRegistry
 
 # expand_relative re-exported for backward compatibility with callers/tests.
 __all__ = ["FileResolver", "ResolvedEdge", "expand_relative"]
@@ -66,12 +70,14 @@ class FileResolver:
         table: SymbolTable,
         externals: ExternalRegistry,
         is_package: bool = False,
+        sink_registry: SinkRegistry | None = None,
     ) -> None:
         self.x = extraction
         self.module_symbol_id = module_symbol_id
         self.table = table
         self.externals = externals
         self.is_package = is_package
+        self.sink_registry = sink_registry
         self.prefix = LANG_PREFIX.get(extraction.language, extraction.language)
         self.import_map, self.wildcard_modules = build_import_map(extraction, is_package)
 
@@ -217,6 +223,14 @@ class FileResolver:
                 return self.table.by_fqn[target]
         return self.table.unique_by_name(name, (SymbolKind.FUNCTION, SymbolKind.METHOD))
 
+    def _guess_is_sink(self, ref: RawReference) -> bool:
+        """Whether the receiver-agnostic guess for this attribute call matches a
+        registered sink — checked with the same call the index-time stamper uses."""
+        if self.sink_registry is None:
+            return False
+        guess = f"{self.prefix}:*.{ref.callee_name}"
+        return self.sink_registry.match(guess, ref.arg_preview) is not None
+
     def _bind(self, ref: RawReference) -> tuple[int | None, str, Confidence, str | None]:
         # 1. import-map expansion (chase re-export chains for project targets)
         first_seg = ref.callee_text.split(".", 1)[0].split("(", 1)[0]
@@ -270,14 +284,21 @@ class FileResolver:
         # where runner is a local variable) this is the only way to recover the
         # call-graph edge without local type inference — it's the documented
         # FUZZY tradeoff.
-        kinds = (
-            (SymbolKind.METHOD,)
-            if ref.receiver_text is not None
-            else (SymbolKind.FUNCTION, SymbolKind.CLASS)
-        )
-        dst_id = self.table.unique_by_name(ref.callee_name, kinds)
-        if dst_id is not None:
-            return dst_id, self.table.qname_of[dst_id], Confidence.FUZZY, None
+        #
+        # But if the receiver-agnostic guess (`py:*.execute`) is itself a
+        # registered sink, do NOT fuzzy-bind: rewriting dst_qname to a unique
+        # project method named `execute` would erase the sink stamp and hide the
+        # vulnerability. Prefer the guess so the sink survives (step 5); CHA still
+        # adds the project method as a via="cha" candidate, so no edge is lost.
+        if not (ref.receiver_text is not None and self._guess_is_sink(ref)):
+            kinds = (
+                (SymbolKind.METHOD,)
+                if ref.receiver_text is not None
+                else (SymbolKind.FUNCTION, SymbolKind.CLASS)
+            )
+            dst_id = self.table.unique_by_name(ref.callee_name, kinds)
+            if dst_id is not None:
+                return dst_id, self.table.qname_of[dst_id], Confidence.FUZZY, None
 
         # 5. unresolved: language-prefixed guess, still a real node for sinks
         if ref.receiver_text is not None:
