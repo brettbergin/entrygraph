@@ -523,17 +523,22 @@ def _heal_dangling_edges(session, table: SymbolTable, new_qnames: set[str]) -> N
     """Re-bind edges left NULL (degraded on wipe, or targeting a not-yet-existing
     symbol) whose dst_qname now names a freshly-created symbol."""
     dangling = session.execute(
-        select(Edge.id, Edge.dst_qname).where(
+        select(Edge.id, Edge.dst_qname, Edge.confidence).where(
             Edge.dst_symbol_id.is_(None), Edge.dst_qname.in_(new_qnames)
         )
     ).all()
     updates = []
-    for edge_id, dst_qname in dangling:
+    unresolved = int(Confidence.UNRESOLVED)
+    for edge_id, dst_qname, confidence in dangling:
         target = table.by_fqn.get(dst_qname)
         if target is not None:
-            updates.append(
-                {"id": edge_id, "dst_symbol_id": target, "confidence": int(Confidence.IMPORT)}
-            )
+            # Preserve the edge's original tier. Only an edge that was UNRESOLVED
+            # (a project import whose target didn't exist yet) upgrades to IMPORT
+            # on heal, matching what a full re-index produces. An EXACT/IMPORT/
+            # FUZZY/cha edge whose target was merely wiped and recreated keeps its
+            # tier — healing must not silently promote a fuzzy or CHA edge.
+            healed = int(Confidence.IMPORT) if confidence == unresolved else confidence
+            updates.append({"id": edge_id, "dst_symbol_id": target, "confidence": healed})
     if updates:
         session.execute(update(Edge), updates)
 
