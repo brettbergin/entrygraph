@@ -4,7 +4,10 @@ Same paths()/reachable() contract as AdjacencyCache, but the traversal runs
 inside SQLite via a recursive CTE instead of loading adjacency into memory.
 Path reconstruction and cycle-guarding use an encoded path string, which is why
 this is the fallback (it does more work per row); the memory engine is primary.
-The two are kept behaviorally identical by the parametrized reachability tests.
+The two are kept behaviorally identical by the parametrized reachability tests:
+the walk stops at the first sink on a path (the recursive arm does not expand
+past a node already in the sink set, matching the memory DFS), and the outer
+query is bounded by LIMIT :max_paths.
 """
 
 from __future__ import annotations
@@ -57,6 +60,7 @@ class CteEngine:
                            1
                     FROM edges e
                     WHERE e.src_symbol_id IN :sources
+                      AND e.src_symbol_id NOT IN :sinks
                       AND e.dst_symbol_id IS NOT NULL
                       AND e.kind IN :kinds
                       AND e.confidence >= :minconf
@@ -72,6 +76,7 @@ class CteEngine:
                     FROM walk w
                     JOIN edges e ON e.src_symbol_id = w.node
                     WHERE w.depth < :max_depth
+                      AND w.node NOT IN :sinks
                       AND e.dst_symbol_id IS NOT NULL
                       AND e.kind IN :kinds
                       AND e.confidence >= :minconf
@@ -81,6 +86,7 @@ class CteEngine:
                 SELECT nodes, lines, kinds, ids, confs, depth FROM walk
                 WHERE node IN :sinks
                 ORDER BY depth
+                LIMIT :max_paths
                 """
             ).bindparams(
                 bindparam("sources", expanding=True),
@@ -94,6 +100,7 @@ class CteEngine:
                 "minconf": self.min_confidence,
                 "include_cha": 1 if self.include_cha else 0,
                 "max_depth": max_depth,
+                "max_paths": max_paths,
                 "sep": _SEP,
             },
         ).all()
