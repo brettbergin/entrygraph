@@ -18,7 +18,7 @@ from concurrent.futures.process import BrokenProcessPool
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import Engine, delete, select, update
+from sqlalchemy import Engine, delete, select, text, update
 from sqlalchemy.orm import Session
 
 from entrygraph.db.meta import ensure_schema
@@ -62,9 +62,32 @@ def index_repository(
     sink_registry = registry_for_repo(root)
 
     with Session(engine) as session:
+        # Defer FK enforcement to COMMIT (checked once) instead of per-insert.
+        # Integrity is guaranteed by construction — ids are app-assigned and rows
+        # are written parents-first — so per-row FK probes are pure overhead on a
+        # bulk load. Auto-resets at commit, so read sessions keep immediate FKs.
+        session.execute(text("PRAGMA defer_foreign_keys=ON"))
         repo = _load_or_create_repo(session, root, incremental)
         known = _known_file_states(session, repo.id) if incremental else {}
         diff = diff_files(walked, known, paranoid=paranoid)
+
+        if incremental and not diff.to_index and not diff.deleted_paths:
+            # Nothing changed: skip the whole middle — symbol-table load, parse,
+            # resolution, edge healing, external GC, detection rewrite, and the
+            # full symbol re-count (all O(repo)). The graph and detections are
+            # already correct; re-running detection here with empty extractions
+            # would even *degrade* import-based framework confidence.
+            session.commit()
+            return IndexStats(
+                files_scanned=len(walked),
+                files_indexed=0,
+                files_skipped=sum(1 for w in walked if w.skip_reason),
+                files_deleted=0,
+                symbols=repo.symbol_count or 0,
+                edges=0,
+                entrypoints=0,
+                duration_seconds=round(time.monotonic() - started, 3),
+            )
 
         if incremental:
             deleted = _wipe_files(

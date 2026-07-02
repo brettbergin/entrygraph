@@ -127,6 +127,7 @@ class CodeGraph:
         include_external: bool = False,
         limit: int | None = None,
         offset: int | None = None,
+        after: tuple[str, int] | None = None,
     ) -> list[Symbol]:
         with self._session_factory() as session:
             return q.select_symbols(
@@ -138,6 +139,7 @@ class CodeGraph:
                 include_external=include_external,
                 limit=limit,
                 offset=offset,
+                after=after,
             )
 
     def symbol(self, qname: str) -> Symbol:
@@ -148,13 +150,16 @@ class CodeGraph:
         return exact[0]
 
     def iter_symbols(self, *, batch_size: int = 1000, **filters) -> Iterator[Symbol]:
-        offset = 0
+        # keyset pagination: each batch resumes after the last (qname, id), so a
+        # full iteration is O(N), not O(N^2) as OFFSET would be.
+        after: tuple[str, int] | None = None
         while True:
-            batch = self.symbols(**filters, limit=batch_size, offset=offset)
+            batch = self.symbols(**filters, limit=batch_size, after=after)
             yield from batch
             if len(batch) < batch_size:
                 return
-            offset += batch_size
+            last = batch[-1]
+            after = (last.qname, last.id)
 
     def files(self, *, language: str | None = None, path: str | None = None) -> list[FileInfo]:
         with self._session_factory() as session:

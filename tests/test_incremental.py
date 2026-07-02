@@ -58,6 +58,21 @@ def test_no_change_refresh_is_identical(repo, tmp_path):
     assert before == after
 
 
+def test_no_change_refresh_preserves_detection_confidence(repo, tmp_path):
+    # zero-change early-exit must NOT rewrite detections; a full re-detect with
+    # empty extractions would drop import-based signals (flask 0.94 -> 0.8).
+    from entrygraph import CodeGraph
+
+    engine = make_engine(tmp_path / "inc.db")
+    index_repository(repo, engine)
+    before = {d.name: round(d.confidence, 3) for d in CodeGraph(engine).detect().frameworks}
+    index_repository(repo, engine, incremental=True)
+    after = {d.name: round(d.confidence, 3) for d in CodeGraph(engine).detect().frameworks}
+    assert before == after
+    assert before["flask"] > 0.9  # dep + import, not degraded to dep-only
+    engine.dispose()
+
+
 def test_edit_file_matches_full_reindex(repo, tmp_path):
     engine = make_engine(tmp_path / "inc.db")
     index_repository(repo, engine)

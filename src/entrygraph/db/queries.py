@@ -64,8 +64,13 @@ def select_symbols(
     include_external: bool = False,
     limit: int | None = None,
     offset: int | None = None,
+    after: tuple[str, int] | None = None,
 ) -> list[Symbol]:
-    stmt = _symbol_select().order_by(models.Symbol.qname)
+    # (qname, id) is a total order (id breaks qname ties), so `after` supports
+    # keyset pagination: WHERE (qname, id) > (:aq, :ai) walks ix_symbols_qname
+    # directly, unlike OFFSET which rescans and discards all prior rows (O(N^2)
+    # over a full iteration).
+    stmt = _symbol_select().order_by(models.Symbol.qname, models.Symbol.id)
     if kind is not None:
         stmt = stmt.where(models.Symbol.kind == SymbolKind(kind))
     elif not include_external:
@@ -76,6 +81,11 @@ def select_symbols(
         stmt = stmt.where(_match(models.Symbol.qname, qname))
     if file is not None:
         stmt = stmt.where(_match(models.File.path, file))
+    if after is not None:
+        aq, ai = after
+        stmt = stmt.where(
+            (models.Symbol.qname > aq) | ((models.Symbol.qname == aq) & (models.Symbol.id > ai))
+        )
     if limit is not None:
         stmt = stmt.limit(limit)
     if offset is not None:
