@@ -35,7 +35,16 @@ from entrygraph.results import (
     Symbol,
 )
 
-__version__ = "0.1.0"
+try:
+    # written at build time by hatch-vcs (see pyproject [tool.hatch.build.hooks.vcs])
+    from entrygraph._version import __version__
+except ImportError:  # running from a raw source tree that was never built
+    try:
+        from importlib.metadata import version as _pkg_version
+
+        __version__ = _pkg_version("entrygraph")
+    except Exception:  # pragma: no cover - not installed at all
+        __version__ = "0.0.0"
 
 if TYPE_CHECKING:  # pragma: no cover
     from entrygraph.api import CodeGraph

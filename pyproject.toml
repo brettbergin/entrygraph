@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "entrygraph"
-version = "0.1.0"
+dynamic = ["version"]  # derived from git tags by hatch-vcs (see [tool.hatch.version])
 description = "Language-agnostic code graph: query symbols, entrypoints, and source-to-sink call paths from a SQLite index"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -35,7 +35,19 @@ dev = ["pytest>=8.0", "pytest-cov"]
 entrygraph = "entrygraph.cli.main:main"
 
 [project.urls]
-Repository = "https://github.com/brettbergin/entrypoints"
+Repository = "https://github.com/brettbergin/entrygraph"
+
+# Version comes from the latest `v*` git tag (set by the release workflow on each
+# merge to main). `no-local-version` keeps the version PEP 440-clean so PyPI
+# accepts it; the fallback is used only in a tag-less checkout.
+[tool.hatch.version]
+source = "vcs"
+raw-options = { local_scheme = "no-local-version", fallback_version = "0.0.0" }
+
+# Write the resolved version into the package so `entrygraph.__version__` and
+# `entrygraph --version` report it at runtime.
+[tool.hatch.build.hooks.vcs]
+version-file = "src/entrygraph/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/entrygraph"]
