@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 
-from entrygraph.fs.walker import WalkedFile
+from entrygraph.fs.walker import WalkedFile, content_gate
 from entrygraph.parsing.parsers import supported
 
 
@@ -19,6 +19,14 @@ def hash_file(abs_path: str) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _finalize_skip(wf: WalkedFile) -> None:
+    """Apply the byte-peek content gate to a to-be-considered file. walk_repo only
+    set the cheap gate, so this fills in binary/minified-by-content for the files
+    that are actually about to be indexed."""
+    if not wf.skip_reason:
+        wf.skip_reason = content_gate(wf.abs_path, wf.language, wf.size_bytes)
 
 
 def _worker_hashes(wf: WalkedFile) -> bool:
@@ -66,6 +74,7 @@ def diff_files(
         seen.add(wf.path)
         prior = known.get(wf.path)
         if prior is None:
+            _finalize_skip(wf)
             # supported+unskipped files are hashed by the parse worker (avoids a
             # second read); everything else the worker won't read is hashed here.
             if not wf.skip_reason and not _worker_hashes(wf):
@@ -73,9 +82,12 @@ def diff_files(
             diff.added.append(wf)
             continue
         if not paranoid and prior.size_bytes == wf.size_bytes and prior.mtime_ns == wf.mtime_ns:
+            # unchanged fast path: no content read at all (the whole point of the
+            # deferred content gate — most files on a warm refresh land here).
             diff.unchanged.append(wf)
             diff.hashes[wf.path] = prior.content_hash
             continue
+        _finalize_skip(wf)
         new_hash = hash_file(wf.abs_path) if not wf.skip_reason else prior.content_hash
         diff.hashes[wf.path] = new_hash
         if new_hash == prior.content_hash:

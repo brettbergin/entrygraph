@@ -54,7 +54,10 @@ def test_collect_gitignores_skips_pruned_dirs(tmp_path: Path):
     assert found == {".gitignore", "sub/.gitignore"}
 
 
-def test_walk_gates(tmp_path: Path):
+def test_walk_gates_cheap_only(tmp_path: Path):
+    # walk_repo applies only the cheap (no-read) gates: size and filename. The
+    # byte-peek content gate (binary / minified-by-content) is deferred to the
+    # diff phase, so those files come back with skip_reason=None from the walk.
     _make(tmp_path, "big.py", b"x = 1\n" * (MAX_FILE_BYTES // 6 + 10))
     _make(tmp_path, "bin.py", b"\x00\x01\x02binary")
     _make(tmp_path, "lib.min.js", b"var a=1;")
@@ -63,9 +66,26 @@ def test_walk_gates(tmp_path: Path):
 
     files, _ = walk_repo(tmp_path)
     by_path = {f.path: f for f in files}
-    assert by_path["big.py"].skip_reason == "too_large"
+    assert by_path["big.py"].skip_reason == "too_large"  # cheap: size
+    assert by_path["lib.min.js"].skip_reason == "minified"  # cheap: name suffix
+    assert by_path["bin.py"].skip_reason is None  # content gate deferred
+    assert by_path["long.js"].skip_reason is None  # content gate deferred
+    assert by_path["ok.py"].skip_reason is None
+
+
+def test_content_gate_applied_during_diff(tmp_path: Path):
+    # the deferred content gate must still fire for files being indexed: a binary
+    # and a long-line-minified file get their skip_reason set in diff_files.
+    from entrygraph.fs.hashing import diff_files
+
+    _make(tmp_path, "bin.py", b"\x00\x01\x02binary")
+    _make(tmp_path, "long.js", b"var a" + b"a" * 6000 + b"=1;")
+    _make(tmp_path, "ok.py")
+
+    walked, _ = walk_repo(tmp_path)
+    diff_files(walked, {})  # all added -> content gate finalized
+    by_path = {f.path: f for f in walked}
     assert by_path["bin.py"].skip_reason == "binary"
-    assert by_path["lib.min.js"].skip_reason == "minified"
     assert by_path["long.js"].skip_reason == "minified"
     assert by_path["ok.py"].skip_reason is None
 
