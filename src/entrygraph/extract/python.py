@@ -36,7 +36,7 @@ class PythonExtractor:
             parts[-1] = parts[-1].removesuffix(".py").removesuffix(".pyi")
         return ".".join(p for p in parts if p) or "_root", is_package
 
-    def extract(self, tree: "Tree", ctx: FileContext) -> FileExtraction:
+    def extract(self, tree: Tree, ctx: FileContext) -> FileExtraction:
         root = tree.root_node
         out = FileExtraction(
             path=ctx.path,
@@ -54,7 +54,7 @@ class PythonExtractor:
 
     # ---------------- definitions ----------------
 
-    def _extract_definitions(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _extract_definitions(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("python", "definitions"), root)
 
         for node in caps.get("def.class", []):
@@ -97,7 +97,11 @@ class PythonExtractor:
                 continue
             name = node_text(name_node)
             qname, parent_q = self._qualify(node, name, ctx)
-            kind = SymbolKind.METHOD if self._nearest_scope(node) == "class_definition" else SymbolKind.FUNCTION
+            kind = (
+                SymbolKind.METHOD
+                if self._nearest_scope(node) == "class_definition"
+                else SymbolKind.FUNCTION
+            )
             out.symbols.append(
                 RawSymbol(
                     kind=kind,
@@ -139,7 +143,7 @@ class PythonExtractor:
 
     # ---------------- imports ----------------
 
-    def _extract_imports(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _extract_imports(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("python", "imports"), root)
 
         for node in caps.get("import", []):
@@ -147,16 +151,24 @@ class PythonExtractor:
                 if child.type == "dotted_name":
                     module = node_text(child)
                     out.imports.append(
-                        RawImport(module=module, imported_name=None,
-                                  alias=module.split(".")[0], span=span_of(node))
+                        RawImport(
+                            module=module,
+                            imported_name=None,
+                            alias=module.split(".")[0],
+                            span=span_of(node),
+                        )
                     )
                 elif child.type == "aliased_import":
                     module_node = child.child_by_field_name("name")
                     alias_node = child.child_by_field_name("alias")
                     if module_node and alias_node:
                         out.imports.append(
-                            RawImport(module=node_text(module_node), imported_name=None,
-                                      alias=node_text(alias_node), span=span_of(node))
+                            RawImport(
+                                module=node_text(module_node),
+                                imported_name=None,
+                                alias=node_text(alias_node),
+                                span=span_of(node),
+                            )
                         )
 
         for node in caps.get("import.from", []):
@@ -170,22 +182,39 @@ class PythonExtractor:
                 if child.type == "dotted_name":
                     name = node_text(child)
                     out.imports.append(
-                        RawImport(module=module, imported_name=name, alias=name.split(".")[0],
-                                  span=span_of(node), is_relative=level > 0, relative_level=level)
+                        RawImport(
+                            module=module,
+                            imported_name=name,
+                            alias=name.split(".")[0],
+                            span=span_of(node),
+                            is_relative=level > 0,
+                            relative_level=level,
+                        )
                     )
                 elif child.type == "aliased_import":
                     name_node = child.child_by_field_name("name")
                     alias_node = child.child_by_field_name("alias")
                     if name_node and alias_node:
                         out.imports.append(
-                            RawImport(module=module, imported_name=node_text(name_node),
-                                      alias=node_text(alias_node), span=span_of(node),
-                                      is_relative=level > 0, relative_level=level)
+                            RawImport(
+                                module=module,
+                                imported_name=node_text(name_node),
+                                alias=node_text(alias_node),
+                                span=span_of(node),
+                                is_relative=level > 0,
+                                relative_level=level,
+                            )
                         )
                 elif child.type == "wildcard_import":
                     out.imports.append(
-                        RawImport(module=module, imported_name="*", alias="*",
-                                  span=span_of(node), is_relative=level > 0, relative_level=level)
+                        RawImport(
+                            module=module,
+                            imported_name="*",
+                            alias="*",
+                            span=span_of(node),
+                            is_relative=level > 0,
+                            relative_level=level,
+                        )
                     )
 
         for imp in out.imports:
@@ -194,7 +223,7 @@ class PythonExtractor:
 
     # ---------------- calls / decorators ----------------
 
-    def _extract_calls(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _extract_calls(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("python", "calls"), root)
 
         for node in caps.get("call", []):
@@ -256,7 +285,9 @@ class PythonExtractor:
                 )
             )
 
-    def _emit_dynamic_call(self, node: "Node", fn: "Node", caller: str | None, out: FileExtraction) -> None:
+    def _emit_dynamic_call(
+        self, node: Node, fn: Node, caller: str | None, out: FileExtraction
+    ) -> None:
         """A call whose target is computed: getattr(...)(), handlers[name](), etc."""
         callee_name = "<dynamic>"
         if fn.type == "call":
@@ -277,7 +308,7 @@ class PythonExtractor:
             )
         )
 
-    def _emit_callbacks(self, args: "Node | None", caller: str | None, out: FileExtraction) -> None:
+    def _emit_callbacks(self, args: Node | None, caller: str | None, out: FileExtraction) -> None:
         """Bare-identifier arguments (and identifier kwarg values) passed to a call.
 
         `schedule(task)` / `add(func=handler)` — the name may bind to a project
@@ -309,7 +340,7 @@ class PythonExtractor:
 
     # ---------------- shared walking helpers ----------------
 
-    def _scope_chain(self, node: "Node") -> list[str]:
+    def _scope_chain(self, node: Node) -> list[str]:
         parts: list[str] = []
         current = node.parent
         while current is not None:
@@ -321,7 +352,7 @@ class PythonExtractor:
         parts.reverse()
         return parts
 
-    def _nearest_scope(self, node: "Node") -> str | None:
+    def _nearest_scope(self, node: Node) -> str | None:
         current = node.parent
         while current is not None:
             if current.type in _SCOPE_TYPES:
@@ -329,13 +360,13 @@ class PythonExtractor:
             current = current.parent
         return None
 
-    def _qualify(self, node: "Node", name: str, ctx: FileContext) -> tuple[str, str | None]:
+    def _qualify(self, node: Node, name: str, ctx: FileContext) -> tuple[str, str | None]:
         chain = self._scope_chain(node)
         parent_q = ".".join([ctx.module_path, *chain]) if chain else None
         qname = ".".join([ctx.module_path, *chain, name])
         return qname, parent_q
 
-    def _caller(self, node: "Node", ctx: FileContext) -> str | None:
+    def _caller(self, node: Node, ctx: FileContext) -> str | None:
         """FQN of the enclosing def, or None for module level."""
         current = node.parent
         while current is not None:
@@ -346,11 +377,11 @@ class PythonExtractor:
             current = current.parent
         return None
 
-    def _signature(self, node: "Node") -> str:
+    def _signature(self, node: Node) -> str:
         first_line = node_text(node).split("\n", 1)[0].rstrip(":")
         return truncate(first_line, 120)
 
-    def _docstring(self, node: "Node") -> str | None:
+    def _docstring(self, node: Node) -> str | None:
         body = node.child_by_field_name("body")
         if body is None or not body.named_children:
             return None
@@ -366,16 +397,16 @@ class PythonExtractor:
         text = node_text(expr).strip()
         for quote in ('"""', "'''", '"', "'"):
             if text.startswith(quote) and text.endswith(quote) and len(text) >= 2 * len(quote):
-                return text[len(quote):-len(quote)].strip()
+                return text[len(quote) : -len(quote)].strip()
         return text
 
-    def _decorators(self, node: "Node") -> list[str]:
+    def _decorators(self, node: Node) -> list[str]:
         parent = node.parent
         if parent is None or parent.type != "decorated_definition":
             return []
         return [node_text(child) for child in parent.named_children if child.type == "decorator"]
 
-    def _class_bases(self, node: "Node") -> list[str]:
+    def _class_bases(self, node: Node) -> list[str]:
         supers = node.child_by_field_name("superclasses")
         if supers is None:
             return []

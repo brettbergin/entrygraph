@@ -59,7 +59,9 @@ def _router_routes(framework: str):
 _express_routes = _router_routes("express")
 
 
-def _event_handlers(x: FileExtraction, receivers: frozenset[str], framework: str) -> list[EntrypointHint]:
+def _event_handlers(
+    x: FileExtraction, receivers: frozenset[str], framework: str
+) -> list[EntrypointHint]:
     """socket.io / electron style `emitter.on('event', handler)` registrations."""
     hints = []
     for ref in x.references:
@@ -172,7 +174,10 @@ def _next_handlers(x: FileExtraction) -> list[EntrypointHint]:
         return []
     hints = []
     for symbol in x.symbols:
-        if symbol.kind in (SymbolKind.FUNCTION, SymbolKind.METHOD) and symbol.name in _HTTP_METHODS_UPPER:
+        if (
+            symbol.kind in (SymbolKind.FUNCTION, SymbolKind.METHOD)
+            and symbol.name in _HTTP_METHODS_UPPER
+        ):
             hints.append(
                 EntrypointHint(
                     rule_id="javascript.next.route",
@@ -189,23 +194,85 @@ def _next_handlers(x: FileExtraction) -> list[EntrypointHint]:
 _HTTP_METHODS_UPPER = frozenset(m.upper() for m in _HTTP_METHODS)
 
 
-register(EntrypointRule("javascript.express.route", "javascript", "express",
-                        EntrypointKind.HTTP_ROUTE, _express_routes))
-register(EntrypointRule("javascript.express.middleware", "javascript", "express",
-                        EntrypointKind.MIDDLEWARE, _express_middleware))
-register(EntrypointRule("javascript.fastify.route", "javascript", "fastify",
-                        EntrypointKind.HTTP_ROUTE, _router_routes("fastify")))
-register(EntrypointRule("javascript.koa.route", "javascript", "koa",
-                        EntrypointKind.HTTP_ROUTE, _router_routes("koa")))
-register(EntrypointRule("javascript.hono.route", "javascript", "hono",
-                        EntrypointKind.HTTP_ROUTE, _router_routes("hono")))
-register(EntrypointRule("javascript.socketio.event", "javascript", "socket.io",
-                        EntrypointKind.EVENT_HANDLER, _socketio_events))
-register(EntrypointRule("javascript.electron.ipc", "javascript", "electron",
-                        EntrypointKind.EVENT_HANDLER, _electron_ipc))
-register(EntrypointRule("javascript.aws-lambda.handler", "javascript", "aws-lambda-js",
-                        EntrypointKind.LAMBDA_HANDLER, _lambda_js_handlers))
-register(EntrypointRule("javascript.nestjs.route", "javascript", "nestjs",
-                        EntrypointKind.HTTP_ROUTE, _nest_routes))
-register(EntrypointRule("javascript.next.route", "javascript", "next",
-                        EntrypointKind.HTTP_ROUTE, _next_handlers))
+register(
+    EntrypointRule(
+        "javascript.express.route",
+        "javascript",
+        "express",
+        EntrypointKind.HTTP_ROUTE,
+        _express_routes,
+    )
+)
+register(
+    EntrypointRule(
+        "javascript.express.middleware",
+        "javascript",
+        "express",
+        EntrypointKind.MIDDLEWARE,
+        _express_middleware,
+    )
+)
+register(
+    EntrypointRule(
+        "javascript.fastify.route",
+        "javascript",
+        "fastify",
+        EntrypointKind.HTTP_ROUTE,
+        _router_routes("fastify"),
+    )
+)
+register(
+    EntrypointRule(
+        "javascript.koa.route",
+        "javascript",
+        "koa",
+        EntrypointKind.HTTP_ROUTE,
+        _router_routes("koa"),
+    )
+)
+register(
+    EntrypointRule(
+        "javascript.hono.route",
+        "javascript",
+        "hono",
+        EntrypointKind.HTTP_ROUTE,
+        _router_routes("hono"),
+    )
+)
+register(
+    EntrypointRule(
+        "javascript.socketio.event",
+        "javascript",
+        "socket.io",
+        EntrypointKind.EVENT_HANDLER,
+        _socketio_events,
+    )
+)
+register(
+    EntrypointRule(
+        "javascript.electron.ipc",
+        "javascript",
+        "electron",
+        EntrypointKind.EVENT_HANDLER,
+        _electron_ipc,
+    )
+)
+register(
+    EntrypointRule(
+        "javascript.aws-lambda.handler",
+        "javascript",
+        "aws-lambda-js",
+        EntrypointKind.LAMBDA_HANDLER,
+        _lambda_js_handlers,
+    )
+)
+register(
+    EntrypointRule(
+        "javascript.nestjs.route", "javascript", "nestjs", EntrypointKind.HTTP_ROUTE, _nest_routes
+    )
+)
+register(
+    EntrypointRule(
+        "javascript.next.route", "javascript", "next", EntrypointKind.HTTP_ROUTE, _next_handlers
+    )
+)

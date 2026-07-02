@@ -4,7 +4,6 @@ from entrygraph.detect.taint import (
     SanitizerPattern,
     SinkPattern,
     SinkRegistry,
-    SourcePattern,
     _load_toml,
     builtin_registry,
 )
@@ -42,8 +41,12 @@ def test_sanitizer_matching_and_category_lookup():
         sinks=[SinkPattern(id="s", category="command_exec", callee="py:os.system")],
         sources=[],
         sanitizers=[
-            SanitizerPattern(id="san", category="command_exec",
-                             callee="py:shlex.{quote,split}", effect="neutralizes")
+            SanitizerPattern(
+                id="san",
+                category="command_exec",
+                callee="py:shlex.{quote,split}",
+                effect="neutralizes",
+            )
         ],
     )
     assert reg.match("py:os.system") == "s"

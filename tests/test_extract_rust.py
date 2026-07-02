@@ -16,8 +16,9 @@ AXUM_APP = Path(__file__).parent / "fixtures" / "rust" / "axum_app"
 def extract(source: str, path: str = "src/main.rs"):
     module_path, is_package = EXTRACTOR.module_path_for(path)
     src = source.encode()
-    ctx = FileContext(path=path, language="rust", module_path=module_path,
-                      source=src, is_package=is_package)
+    ctx = FileContext(
+        path=path, language="rust", module_path=module_path, source=src, is_package=is_package
+    )
     return EXTRACTOR.extract(parse("rust", src), ctx)
 
 
@@ -80,8 +81,9 @@ impl Runner for Report {
     assert run.parent_qualified_name == "_root.Report"
     # ...and emits an inherit ref to the trait
     inherit = [r for r in x.references if r.kind == "inherit"]
-    assert any(r.callee_name == "Runner" and r.caller_qualified_name == "_root.Report"
-               for r in inherit)
+    assert any(
+        r.callee_name == "Runner" and r.caller_qualified_name == "_root.Report" for r in inherit
+    )
     # the trait itself is a symbol
     assert by_qname["_root.Runner"].kind is SymbolKind.INTERFACE
 
@@ -198,8 +200,9 @@ def test_index_axum_app_reachability(tmp_path):
 
     # a route hint for /reports exists
     routes = graph.entrypoints(kind="http_route")
-    assert any(e.route == "/reports" for e in routes), \
+    assert any(e.route == "/reports" for e in routes), (
         f"expected /reports route, got {[e.route for e in routes]}"
+    )
 
     # the external command_exec sink resolves via the `use std::process::Command`
     # import as rs:std.process.Command.new at IMPORT confidence.

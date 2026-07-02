@@ -39,7 +39,7 @@ class RubyExtractor:
         parts[-1] = parts[-1].removesuffix(".rb")
         return ".".join(p for p in parts if p) or "_root", False
 
-    def extract(self, tree: "Tree", ctx: FileContext) -> FileExtraction:
+    def extract(self, tree: Tree, ctx: FileContext) -> FileExtraction:
         root = tree.root_node
         out = FileExtraction(
             path=ctx.path,
@@ -55,7 +55,7 @@ class RubyExtractor:
 
     # ---------------- definitions ----------------
 
-    def _extract_definitions(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _extract_definitions(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("ruby", "definitions"), root)
 
         for node in caps.get("def.module", []):
@@ -165,7 +165,7 @@ class RubyExtractor:
 
     # ---------------- imports ----------------
 
-    def _extract_imports(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _extract_imports(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("ruby", "imports"), root)
         for node in caps.get("import.call", []):
             method_node = node.child_by_field_name("method")
@@ -208,7 +208,7 @@ class RubyExtractor:
 
     # ---------------- calls ----------------
 
-    def _extract_calls(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _extract_calls(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("ruby", "calls"), root)
         for node in caps.get("call", []):
             method_node = node.child_by_field_name("method")
@@ -243,7 +243,7 @@ class RubyExtractor:
 
     # ---------------- shared walking helpers ----------------
 
-    def _scope_chain(self, node: "Node") -> list[str]:
+    def _scope_chain(self, node: Node) -> list[str]:
         parts: list[str] = []
         current = node.parent
         while current is not None:
@@ -255,7 +255,7 @@ class RubyExtractor:
         parts.reverse()
         return parts
 
-    def _nearest_scope_type(self, node: "Node") -> str | None:
+    def _nearest_scope_type(self, node: Node) -> str | None:
         current = node.parent
         while current is not None:
             if current.type in _SCOPE_TYPES:
@@ -263,13 +263,13 @@ class RubyExtractor:
             current = current.parent
         return None
 
-    def _qualify(self, node: "Node", name: str, ctx: FileContext) -> tuple[str, str | None]:
+    def _qualify(self, node: Node, name: str, ctx: FileContext) -> tuple[str, str | None]:
         chain = self._scope_chain(node)
         parent_q = ".".join([ctx.module_path, *chain]) if chain else None
         qname = ".".join([ctx.module_path, *chain, name])
         return qname, parent_q
 
-    def _caller(self, node: "Node", ctx: FileContext) -> str | None:
+    def _caller(self, node: Node, ctx: FileContext) -> str | None:
         """FQN of the enclosing method, or None for module/top level."""
         current = node.parent
         while current is not None:
@@ -280,11 +280,11 @@ class RubyExtractor:
             current = current.parent
         return None
 
-    def _signature(self, node: "Node") -> str:
+    def _signature(self, node: Node) -> str:
         first_line = node_text(node).split("\n", 1)[0].rstrip()
         return truncate(first_line, 120)
 
-    def _class_bases(self, node: "Node") -> list[str]:
+    def _class_bases(self, node: Node) -> list[str]:
         supers = node.child_by_field_name("superclass")
         if supers is None:
             return []
@@ -308,7 +308,7 @@ class RubyExtractor:
                 parts.append(segment.removesuffix(".rb"))
         return ".".join(p for p in parts if p) or "_root"
 
-    def _first_string_arg(self, args: "Node") -> str | None:
+    def _first_string_arg(self, args: Node) -> str | None:
         for child in args.named_children:
             if child.type == "string":
                 content = "".join(

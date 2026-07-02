@@ -18,14 +18,18 @@ from entrygraph.detect.entrypoints.base import (
     first_string_arg,
     register,
 )
-from entrygraph.extract.ir import EntrypointHint, FileExtraction, RawSymbol
+from entrygraph.extract.ir import EntrypointHint, FileExtraction
 from entrygraph.kinds import EntrypointKind, SymbolKind
 
 # #[get("/x")] / #[post(..)] / ... on a handler function -> HTTP verb.
 _ROUTE_ATTR = re.compile(r"^#\[\s*(get|post|put|delete|patch|head|route)\s*\(")
 _VERB = {
-    "get": "GET", "post": "POST", "put": "PUT", "delete": "DELETE",
-    "patch": "PATCH", "head": "HEAD",
+    "get": "GET",
+    "post": "POST",
+    "put": "PUT",
+    "delete": "DELETE",
+    "patch": "PATCH",
+    "head": "HEAD",
 }
 # #[derive(.. Parser ..)] anywhere in the derive list.
 _DERIVE_PARSER = re.compile(r"^#\[\s*derive\s*\(.*\bParser\b")
@@ -80,9 +84,7 @@ def _axum_routes(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
-_AXUM_HANDLER = re.compile(
-    r"\b(get|post|put|delete|patch|head|options)\s*\(\s*([A-Za-z_]\w*)"
-)
+_AXUM_HANDLER = re.compile(r"\b(get|post|put|delete|patch|head|options)\s*\(\s*([A-Za-z_]\w*)")
 
 
 def _axum_method_and_handler(preview: str) -> tuple[str, str | None]:
@@ -141,13 +143,22 @@ def _clap_commands(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
-register(EntrypointRule("rust.core.main", "rust", None,
-                        EntrypointKind.MAIN, _rust_main))
-register(EntrypointRule("rust.axum.route", "rust", "axum",
-                        EntrypointKind.HTTP_ROUTE, _axum_routes))
-register(EntrypointRule("rust.actix.route", "rust", "actix-web",
-                        EntrypointKind.HTTP_ROUTE, _route_attr_rule("actix-web")))
-register(EntrypointRule("rust.rocket.route", "rust", "rocket",
-                        EntrypointKind.HTTP_ROUTE, _route_attr_rule("rocket")))
-register(EntrypointRule("rust.clap.command", "rust", "clap",
-                        EntrypointKind.CLI_COMMAND, _clap_commands))
+register(EntrypointRule("rust.core.main", "rust", None, EntrypointKind.MAIN, _rust_main))
+register(EntrypointRule("rust.axum.route", "rust", "axum", EntrypointKind.HTTP_ROUTE, _axum_routes))
+register(
+    EntrypointRule(
+        "rust.actix.route",
+        "rust",
+        "actix-web",
+        EntrypointKind.HTTP_ROUTE,
+        _route_attr_rule("actix-web"),
+    )
+)
+register(
+    EntrypointRule(
+        "rust.rocket.route", "rust", "rocket", EntrypointKind.HTTP_ROUTE, _route_attr_rule("rocket")
+    )
+)
+register(
+    EntrypointRule("rust.clap.command", "rust", "clap", EntrypointKind.CLI_COMMAND, _clap_commands)
+)

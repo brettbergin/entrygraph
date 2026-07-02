@@ -258,20 +258,20 @@ results are safe to hold and trivial to serialize.
 1. **Walk** — `os.scandir` with hard-pruned junk dirs (`node_modules`, `.venv`,
    …), `.gitignore` rules, and size/binary/minified gates. Every skip is recorded
    with a reason.
-2. **Extract** — tree-sitter `.scm` queries harvest definitions/imports/calls;
+1. **Extract** — tree-sitter `.scm` queries harvest definitions/imports/calls;
    small per-language "shaper" modules build qualified names, import maps, and
    receiver info. Parsing runs across a process pool for large repos.
-3. **Resolve** — a two-pass resolver binds references to symbols with a
+1. **Resolve** — a two-pass resolver binds references to symbols with a
    confidence level (`exact` / `import` / `fuzzy` / `unresolved`). External
    callees (`subprocess.run`, `child_process.exec`, …) become placeholder nodes
    so sinks are real graph terminals.
-4. **Detect** — frameworks are scored from manifest dependencies plus code
+1. **Detect** — frameworks are scored from manifest dependencies plus code
    signals (noisy-or); entrypoint rules map framework patterns to route/command
    records.
-5. **Store** — everything persists to SQLite via the SQLAlchemy 2.0 ORM with
+1. **Store** — everything persists to SQLite via the SQLAlchemy 2.0 ORM with
    bulk inserts and app-assigned keys. Re-indexing is incremental and
    content-hash driven.
-6. **Query** — reachability runs over an in-memory adjacency cache (BFS/DFS with
+1. **Query** — reachability runs over an in-memory adjacency cache (BFS/DFS with
    cycle handling); a recursive-CTE SQL engine is available as a fallback
    (`engine="sql"`).
 

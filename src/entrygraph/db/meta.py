@@ -7,7 +7,7 @@ and recreates every table (index paths).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
@@ -30,7 +30,7 @@ def create_schema(engine: Engine) -> None:
                 [
                     Meta(key="schema_version", value=str(SCHEMA_VERSION)),
                     Meta(key="entrygraph_version", value=__version__),
-                    Meta(key="created_at", value=datetime.now(timezone.utc).isoformat()),
+                    Meta(key="created_at", value=datetime.now(UTC).isoformat()),
                 ]
             )
             session.commit()

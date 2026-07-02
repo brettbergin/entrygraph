@@ -17,8 +17,11 @@ def extract(source: str, path: str = "src/Mod.cs"):
     module_path, is_package = EXTRACTOR.module_path_for(path)
     src = source.encode()
     ctx = FileContext(
-        path=path, language="csharp", module_path=module_path,
-        source=src, is_package=is_package,
+        path=path,
+        language="csharp",
+        module_path=module_path,
+        source=src,
+        is_package=is_package,
     )
     return EXTRACTOR.extract(parse("csharp", src), ctx)
 
@@ -113,9 +116,7 @@ public class Ctrl
     assert method.decorators == ['[HttpGet("/users")]']
 
     decorator_refs = {
-        (r.callee_text, r.caller_qualified_name)
-        for r in x.references
-        if r.kind == "decorator"
+        (r.callee_text, r.caller_qualified_name) for r in x.references if r.kind == "decorator"
     }
     assert ("ApiController", "App.Ctrl") in decorator_refs
     assert ("HttpGet", "App.Ctrl.List") in decorator_refs
@@ -259,9 +260,7 @@ def test_e2e_aspnetcore_detected_and_route_reaches_command_exec():
 
     # aspnetcore framework detected above threshold
     report = graph.detect()
-    aspnet = next(
-        (f for f in report.frameworks if f.name == "aspnetcore"), None
-    )
+    aspnet = next((f for f in report.frameworks if f.name == "aspnetcore"), None)
     assert aspnet is not None
     assert aspnet.confidence > 0.9
 

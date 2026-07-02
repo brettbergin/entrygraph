@@ -15,7 +15,9 @@ from entrygraph.detect.manifests import (
 
 
 def test_requirements_txt():
-    deps = parse_requirements_txt("flask>=3.0\nClick==8.1\n# comment\n-r other.txt\nDjango_Extensions[extra]\n")
+    deps = parse_requirements_txt(
+        "flask>=3.0\nClick==8.1\n# comment\n-r other.txt\nDjango_Extensions[extra]\n"
+    )
     assert deps == {"flask", "click", "django-extensions"}
 
 
@@ -29,7 +31,9 @@ def test_pyproject_toml():
 
 
 def test_package_json():
-    deps = parse_package_json('{"dependencies": {"express": "^4"}, "devDependencies": {"@nestjs/core": "10"}}')
+    deps = parse_package_json(
+        '{"dependencies": {"express": "^4"}, "devDependencies": {"@nestjs/core": "10"}}'
+    )
     assert deps == {"express", "@nestjs/core"}
     assert parse_package_json("not json") == set()
 
@@ -55,7 +59,8 @@ def test_pom_xml():
 
 def test_build_gradle():
     deps = parse_build_gradle(
-        "dependencies {\n  implementation 'org.springframework.boot:spring-boot-starter-web:3.2.0'\n"
+        "dependencies {\n"
+        "  implementation 'org.springframework.boot:spring-boot-starter-web:3.2.0'\n"
         '  testImplementation("junit:junit:4.13")\n}\n'
     )
     assert "org.springframework.boot:spring-boot-starter-web:3.2.0" in deps
@@ -85,11 +90,11 @@ from entrygraph.detect.manifests import (  # noqa: E402
 def test_parse_csproj():
     deps = parse_csproj(
         '<Project Sdk="Microsoft.NET.Sdk">\n'
-        '  <ItemGroup>\n'
+        "  <ItemGroup>\n"
         '    <PackageReference Include="Microsoft.AspNetCore.App" Version="8.0.0" />\n'
         '    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />\n'
-        '  </ItemGroup>\n'
-        '</Project>\n'
+        "  </ItemGroup>\n"
+        "</Project>\n"
     )
     assert "microsoft.aspnetcore.app" in deps and "newtonsoft.json" in deps
 

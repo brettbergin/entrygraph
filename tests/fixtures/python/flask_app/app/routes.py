@@ -2,7 +2,7 @@
 
 from flask import Flask, request
 
-from app.services import run_report, lookup_user
+from app.services import lookup_user, run_report
 
 app = Flask(__name__)
 

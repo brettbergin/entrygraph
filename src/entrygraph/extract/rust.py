@@ -62,7 +62,7 @@ class RustExtractor:
         module = ".".join(p for p in parts if p)
         return module or _CRATE_ROOT, is_package
 
-    def extract(self, tree: "Tree", ctx: FileContext) -> FileExtraction:
+    def extract(self, tree: Tree, ctx: FileContext) -> FileExtraction:
         root = tree.root_node
         out = FileExtraction(
             path=ctx.path,
@@ -78,7 +78,7 @@ class RustExtractor:
 
     # ---------------- definitions ----------------
 
-    def _extract_definitions(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _extract_definitions(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("rust", "definitions"), root)
 
         for node in caps.get("def.impl", []):
@@ -135,7 +135,9 @@ class RustExtractor:
                 )
             )
 
-    def _add_type(self, node: "Node", ctx: FileContext, out: FileExtraction, kind: SymbolKind) -> None:
+    def _add_type(
+        self, node: Node, ctx: FileContext, out: FileExtraction, kind: SymbolKind
+    ) -> None:
         name_node = node.child_by_field_name("name")
         if name_node is None:
             return
@@ -155,7 +157,9 @@ class RustExtractor:
         )
         self._emit_decorator_refs(node, qname, out)
 
-    def _add_value(self, node: "Node", ctx: FileContext, out: FileExtraction, kind: SymbolKind) -> None:
+    def _add_value(
+        self, node: Node, ctx: FileContext, out: FileExtraction, kind: SymbolKind
+    ) -> None:
         name_node = node.child_by_field_name("name")
         if name_node is None:
             return
@@ -172,7 +176,7 @@ class RustExtractor:
             )
         )
 
-    def _add_impl(self, node: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _add_impl(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
         """`impl Foo { .. }` or `impl Trait for Foo { .. }` -> methods on Foo."""
         type_node = node.child_by_field_name("type")
         if type_node is None:
@@ -224,12 +228,10 @@ class RustExtractor:
 
     # ---------------- imports ----------------
 
-    def _extract_imports(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _extract_imports(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("rust", "imports"), root)
         for node in caps.get("import", []):
-            arg = next(
-                (c for c in node.named_children if c.type != "visibility_modifier"), None
-            )
+            arg = next((c for c in node.named_children if c.type != "visibility_modifier"), None)
             if arg is None:
                 continue
             self._unroll_use(arg, "", node, out)
@@ -237,7 +239,7 @@ class RustExtractor:
             if imp.module:
                 out.framework_signals.append(("import", imp.module.split(".")[0]))
 
-    def _unroll_use(self, node: "Node", prefix: str, decl: "Node", out: FileExtraction) -> None:
+    def _unroll_use(self, node: Node, prefix: str, decl: Node, out: FileExtraction) -> None:
         """Recursively flatten a use-tree into RawImport rows.
 
         `prefix` is the accumulated dotted module path to the left of `node`.
@@ -308,7 +310,7 @@ class RustExtractor:
 
     # ---------------- calls / macros ----------------
 
-    def _extract_calls(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _extract_calls(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("rust", "calls"), root)
 
         for node in caps.get("call", []):
@@ -351,8 +353,11 @@ class RustExtractor:
             path_node = node.child_by_field_name("macro")
             if path_node is None:
                 path_node = next(
-                    (c for c in node.named_children
-                     if c.type in ("scoped_identifier", "identifier")),
+                    (
+                        c
+                        for c in node.named_children
+                        if c.type in ("scoped_identifier", "identifier")
+                    ),
                     None,
                 )
             if path_node is None:
@@ -360,9 +365,7 @@ class RustExtractor:
             text = _norm(node_text(path_node))  # `!` is not part of the path node
             callee_name = text.rsplit(".", 1)[-1]
             receiver = text.rsplit(".", 1)[0] if "." in text else None
-            token_tree = next(
-                (c for c in node.named_children if c.type == "token_tree"), None
-            )
+            token_tree = next((c for c in node.named_children if c.type == "token_tree"), None)
             out.references.append(
                 RawReference(
                     kind="call",
@@ -371,14 +374,14 @@ class RustExtractor:
                     receiver_text=receiver,
                     span=span_of(node),
                     caller_qualified_name=self._caller(node, ctx),
-                    arg_count=len([c for c in token_tree.named_children]) if token_tree else 0,
+                    arg_count=len(list(token_tree.named_children)) if token_tree else 0,
                     arg_preview=truncate(node_text(token_tree)) if token_tree else None,
                 )
             )
 
     # ---------------- attributes (decorators) ----------------
 
-    def _attribute_nodes(self, node: "Node") -> list["Node"]:
+    def _attribute_nodes(self, node: Node) -> list[Node]:
         """Leading `attribute_item` siblings immediately preceding an item."""
         attrs: list[Node] = []
         prev = node.prev_named_sibling
@@ -388,17 +391,16 @@ class RustExtractor:
         attrs.reverse()
         return attrs
 
-    def _decorators(self, node: "Node") -> list[str]:
+    def _decorators(self, node: Node) -> list[str]:
         return [node_text(a) for a in self._attribute_nodes(node)]
 
-    def _emit_decorator_refs(self, node: "Node", owner_qname: str, out: FileExtraction) -> None:
+    def _emit_decorator_refs(self, node: Node, owner_qname: str, out: FileExtraction) -> None:
         for attr in self._attribute_nodes(node):
             inner = next((c for c in attr.named_children if c.type == "attribute"), None)
             if inner is None:
                 continue
             path_node = next(
-                (c for c in inner.named_children
-                 if c.type in ("scoped_identifier", "identifier")),
+                (c for c in inner.named_children if c.type in ("scoped_identifier", "identifier")),
                 None,
             )
             if path_node is None:
@@ -417,7 +419,7 @@ class RustExtractor:
 
     # ---------------- walking helpers ----------------
 
-    def _in_impl(self, node: "Node") -> bool:
+    def _in_impl(self, node: Node) -> bool:
         """True if this function_item is a direct member of an impl body.
 
         Only direct impl members are handled by _add_impl; nested functions
@@ -429,7 +431,7 @@ class RustExtractor:
             return grand is not None and grand.type == "impl_item"
         return False
 
-    def _type_name(self, node: "Node | None") -> str | None:
+    def _type_name(self, node: Node | None) -> str | None:
         if node is None:
             return None
         if node.type in ("type_identifier", "identifier"):
@@ -444,10 +446,10 @@ class RustExtractor:
         # fall back to raw text's last segment
         return node_text(node).split("<", 1)[0].rsplit("::", 1)[-1] or None
 
-    def _is_pub(self, node: "Node") -> bool:
+    def _is_pub(self, node: Node) -> bool:
         return any(c.type == "visibility_modifier" for c in node.named_children)
 
-    def _caller(self, node: "Node", ctx: FileContext) -> str | None:
+    def _caller(self, node: Node, ctx: FileContext) -> str | None:
         """FQN of the enclosing function/method, or None for module level."""
         current = node.parent
         while current is not None:
@@ -467,7 +469,7 @@ class RustExtractor:
             current = current.parent
         return None
 
-    def _enclosing_impl(self, node: "Node") -> "Node | None":
+    def _enclosing_impl(self, node: Node) -> Node | None:
         current = node.parent
         while current is not None:
             if current.type == "impl_item":
@@ -477,6 +479,6 @@ class RustExtractor:
             current = current.parent
         return None
 
-    def _signature(self, node: "Node") -> str:
+    def _signature(self, node: Node) -> str:
         first_line = node_text(node).split("\n", 1)[0].rstrip("{").strip()
         return truncate(first_line, 120)

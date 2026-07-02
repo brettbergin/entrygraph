@@ -8,7 +8,6 @@ directly testable.
 from __future__ import annotations
 
 import argparse
-import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -68,6 +67,7 @@ def _confidence_bar(confidence: float, width: int = 10) -> Text:
 
 # ---------------- command handlers ----------------
 
+
 def cmd_index(args) -> int:
     from entrygraph.pipeline.scanner import index_repository
 
@@ -82,8 +82,7 @@ def cmd_index(args) -> int:
             graph.close()
             return stats
         with CodeGraph.open(db) as graph:
-            return index_repository(root, graph._engine, incremental=True,
-                                    paranoid=args.paranoid)
+            return index_repository(root, graph._engine, incremental=True, paranoid=args.paranoid)
 
     if args.json:
         print(to_json(_run()))
@@ -96,8 +95,11 @@ def cmd_index(args) -> int:
     body = Text()
     body.append("files    ", style="bold")
     body.append(f"{stats.files_indexed} indexed", style="green")
-    body.append(f", {stats.files_skipped} skipped, {stats.files_deleted} deleted "
-                f"of {stats.files_scanned} scanned\n", style="dim")
+    body.append(
+        f", {stats.files_skipped} skipped, {stats.files_deleted} deleted "
+        f"of {stats.files_scanned} scanned\n",
+        style="dim",
+    )
     body.append("graph    ", style="bold")
     body.append(f"{stats.symbols} ", style="cyan")
     body.append("symbols  ", style="dim")
@@ -107,9 +109,15 @@ def cmd_index(args) -> int:
     body.append("entrypoints\n", style="dim")
     body.append("db       ", style="bold")
     body.append(f"{db}", style="")
-    con.print(Panel(body, title=f"[bold green]✓[/] indexed [cyan]{root.name}[/]",
-                    subtitle=f"[dim]{stats.duration_seconds}s[/]",
-                    border_style="green", expand=False))
+    con.print(
+        Panel(
+            body,
+            title=f"[bold green]✓[/] indexed [cyan]{root.name}[/]",
+            subtitle=f"[dim]{stats.duration_seconds}s[/]",
+            border_style="green",
+            expand=False,
+        )
+    )
     return 0
 
 
@@ -125,8 +133,8 @@ def cmd_detect(args) -> int:
     langs.add_column("LANGUAGE", style="bold")
     langs.add_column("FILES", justify="right")
     langs.add_column("SHARE")
-    for l in report.languages:
-        langs.add_row(l.name, str(l.file_count), _percent_bar(l.percent))
+    for lang in report.languages:
+        langs.add_row(lang.name, str(lang.file_count), _percent_bar(lang.percent))
     con.print(langs)
 
     if report.frameworks:
@@ -163,8 +171,9 @@ def _print_symbol_table(rows, *, with_line: bool) -> None:
 
 def cmd_symbols(args) -> int:
     with _open(args) as graph:
-        rows = graph.symbols(kind=args.kind, name=args.name, qname=args.qname,
-                             file=args.file, limit=args.limit)
+        rows = graph.symbols(
+            kind=args.kind, name=args.name, qname=args.qname, file=args.file, limit=args.limit
+        )
     if args.json:
         print(to_json(rows))
     else:
@@ -190,8 +199,13 @@ def cmd_entrypoints(args) -> int:
     tbl.add_column("ROUTE", style="bold", no_wrap=True)
     tbl.add_column("HANDLER", style="dim", overflow="fold")
     for r in rows:
-        tbl.add_row(entrypoint_kind_text(r.kind), render.cell(r.framework),
-                    method_text(r.http_method), render.cell(r.route), r.symbol.qname)
+        tbl.add_row(
+            entrypoint_kind_text(r.kind),
+            render.cell(r.framework),
+            method_text(r.http_method),
+            render.cell(r.route),
+            r.symbol.qname,
+        )
     con.print(tbl)
     return 0
 
@@ -260,19 +274,28 @@ def cmd_paths(args) -> int:
             prune_sanitized=args.prune_sanitized,
         )
     if args.json:
-        print(to_json([
-            {"length": len(p.symbols), "min_confidence": p.min_confidence,
-             "risk_score": p.risk_score, "may_continue": p.may_continue,
-             "symbols": [s.qname for s in p.symbols],
-             "lines": [e.line for e in p.edges]}
-            for p in paths
-        ]))
+        print(
+            to_json(
+                [
+                    {
+                        "length": len(p.symbols),
+                        "min_confidence": p.min_confidence,
+                        "risk_score": p.risk_score,
+                        "may_continue": p.may_continue,
+                        "symbols": [s.qname for s in p.symbols],
+                        "lines": [e.line for e in p.edges],
+                    }
+                    for p in paths
+                ]
+            )
+        )
         return 0 if paths else 1
 
     con = console()
     if not paths:
-        con.print(Panel("[yellow]No source → sink paths found.[/]",
-                        border_style="yellow", expand=False))
+        con.print(
+            Panel("[yellow]No source → sink paths found.[/]", border_style="yellow", expand=False)
+        )
         return 1
     target = args.sink or (args.sink_category and f"category:{args.sink_category}") or "sink"
     con.print(f"[bold]{len(paths)}[/] path(s)  [dim]{args.source} → {target}[/]\n")
@@ -298,6 +321,7 @@ def cmd_stats(args) -> int:
 
 
 # ---------------- parser ----------------
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="entrygraph", description=__doc__.splitlines()[0])
@@ -352,18 +376,36 @@ def build_parser() -> argparse.ArgumentParser:
     add_db(p)
     p.add_argument("--source", required=True, help="qname or glob")
     p.add_argument("--sink", help="qname or glob (e.g. py:subprocess.run)")
-    p.add_argument("--sink-category", dest="sink_category",
-                   help="named sink category (e.g. command_exec, sql)")
+    p.add_argument(
+        "--sink-category", dest="sink_category", help="named sink category (e.g. command_exec, sql)"
+    )
     p.add_argument("--max-depth", dest="max_depth", type=int, default=25)
     p.add_argument("--max-paths", dest="max_paths", type=int, default=10)
-    p.add_argument("--min-confidence", dest="min_confidence", type=int, default=None,
-                   help="explicit confidence floor (overrides --include-* flags)")
-    p.add_argument("--include-fuzzy", dest="include_fuzzy", action="store_true",
-                   help="also traverse speculative class-hierarchy (CHA) edges")
-    p.add_argument("--include-unresolved", dest="include_unresolved", action="store_true",
-                   help="also traverse unresolved wildcard-sink and dynamic-call edges")
-    p.add_argument("--prune-sanitized", dest="prune_sanitized", action="store_true",
-                   help="drop paths neutralized by a registered sanitizer")
+    p.add_argument(
+        "--min-confidence",
+        dest="min_confidence",
+        type=int,
+        default=None,
+        help="explicit confidence floor (overrides --include-* flags)",
+    )
+    p.add_argument(
+        "--include-fuzzy",
+        dest="include_fuzzy",
+        action="store_true",
+        help="also traverse speculative class-hierarchy (CHA) edges",
+    )
+    p.add_argument(
+        "--include-unresolved",
+        dest="include_unresolved",
+        action="store_true",
+        help="also traverse unresolved wildcard-sink and dynamic-call edges",
+    )
+    p.add_argument(
+        "--prune-sanitized",
+        dest="prune_sanitized",
+        action="store_true",
+        help="drop paths neutralized by a registered sanitizer",
+    )
     p.set_defaults(func=cmd_paths)
 
     p = sub.add_parser("stats", help="index statistics")

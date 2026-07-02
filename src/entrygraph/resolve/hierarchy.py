@@ -94,7 +94,7 @@ def _resolve_type_name(
     """Resolve a base/interface expression to a project FQN, or None if external."""
     first_seg = text.split(".", 1)[0]
     if first_seg in import_map:
-        expanded = import_map[first_seg] + text[len(first_seg):]
+        expanded = import_map[first_seg] + text[len(first_seg) :]
         return expanded if expanded in table.by_fqn else None
     local = f"{module_path}.{text}"
     if local in table.by_fqn:
@@ -102,7 +102,9 @@ def _resolve_type_name(
     return text if text in table.by_fqn else None
 
 
-def ancestors(class_fqn: str, table: SymbolTable, max_depth: int = _MAX_ANCESTOR_DEPTH) -> list[str]:
+def ancestors(
+    class_fqn: str, table: SymbolTable, max_depth: int = _MAX_ANCESTOR_DEPTH
+) -> list[str]:
     """Transitive project ancestors of a class, nearest first, cycle-safe."""
     seen: set[str] = set()
     order: list[str] = []
@@ -142,7 +144,10 @@ def cha_candidates(
     # implementing the same interface/base). Both cases mean a virtual call could
     # dispatch across them.
     closures = {
-        sid: {table.qname_of[sid].rsplit(".", 1)[0], *ancestors(table.qname_of[sid].rsplit(".", 1)[0], table)}
+        sid: {
+            table.qname_of[sid].rsplit(".", 1)[0],
+            *ancestors(table.qname_of[sid].rsplit(".", 1)[0], table),
+        }
         for sid in candidates
     }
     related: list[int] = []

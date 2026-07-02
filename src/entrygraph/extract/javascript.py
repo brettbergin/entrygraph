@@ -22,11 +22,16 @@ from entrygraph.kinds import SymbolKind
 from entrygraph.parsing.queries import captures, load_query_for
 
 if TYPE_CHECKING:  # pragma: no cover
-    from tree_sitter import Node, Tree
+    from tree_sitter import Tree
 
 _SCOPE_TYPES = frozenset(
-    {"function_declaration", "method_definition", "class_declaration",
-     "function_expression", "arrow_function"}
+    {
+        "function_declaration",
+        "method_definition",
+        "class_declaration",
+        "function_expression",
+        "arrow_function",
+    }
 )
 _NAMED_SCOPES = frozenset({"function_declaration", "method_definition", "class_declaration"})
 _SRC_ROOTS = ("src", "lib", "app")
@@ -49,11 +54,14 @@ class JavaScriptExtractor:
         parts = parts[:-1] if is_package else [*parts[:-1], stem]
         return ".".join(p for p in parts if p) or "_root", is_package
 
-    def extract(self, tree: "Tree", ctx: FileContext) -> FileExtraction:
+    def extract(self, tree: Tree, ctx: FileContext) -> FileExtraction:
         root = tree.root_node
         out = FileExtraction(
-            path=ctx.path, language=ctx.language, module_path=ctx.module_path,
-            parse_ok=not root.has_error, error_count=1 if root.has_error else 0,
+            path=ctx.path,
+            language=ctx.language,
+            module_path=ctx.module_path,
+            parse_ok=not root.has_error,
+            error_count=1 if root.has_error else 0,
         )
         self._definitions(root, ctx, out)
         self._imports(root, ctx, out)
@@ -78,29 +86,49 @@ class JavaScriptExtractor:
             qname, parent_q = self._qualify(node, name, ctx)
             bases, interfaces = self._heritage(node)
             out.symbols.append(
-                RawSymbol(kind=SymbolKind.CLASS, name=name, qualified_name=qname,
-                          span=span_of(node), parent_qualified_name=parent_q,
-                          signature=self._signature(node), bases=bases,
-                          decorators=self._decorators(node),
-                          is_exported=self._exported(node))
+                RawSymbol(
+                    kind=SymbolKind.CLASS,
+                    name=name,
+                    qualified_name=qname,
+                    span=span_of(node),
+                    parent_qualified_name=parent_q,
+                    signature=self._signature(node),
+                    bases=bases,
+                    decorators=self._decorators(node),
+                    is_exported=self._exported(node),
+                )
             )
             for base in bases:
                 out.references.append(
-                    RawReference(kind="inherit", callee_text=base,
-                                 callee_name=base.rsplit(".", 1)[-1], receiver_text=None,
-                                 span=span_of(node), caller_qualified_name=qname)
+                    RawReference(
+                        kind="inherit",
+                        callee_text=base,
+                        callee_name=base.rsplit(".", 1)[-1],
+                        receiver_text=None,
+                        span=span_of(node),
+                        caller_qualified_name=qname,
+                    )
                 )
             for iface in interfaces:  # TS `implements C, D`
                 out.references.append(
-                    RawReference(kind="implement", callee_text=iface,
-                                 callee_name=iface.rsplit(".", 1)[-1], receiver_text=None,
-                                 span=span_of(node), caller_qualified_name=qname)
+                    RawReference(
+                        kind="implement",
+                        callee_text=iface,
+                        callee_name=iface.rsplit(".", 1)[-1],
+                        receiver_text=None,
+                        span=span_of(node),
+                        caller_qualified_name=qname,
+                    )
                 )
 
         for node in caps.get("def.var", []):
             scope = self._nearest_named_scope(node)
-            if scope in ("function_declaration", "method_definition",
-                         "function_expression", "arrow_function"):
+            if scope in (
+                "function_declaration",
+                "method_definition",
+                "function_expression",
+                "arrow_function",
+            ):
                 continue  # locals aren't symbols
             name_node = node.child_by_field_name("name")
             value = node.child_by_field_name("value")
@@ -113,9 +141,15 @@ class JavaScriptExtractor:
             name = node_text(name_node)
             qname, parent_q = self._qualify(node, name, ctx)
             out.symbols.append(
-                RawSymbol(kind=SymbolKind.VARIABLE, name=name, qualified_name=qname,
-                          span=span_of(node), parent_qualified_name=parent_q,
-                          signature=truncate(node_text(node)), is_exported=self._exported(node))
+                RawSymbol(
+                    kind=SymbolKind.VARIABLE,
+                    name=name,
+                    qualified_name=qname,
+                    span=span_of(node),
+                    parent_qualified_name=parent_q,
+                    signature=truncate(node_text(node)),
+                    is_exported=self._exported(node),
+                )
             )
 
     def _add_callable(self, node, ctx, out, kind) -> None:
@@ -130,9 +164,16 @@ class JavaScriptExtractor:
         if kind is SymbolKind.FUNCTION and self._nearest_named_scope(node) == "class_declaration":
             kind = SymbolKind.METHOD
         out.symbols.append(
-            RawSymbol(kind=kind, name=name, qualified_name=qname, span=span_of(node),
-                      parent_qualified_name=parent_q, signature=self._signature(node),
-                      decorators=self._decorators(node), is_exported=self._exported(node))
+            RawSymbol(
+                kind=kind,
+                name=name,
+                qualified_name=qname,
+                span=span_of(node),
+                parent_qualified_name=parent_q,
+                signature=self._signature(node),
+                decorators=self._decorators(node),
+                is_exported=self._exported(node),
+            )
         )
 
     # ---------------- imports ----------------
@@ -146,20 +187,38 @@ class JavaScriptExtractor:
             module = self._resolve_module(node_text(source).strip("'\"`"), ctx)
             clause = next((c for c in node.named_children if c.type == "import_clause"), None)
             if clause is None:
-                out.imports.append(RawImport(module=module, imported_name=None,
-                                             alias=module.split(".")[-1], span=span_of(node)))
+                out.imports.append(
+                    RawImport(
+                        module=module,
+                        imported_name=None,
+                        alias=module.split(".")[-1],
+                        span=span_of(node),
+                    )
+                )
                 continue
             for child in clause.named_children:
                 if child.type == "identifier":  # default import
                     # Bind the alias to the module itself (CommonJS/esModuleInterop
                     # semantics) so `import cp from 'child_process'; cp.exec()`
                     # canonicalizes to child_process.exec, not .default.exec.
-                    out.imports.append(RawImport(module=module, imported_name=None,
-                                                 alias=node_text(child), span=span_of(node)))
+                    out.imports.append(
+                        RawImport(
+                            module=module,
+                            imported_name=None,
+                            alias=node_text(child),
+                            span=span_of(node),
+                        )
+                    )
                 elif child.type == "namespace_import":
                     ident = child.named_children[-1]
-                    out.imports.append(RawImport(module=module, imported_name="*",
-                                                 alias=node_text(ident), span=span_of(node)))
+                    out.imports.append(
+                        RawImport(
+                            module=module,
+                            imported_name="*",
+                            alias=node_text(ident),
+                            span=span_of(node),
+                        )
+                    )
                 elif child.type == "named_imports":
                     for spec in child.named_children:
                         if spec.type != "import_specifier":
@@ -170,15 +229,20 @@ class JavaScriptExtractor:
                             continue
                         name = node_text(name_node)
                         out.imports.append(
-                            RawImport(module=module, imported_name=name,
-                                      alias=node_text(alias_node) if alias_node else name,
-                                      span=span_of(node))
+                            RawImport(
+                                module=module,
+                                imported_name=name,
+                                alias=node_text(alias_node) if alias_node else name,
+                                span=span_of(node),
+                            )
                         )
         for node in caps.get("export.from", []):
             self._reexport(node, ctx, out)
 
         for imp in out.imports:
-            out.framework_signals.append(("import", imp.module.split(".")[0] if "." in imp.module else imp.module))
+            out.framework_signals.append(
+                ("import", imp.module.split(".")[0] if "." in imp.module else imp.module)
+            )
 
     def _reexport(self, node, ctx, out) -> None:
         """`export { X as Y } from "./m"` / `export * from "./m"` -> RawReexport."""
@@ -190,9 +254,16 @@ class JavaScriptExtractor:
         is_relative = spec.startswith(".")
         clause = next((c for c in node.named_children if c.type == "export_clause"), None)
         if clause is None:  # `export * from "..."`
-            out.reexports.append(RawReexport(module=module, exported_name=None, alias=None,
-                                             span=span_of(node), is_star=True,
-                                             is_relative=is_relative))
+            out.reexports.append(
+                RawReexport(
+                    module=module,
+                    exported_name=None,
+                    alias=None,
+                    span=span_of(node),
+                    is_star=True,
+                    is_relative=is_relative,
+                )
+            )
             return
         for spec_node in clause.named_children:
             if spec_node.type != "export_specifier":
@@ -202,9 +273,13 @@ class JavaScriptExtractor:
             if name_node is None:
                 continue
             out.reexports.append(
-                RawReexport(module=module, exported_name=node_text(name_node),
-                            alias=node_text(alias_node) if alias_node else None,
-                            span=span_of(node), is_relative=is_relative)
+                RawReexport(
+                    module=module,
+                    exported_name=node_text(name_node),
+                    alias=node_text(alias_node) if alias_node else None,
+                    span=span_of(node),
+                    is_relative=is_relative,
+                )
             )
 
     def _resolve_module(self, spec: str, ctx: FileContext) -> str:
@@ -252,22 +327,32 @@ class JavaScriptExtractor:
             else:
                 continue
             out.references.append(
-                RawReference(kind="call", callee_text=callee_text, callee_name=callee_name,
-                             receiver_text=receiver, span=span_of(node),
-                             caller_qualified_name=caller,
-                             arg_count=len(args.named_children) if args else 0,
-                             arg_preview=truncate(node_text(args)) if args else None)
+                RawReference(
+                    kind="call",
+                    callee_text=callee_text,
+                    callee_name=callee_name,
+                    receiver_text=receiver,
+                    span=span_of(node),
+                    caller_qualified_name=caller,
+                    arg_count=len(args.named_children) if args else 0,
+                    arg_preview=truncate(node_text(args)) if args else None,
+                )
             )
             self._emit_callbacks(args, caller, out)
 
     def _emit_dynamic_call(self, node, fn, caller, out) -> None:
         args = node.child_by_field_name("arguments")
         out.references.append(
-            RawReference(kind="dynamic_call", callee_text=node_text(fn),
-                         callee_name="<computed>", receiver_text=None, span=span_of(node),
-                         caller_qualified_name=caller,
-                         arg_count=len(args.named_children) if args else 0,
-                         arg_preview=truncate(node_text(args)) if args else None)
+            RawReference(
+                kind="dynamic_call",
+                callee_text=node_text(fn),
+                callee_name="<computed>",
+                receiver_text=None,
+                span=span_of(node),
+                caller_qualified_name=caller,
+                arg_count=len(args.named_children) if args else 0,
+                arg_preview=truncate(node_text(args)) if args else None,
+            )
         )
 
     def _emit_callbacks(self, args, caller, out) -> None:
@@ -285,8 +370,14 @@ class JavaScriptExtractor:
             else:
                 continue
             out.references.append(
-                RawReference(kind="callback", callee_text=node_text(arg), callee_name=name,
-                             receiver_text=None, span=span_of(arg), caller_qualified_name=caller)
+                RawReference(
+                    kind="callback",
+                    callee_text=node_text(arg),
+                    callee_name=name,
+                    receiver_text=None,
+                    span=span_of(arg),
+                    caller_qualified_name=caller,
+                )
             )
 
     # ---------------- helpers ----------------
@@ -370,8 +461,13 @@ class JavaScriptExtractor:
         def _names(container) -> list[str]:
             out = []
             for child in container.named_children:
-                if child.type in ("identifier", "member_expression", "type_identifier",
-                                   "generic_type", "nested_type_identifier"):
+                if child.type in (
+                    "identifier",
+                    "member_expression",
+                    "type_identifier",
+                    "generic_type",
+                    "nested_type_identifier",
+                ):
                     text = node_text(child).split("<", 1)[0].strip()
                     if text:
                         out.append(text)

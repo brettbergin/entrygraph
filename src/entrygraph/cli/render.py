@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import asdict, is_dataclass
-from typing import Any, Sequence
+from typing import Any
 
 from rich.console import Console
 from rich.table import Table
@@ -38,6 +38,7 @@ def console(*, stderr: bool = False) -> Console:
 
 # ---------------- JSON (unchanged, dependency-free) ----------------
 
+
 def to_json(obj: Any) -> str:
     def default(o):
         if is_dataclass(o):
@@ -50,20 +51,37 @@ def to_json(obj: Any) -> str:
 # ---------------- styling helpers ----------------
 
 _KIND_STYLE = {
-    "class": "bold cyan", "interface": "cyan", "struct": "cyan",
-    "function": "green", "method": "green",
-    "module": "blue", "variable": "yellow", "constant": "yellow",
-    "field": "yellow", "property": "yellow", "external": "dim red",
+    "class": "bold cyan",
+    "interface": "cyan",
+    "struct": "cyan",
+    "function": "green",
+    "method": "green",
+    "module": "blue",
+    "variable": "yellow",
+    "constant": "yellow",
+    "field": "yellow",
+    "property": "yellow",
+    "external": "dim red",
 }
 
 _METHOD_STYLE = {
-    "GET": "green", "POST": "yellow", "PUT": "blue", "PATCH": "blue",
-    "DELETE": "red", "OPTIONS": "dim", "HEAD": "dim", "*": "magenta",
+    "GET": "green",
+    "POST": "yellow",
+    "PUT": "blue",
+    "PATCH": "blue",
+    "DELETE": "red",
+    "OPTIONS": "dim",
+    "HEAD": "dim",
+    "*": "magenta",
 }
 
 _ENTRYPOINT_STYLE = {
-    "http_route": "green", "cli_command": "cyan", "main": "blue",
-    "task": "magenta", "lambda_handler": "yellow", "event_handler": "yellow",
+    "http_route": "green",
+    "cli_command": "cyan",
+    "main": "blue",
+    "task": "magenta",
+    "lambda_handler": "yellow",
+    "event_handler": "yellow",
     "middleware": "dim yellow",
 }
 
@@ -92,8 +110,7 @@ def entrypoint_kind_text(kind: str | None) -> Text:
 
 
 def confidence_text(value: int) -> Text:
-    return Text(_CONFIDENCE_NAME.get(value, str(value)),
-                style=_CONFIDENCE_STYLE.get(value, ""))
+    return Text(_CONFIDENCE_NAME.get(value, str(value)), style=_CONFIDENCE_STYLE.get(value, ""))
 
 
 def risk_style(risk: float | None) -> str:
@@ -114,6 +131,7 @@ def risk_text(risk: float | None) -> Text:
 
 
 # ---------------- table helper ----------------
+
 
 def table(title: str | None = None, *, caption: str | None = None) -> Table:
     """A consistently-styled Rich table. Header cells are upper-cased."""

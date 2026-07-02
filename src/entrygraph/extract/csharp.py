@@ -37,9 +37,7 @@ from entrygraph.parsing.queries import captures, load_query
 if TYPE_CHECKING:  # pragma: no cover
     from tree_sitter import Node, Tree
 
-_NAMESPACE_TYPES = frozenset(
-    {"namespace_declaration", "file_scoped_namespace_declaration"}
-)
+_NAMESPACE_TYPES = frozenset({"namespace_declaration", "file_scoped_namespace_declaration"})
 _TYPE_SCOPES = frozenset(
     {
         "class_declaration",
@@ -82,7 +80,7 @@ class CSharpExtractor:
         dotted = ".".join(p for p in path.split("/") if p)
         return dotted or "_root", False
 
-    def extract(self, tree: "Tree", ctx: FileContext) -> FileExtraction:
+    def extract(self, tree: Tree, ctx: FileContext) -> FileExtraction:
         root = tree.root_node
         out = FileExtraction(
             path=ctx.path,
@@ -98,7 +96,7 @@ class CSharpExtractor:
 
     # ---------------- definitions ----------------
 
-    def _definitions(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _definitions(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("csharp", "definitions"), root)
 
         for node in caps.get("def.class", []):
@@ -126,7 +124,7 @@ class CSharpExtractor:
             self._add_field(node, ctx, out)
 
     def _add_type(
-        self, node: "Node", ctx: FileContext, out: FileExtraction, kind: SymbolKind
+        self, node: Node, ctx: FileContext, out: FileExtraction, kind: SymbolKind
     ) -> None:
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -163,7 +161,7 @@ class CSharpExtractor:
         self._emit_attribute_refs(node, qname, out)
 
     def _add_callable(
-        self, node: "Node", ctx: FileContext, out: FileExtraction, kind: SymbolKind
+        self, node: Node, ctx: FileContext, out: FileExtraction, kind: SymbolKind
     ) -> None:
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -187,7 +185,7 @@ class CSharpExtractor:
         self._emit_attribute_refs(node, qname, out)
 
     def _add_member(
-        self, node: "Node", ctx: FileContext, out: FileExtraction, kind: SymbolKind
+        self, node: Node, ctx: FileContext, out: FileExtraction, kind: SymbolKind
     ) -> None:
         if self._nearest_type_scope(node) is None:
             return  # only type members are symbols
@@ -212,7 +210,7 @@ class CSharpExtractor:
         )
         self._emit_attribute_refs(node, qname, out)
 
-    def _add_field(self, node: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _add_field(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
         if self._nearest_type_scope(node) is None:
             return
         declaration = next(
@@ -253,7 +251,7 @@ class CSharpExtractor:
 
     # ---------------- imports ----------------
 
-    def _imports(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _imports(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("csharp", "imports"), root)
         for node in caps.get("import", []):
             self._add_using(node, out)
@@ -261,17 +259,13 @@ class CSharpExtractor:
             if imp.module:
                 out.framework_signals.append(("import", imp.module))
 
-    def _add_using(self, node: "Node", out: FileExtraction) -> None:
+    def _add_using(self, node: Node, out: FileExtraction) -> None:
         # Named children in order; an `=` child marks an alias directive, a
         # `static` keyword marks `using static`.
         children = node.children
         has_alias = any(c.type == "=" for c in children)
         # The dotted namespace / type is the qualified_name or identifier child.
-        name_nodes = [
-            c
-            for c in node.named_children
-            if c.type in ("qualified_name", "identifier")
-        ]
+        name_nodes = [c for c in node.named_children if c.type in ("qualified_name", "identifier")]
         if not name_nodes:
             return
         if has_alias and len(name_nodes) >= 2:
@@ -301,7 +295,7 @@ class CSharpExtractor:
 
     # ---------------- calls ----------------
 
-    def _calls(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _calls(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("csharp", "calls"), root)
 
         for node in caps.get("call", []):
@@ -309,7 +303,7 @@ class CSharpExtractor:
         for node in caps.get("new", []):
             self._add_object_creation(node, ctx, out)
 
-    def _add_invocation(self, node: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _add_invocation(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
         fn = node.child_by_field_name("function")
         if fn is None:
             return
@@ -348,9 +342,7 @@ class CSharpExtractor:
             )
         )
 
-    def _add_object_creation(
-        self, node: "Node", ctx: FileContext, out: FileExtraction
-    ) -> None:
+    def _add_object_creation(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
         type_node = node.child_by_field_name("type")
         if type_node is None:
             return
@@ -372,7 +364,7 @@ class CSharpExtractor:
 
     # ---------------- helpers ----------------
 
-    def _namespace(self, node: "Node") -> str | None:
+    def _namespace(self, node: Node) -> str | None:
         # Block namespaces enclose their members; walk ancestors.
         current = node.parent
         while current is not None:
@@ -394,7 +386,7 @@ class CSharpExtractor:
                     return node_text(name)
         return None
 
-    def _type_chain(self, node: "Node") -> list[str]:
+    def _type_chain(self, node: Node) -> list[str]:
         parts, current = [], node.parent
         while current is not None:
             if current.type in _TYPE_SCOPES:
@@ -405,13 +397,11 @@ class CSharpExtractor:
         parts.reverse()
         return parts
 
-    def _base_prefix(self, node: "Node", ctx: FileContext) -> str:
+    def _base_prefix(self, node: Node, ctx: FileContext) -> str:
         ns = self._namespace(node)
         return ns if ns is not None else ctx.module_path
 
-    def _qualify(
-        self, node: "Node", name: str, ctx: FileContext
-    ) -> tuple[str, str | None]:
+    def _qualify(self, node: Node, name: str, ctx: FileContext) -> tuple[str, str | None]:
         prefix = self._base_prefix(node, ctx)
         chain = self._type_chain(node)
         parent_parts = [prefix, *chain]
@@ -419,7 +409,7 @@ class CSharpExtractor:
         qname = ".".join(p for p in [*parent_parts, name] if p)
         return qname, parent_q
 
-    def _nearest_type_scope(self, node: "Node") -> "Node | None":
+    def _nearest_type_scope(self, node: Node) -> Node | None:
         current = node.parent
         while current is not None:
             if current.type in _TYPE_SCOPES:
@@ -427,7 +417,7 @@ class CSharpExtractor:
             current = current.parent
         return None
 
-    def _caller(self, node: "Node", ctx: FileContext) -> str | None:
+    def _caller(self, node: Node, ctx: FileContext) -> str | None:
         current = node.parent
         while current is not None:
             if current.type in _CALLABLE_SCOPES:
@@ -437,19 +427,19 @@ class CSharpExtractor:
             current = current.parent
         return None
 
-    def _signature(self, node: "Node") -> str:
+    def _signature(self, node: Node) -> str:
         text = node_text(node)
         for stop in ("{", "=>", ";"):
             text = text.split(stop, 1)[0]
         return truncate(text.strip(), 120)
 
-    def _modifiers(self, node: "Node") -> list[str]:
+    def _modifiers(self, node: Node) -> list[str]:
         return [node_text(c) for c in node.children if c.type == "modifier"]
 
-    def _attribute_lists(self, node: "Node") -> list["Node"]:
+    def _attribute_lists(self, node: Node) -> list[Node]:
         return [c for c in node.children if c.type == "attribute_list"]
 
-    def _attributes(self, node: "Node") -> list[str]:
+    def _attributes(self, node: Node) -> list[str]:
         return [
             "[" + node_text(attr) + "]"
             for lst in self._attribute_lists(node)
@@ -457,19 +447,13 @@ class CSharpExtractor:
             if attr.type == "attribute"
         ]
 
-    def _emit_attribute_refs(
-        self, node: "Node", owner_qname: str, out: FileExtraction
-    ) -> None:
+    def _emit_attribute_refs(self, node: Node, owner_qname: str, out: FileExtraction) -> None:
         for lst in self._attribute_lists(node):
             for attr in lst.named_children:
                 if attr.type != "attribute":
                     continue
                 name_node = attr.child_by_field_name("name") or next(
-                    (
-                        c
-                        for c in attr.named_children
-                        if c.type in ("identifier", "qualified_name")
-                    ),
+                    (c for c in attr.named_children if c.type in ("identifier", "qualified_name")),
                     None,
                 )
                 if name_node is None:
@@ -480,18 +464,14 @@ class CSharpExtractor:
                         kind="decorator",
                         callee_text=callee_text,
                         callee_name=callee_text.rsplit(".", 1)[-1],
-                        receiver_text=callee_text.rsplit(".", 1)[0]
-                        if "." in callee_text
-                        else None,
+                        receiver_text=callee_text.rsplit(".", 1)[0] if "." in callee_text else None,
                         span=span_of(attr),
                         caller_qualified_name=owner_qname,
                     )
                 )
 
-    def _base_types(self, node: "Node") -> list[str]:
-        base_list = next(
-            (c for c in node.named_children if c.type == "base_list"), None
-        )
+    def _base_types(self, node: Node) -> list[str]:
+        base_list = next((c for c in node.named_children if c.type == "base_list"), None)
         if base_list is None:
             return []
         bases: list[str] = []

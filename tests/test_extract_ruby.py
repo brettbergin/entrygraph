@@ -22,8 +22,9 @@ SINATRA_APP = Path(__file__).parent / "fixtures" / "ruby" / "sinatra_app"
 def extract(source: str, path: str = "app/mod.rb"):
     module_path, is_package = EXTRACTOR.module_path_for(path)
     src = source.encode()
-    ctx = FileContext(path=path, language="ruby", module_path=module_path,
-                      source=src, is_package=is_package)
+    ctx = FileContext(
+        path=path, language="ruby", module_path=module_path, source=src, is_package=is_package
+    )
     return EXTRACTOR.extract(parse("ruby", src), ctx)
 
 
@@ -40,7 +41,7 @@ def test_module_path_for():
 
 def test_modules_classes_methods_scope_chain():
     x = extract(
-        '''
+        """
 module App
   class Base
   end
@@ -62,7 +63,7 @@ def helper
 end
 
 TOKEN = "abc"
-'''
+"""
     )
     by_qname = {s.qualified_name: s for s in x.symbols}
     assert by_qname["mod.App"].kind is SymbolKind.MODULE
@@ -94,9 +95,7 @@ TOKEN = "abc"
 
 def test_require_imports():
     x = extract(
-        "require 'sinatra'\n"
-        "require 'json'\n"
-        "require_relative './services/runner'\n",
+        "require 'sinatra'\nrequire 'json'\nrequire_relative './services/runner'\n",
         path="app.rb",
     )
     imports = {(i.module, i.alias) for i in x.imports}
@@ -111,7 +110,7 @@ def test_require_imports():
 
 def test_calls_bare_and_receiver():
     x = extract(
-        '''
+        """
 class C
   def m(x)
     helper(x)
@@ -121,7 +120,7 @@ class C
 end
 
 top_level_call(1)
-'''
+"""
     )
     calls = {r.callee_text: r for r in x.references if r.kind == "call"}
 
@@ -195,12 +194,10 @@ def test_source_reaches_command_exec_sink(graph):
     #       -> system (rb:*.system, command_exec sink)
     # Fuzzy resolution makes this best-effort; assert the full path is found.
     # rb:*.system is a receiver-agnostic UNRESOLVED sink placeholder -> opt in.
-    reached = graph.reachable(source="app", sink_category="command_exec",
-                              include_unresolved=True)
+    reached = graph.reachable(source="app", sink_category="command_exec", include_unresolved=True)
     assert reached, "expected the sinatra route module to reach a command_exec sink"
 
-    paths = graph.paths(source="app", sink_category="command_exec",
-                        include_unresolved=True)
+    paths = graph.paths(source="app", sink_category="command_exec", include_unresolved=True)
     assert paths, "expected at least one source->sink call path"
     qnames = [s.qname for s in paths[0].symbols]
     assert "services.runner.Services.Runner.run_report" in qnames
@@ -211,6 +208,7 @@ def test_project_call_edges_resolved(graph):
     # intra-class implicit-self hop resolves EXACT; cross-object hop is FUZZY.
     with graph.session() as s:
         from sqlalchemy import select
+
         from entrygraph.db.models import Edge, Symbol
         from entrygraph.kinds import EdgeKind
 
@@ -218,13 +216,17 @@ def test_project_call_edges_resolved(graph):
             return s.execute(select(Symbol.id).where(Symbol.qname == qname)).scalar_one()
 
         def edge(src, dst):
-            return s.execute(
-                select(Edge).where(
-                    Edge.src_symbol_id == sym(src),
-                    Edge.dst_symbol_id == sym(dst),
-                    Edge.kind == EdgeKind.CALLS,
+            return (
+                s.execute(
+                    select(Edge).where(
+                        Edge.src_symbol_id == sym(src),
+                        Edge.dst_symbol_id == sym(dst),
+                        Edge.kind == EdgeKind.CALLS,
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
         run = "services.runner.Services.Runner.run_report"
         rae = "services.runner.Services.Runner.render_and_execute"

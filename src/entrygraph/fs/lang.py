@@ -11,8 +11,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 EXTRACTABLE = frozenset(
-    {"python", "javascript", "typescript", "tsx", "go", "java", "ruby",
-     "csharp", "php", "rust"}
+    {"python", "javascript", "typescript", "tsx", "go", "java", "ruby", "csharp", "php", "rust"}
 )
 
 _EXTENSION_MAP = {

@@ -13,8 +13,8 @@ Third parties: entrygraph.detect.entrypoints.register(rule).
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from entrygraph.extract.ir import EntrypointHint, FileExtraction
 from entrygraph.kinds import EntrypointKind
@@ -47,8 +47,7 @@ def rules_for(language: str, detected_frameworks: set[str]) -> list[EntrypointRu
     return [
         r
         for r in _RULES
-        if r.language == lang
-        and (r.framework is None or r.framework in detected_frameworks)
+        if r.language == lang and (r.framework is None or r.framework in detected_frameworks)
     ]
 
 

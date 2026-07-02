@@ -27,17 +27,17 @@ class LanguageExtractor(Protocol):
         """Return (module_path, is_package) for a repo-relative path."""
         ...
 
-    def extract(self, tree: "Tree", ctx: FileContext) -> FileExtraction:
+    def extract(self, tree: Tree, ctx: FileContext) -> FileExtraction:
         """Run queries + shaping. Must not raise on partial trees and must
         return plain-data IR only (no tree-sitter objects)."""
         ...
 
 
-def node_text(node: "Node") -> str:
+def node_text(node: Node) -> str:
     return (node.text or b"").decode("utf-8", errors="replace")
 
 
-def span_of(node: "Node") -> Span:
+def span_of(node: Node) -> Span:
     return Span(
         start_line=node.start_point.row + 1,
         start_col=node.start_point.column,

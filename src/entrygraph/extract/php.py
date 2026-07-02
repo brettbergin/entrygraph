@@ -32,9 +32,7 @@ from entrygraph.parsing.queries import captures, load_query
 if TYPE_CHECKING:  # pragma: no cover
     from tree_sitter import Node, Tree
 
-_SCOPE_TYPES = frozenset(
-    {"class_declaration", "interface_declaration", "trait_declaration"}
-)
+_SCOPE_TYPES = frozenset({"class_declaration", "interface_declaration", "trait_declaration"})
 _FUNC_SCOPES = frozenset({"function_definition", "method_declaration"})
 _SRC_ROOTS = ("src", "lib", "app")
 
@@ -59,7 +57,7 @@ class PhpExtractor:
             parts[-1] = parts[-1].removesuffix(".php").removesuffix(".phtml")
         return ".".join(p for p in parts if p) or "_root", False
 
-    def extract(self, tree: "Tree", ctx: FileContext) -> FileExtraction:
+    def extract(self, tree: Tree, ctx: FileContext) -> FileExtraction:
         root = tree.root_node
         namespace = self._namespace(root)
         # The namespace (when present) is the real module path — override the
@@ -80,19 +78,17 @@ class PhpExtractor:
 
     # ---------------- namespace ----------------
 
-    def _namespace(self, root: "Node") -> str | None:
+    def _namespace(self, root: Node) -> str | None:
         caps = captures(load_query("php", "definitions"), root)
         for node in caps.get("namespace", []):
-            name = next(
-                (c for c in node.named_children if c.type == "namespace_name"), None
-            )
+            name = next((c for c in node.named_children if c.type == "namespace_name"), None)
             if name is not None:
                 return _norm(node_text(name))
         return None
 
     # ---------------- definitions ----------------
 
-    def _definitions(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _definitions(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("php", "definitions"), root)
 
         for node in caps.get("def.class", []):
@@ -120,8 +116,11 @@ class PhpExtractor:
                 qname, parent_q = self._qualify(node, name, ctx)
                 out.symbols.append(
                     RawSymbol(
-                        kind=SymbolKind.CONSTANT, name=name, qualified_name=qname,
-                        span=span_of(node), parent_qualified_name=parent_q,
+                        kind=SymbolKind.CONSTANT,
+                        name=name,
+                        qualified_name=qname,
+                        span=span_of(node),
+                        parent_qualified_name=parent_q,
                         signature=truncate(node_text(node)),
                     )
                 )
@@ -133,29 +132,29 @@ class PhpExtractor:
             for element in node.named_children:
                 if element.type != "property_element":
                     continue
-                var = next(
-                    (c for c in element.named_children if c.type == "variable_name"), None
-                )
+                var = next((c for c in element.named_children if c.type == "variable_name"), None)
                 name_node = var.child_by_field_name("name") if var else None
                 if name_node is None and var is not None:
-                    name_node = next(
-                        (c for c in var.named_children if c.type == "name"), None
-                    )
+                    name_node = next((c for c in var.named_children if c.type == "name"), None)
                 if name_node is None:
                     continue
                 name = node_text(name_node)
                 qname, parent_q = self._qualify(node, name, ctx)
                 out.symbols.append(
                     RawSymbol(
-                        kind=SymbolKind.FIELD, name=name, qualified_name=qname,
-                        span=span_of(node), parent_qualified_name=parent_q,
-                        signature=truncate(node_text(node)), modifiers=modifiers,
+                        kind=SymbolKind.FIELD,
+                        name=name,
+                        qualified_name=qname,
+                        span=span_of(node),
+                        parent_qualified_name=parent_q,
+                        signature=truncate(node_text(node)),
+                        modifiers=modifiers,
                         is_exported="public" in modifiers or not modifiers,
                     )
                 )
 
     def _add_type(
-        self, node: "Node", ctx: FileContext, out: FileExtraction, kind: SymbolKind
+        self, node: Node, ctx: FileContext, out: FileExtraction, kind: SymbolKind
     ) -> None:
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -165,31 +164,42 @@ class PhpExtractor:
         extends, interfaces = self._supertypes(node)
         out.symbols.append(
             RawSymbol(
-                kind=kind, name=name, qualified_name=qname, span=span_of(node),
-                parent_qualified_name=parent_q, signature=self._signature(node),
-                decorators=self._attributes(node), bases=[*extends, *interfaces],
+                kind=kind,
+                name=name,
+                qualified_name=qname,
+                span=span_of(node),
+                parent_qualified_name=parent_q,
+                signature=self._signature(node),
+                decorators=self._attributes(node),
+                bases=[*extends, *interfaces],
             )
         )
         for base in extends:
             out.references.append(
                 RawReference(
-                    kind="inherit", callee_text=base,
-                    callee_name=base.rsplit(".", 1)[-1], receiver_text=None,
-                    span=span_of(node), caller_qualified_name=qname,
+                    kind="inherit",
+                    callee_text=base,
+                    callee_name=base.rsplit(".", 1)[-1],
+                    receiver_text=None,
+                    span=span_of(node),
+                    caller_qualified_name=qname,
                 )
             )
         for iface in interfaces:
             out.references.append(
                 RawReference(
-                    kind="implement", callee_text=iface,
-                    callee_name=iface.rsplit(".", 1)[-1], receiver_text=None,
-                    span=span_of(node), caller_qualified_name=qname,
+                    kind="implement",
+                    callee_text=iface,
+                    callee_name=iface.rsplit(".", 1)[-1],
+                    receiver_text=None,
+                    span=span_of(node),
+                    caller_qualified_name=qname,
                 )
             )
         self._emit_attribute_refs(node, qname, out)
 
     def _add_callable(
-        self, node: "Node", ctx: FileContext, out: FileExtraction, kind: SymbolKind
+        self, node: Node, ctx: FileContext, out: FileExtraction, kind: SymbolKind
     ) -> None:
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -199,9 +209,14 @@ class PhpExtractor:
         modifiers = self._method_modifiers(node)
         out.symbols.append(
             RawSymbol(
-                kind=kind, name=name, qualified_name=qname, span=span_of(node),
-                parent_qualified_name=parent_q, signature=self._signature(node),
-                decorators=self._attributes(node), modifiers=modifiers,
+                kind=kind,
+                name=name,
+                qualified_name=qname,
+                span=span_of(node),
+                parent_qualified_name=parent_q,
+                signature=self._signature(node),
+                decorators=self._attributes(node),
+                modifiers=modifiers,
                 is_exported="private" not in modifiers and "protected" not in modifiers,
             )
         )
@@ -209,15 +224,14 @@ class PhpExtractor:
 
     # ---------------- imports ----------------
 
-    def _imports(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _imports(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("php", "imports"), root)
         for node in caps.get("import", []):
             for clause in node.named_children:
                 if clause.type != "namespace_use_clause":
                     continue
                 qualified = next(
-                    (c for c in clause.named_children
-                     if c.type in ("qualified_name", "name")),
+                    (c for c in clause.named_children if c.type in ("qualified_name", "name")),
                     None,
                 )
                 if qualified is None:
@@ -227,9 +241,7 @@ class PhpExtractor:
                 last = full.rsplit(".", 1)[-1]
                 alias = node_text(alias_node) if alias_node is not None else last
                 out.imports.append(
-                    RawImport(
-                        module=full, imported_name=last, alias=alias, span=span_of(node)
-                    )
+                    RawImport(module=full, imported_name=last, alias=alias, span=span_of(node))
                 )
         for imp in out.imports:
             if imp.module:
@@ -237,7 +249,7 @@ class PhpExtractor:
 
     # ---------------- calls / attributes ----------------
 
-    def _calls(self, root: "Node", ctx: FileContext, out: FileExtraction) -> None:
+    def _calls(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
         caps = captures(load_query("php", "calls"), root)
 
         for node in caps.get("call", []):
@@ -246,9 +258,7 @@ class PhpExtractor:
                 continue
             callee_text = _norm(node_text(fn))
             callee_name = callee_text.rsplit(".", 1)[-1]
-            receiver = (
-                callee_text.rsplit(".", 1)[0] if "." in callee_text else None
-            )
+            receiver = callee_text.rsplit(".", 1)[0] if "." in callee_text else None
             self._emit_call(node, callee_text, callee_name, receiver, ctx, out)
 
         for node in caps.get("member_call", []):
@@ -258,9 +268,7 @@ class PhpExtractor:
                 continue
             callee_name = node_text(name_node)
             receiver = node_text(obj)
-            self._emit_call(
-                node, f"{receiver}.{callee_name}", callee_name, receiver, ctx, out
-            )
+            self._emit_call(node, f"{receiver}.{callee_name}", callee_name, receiver, ctx, out)
 
         for node in caps.get("scoped_call", []):
             name_node = node.child_by_field_name("name")
@@ -269,14 +277,10 @@ class PhpExtractor:
                 continue
             callee_name = node_text(name_node)
             receiver = _norm(node_text(scope))
-            self._emit_call(
-                node, f"{receiver}.{callee_name}", callee_name, receiver, ctx, out
-            )
+            self._emit_call(node, f"{receiver}.{callee_name}", callee_name, receiver, ctx, out)
 
         for node in caps.get("new", []):
-            type_node = next(
-                (c for c in node.named_children if c.type != "arguments"), None
-            )
+            type_node = next((c for c in node.named_children if c.type != "arguments"), None)
             if type_node is None:
                 continue
             type_text = _norm(node_text(type_node))
@@ -290,8 +294,11 @@ class PhpExtractor:
             arg = node.named_children[0] if node.named_children else None
             out.references.append(
                 RawReference(
-                    kind="call", callee_text="include", callee_name="include",
-                    receiver_text=None, span=span_of(node),
+                    kind="call",
+                    callee_text="include",
+                    callee_name="include",
+                    receiver_text=None,
+                    span=span_of(node),
                     caller_qualified_name=self._caller(node, ctx),
                     arg_count=1 if arg is not None else 0,
                     arg_preview=truncate(node_text(arg)) if arg is not None else None,
@@ -299,14 +306,22 @@ class PhpExtractor:
             )
 
     def _emit_call(
-        self, node: "Node", callee_text: str, callee_name: str,
-        receiver: str | None, ctx: FileContext, out: FileExtraction,
+        self,
+        node: Node,
+        callee_text: str,
+        callee_name: str,
+        receiver: str | None,
+        ctx: FileContext,
+        out: FileExtraction,
     ) -> None:
         args = node.child_by_field_name("arguments")
         out.references.append(
             RawReference(
-                kind="call", callee_text=callee_text, callee_name=callee_name,
-                receiver_text=receiver, span=span_of(node),
+                kind="call",
+                callee_text=callee_text,
+                callee_name=callee_name,
+                receiver_text=receiver,
+                span=span_of(node),
                 caller_qualified_name=self._caller(node, ctx),
                 arg_count=len(args.named_children) if args is not None else 0,
                 arg_preview=truncate(node_text(args)) if args is not None else None,
@@ -315,7 +330,7 @@ class PhpExtractor:
 
     # ---------------- helpers ----------------
 
-    def _scope_chain(self, node: "Node") -> list[str]:
+    def _scope_chain(self, node: Node) -> list[str]:
         parts: list[str] = []
         current = node.parent
         while current is not None:
@@ -327,7 +342,7 @@ class PhpExtractor:
         parts.reverse()
         return parts
 
-    def _nearest_scope(self, node: "Node") -> str | None:
+    def _nearest_scope(self, node: Node) -> str | None:
         current = node.parent
         while current is not None:
             if current.type in _SCOPE_TYPES:
@@ -335,9 +350,7 @@ class PhpExtractor:
             current = current.parent
         return None
 
-    def _qualify(
-        self, node: "Node", name: str, ctx: FileContext
-    ) -> tuple[str, str | None]:
+    def _qualify(self, node: Node, name: str, ctx: FileContext) -> tuple[str, str | None]:
         chain = self._scope_chain(node)
         base = self._namespace_prefix
         prefix_parts = [base, *chain] if base else [*chain]
@@ -345,7 +358,7 @@ class PhpExtractor:
         qname = ".".join([*prefix_parts, name])
         return qname, parent_q
 
-    def _caller(self, node: "Node", ctx: FileContext) -> str | None:
+    def _caller(self, node: Node, ctx: FileContext) -> str | None:
         current = node.parent
         while current is not None:
             if current.type in _FUNC_SCOPES:
@@ -355,34 +368,37 @@ class PhpExtractor:
             current = current.parent
         return None
 
-    def _signature(self, node: "Node") -> str:
+    def _signature(self, node: Node) -> str:
         return truncate(node_text(node).split("{", 1)[0].strip(), 120)
 
-    def _method_modifiers(self, node: "Node") -> list[str]:
+    def _method_modifiers(self, node: Node) -> list[str]:
         mods: list[str] = []
         for child in node.children:
-            if child.type in ("visibility_modifier", "static_modifier",
-                              "abstract_modifier", "final_modifier"):
+            if child.type in (
+                "visibility_modifier",
+                "static_modifier",
+                "abstract_modifier",
+                "final_modifier",
+            ):
                 mods.append(node_text(child))
         return mods
 
-    def _prop_modifiers(self, node: "Node") -> list[str]:
+    def _prop_modifiers(self, node: Node) -> list[str]:
         return [
-            node_text(c) for c in node.named_children
-            if c.type in ("visibility_modifier", "static_modifier",
-                          "readonly_modifier", "final_modifier")
+            node_text(c)
+            for c in node.named_children
+            if c.type
+            in ("visibility_modifier", "static_modifier", "readonly_modifier", "final_modifier")
         ]
 
-    def _attribute_lists(self, node: "Node") -> list["Node"]:
+    def _attribute_lists(self, node: Node) -> list[Node]:
         return [c for c in node.named_children if c.type == "attribute_list"]
 
-    def _attributes(self, node: "Node") -> list[str]:
+    def _attributes(self, node: Node) -> list[str]:
         # The attribute_list node text already includes the leading `#[ ... ]`.
         return [node_text(attr_list) for attr_list in self._attribute_lists(node)]
 
-    def _emit_attribute_refs(
-        self, node: "Node", owner_qname: str, out: FileExtraction
-    ) -> None:
+    def _emit_attribute_refs(self, node: Node, owner_qname: str, out: FileExtraction) -> None:
         for attr_list in self._attribute_lists(node):
             for group in attr_list.named_children:
                 if group.type != "attribute_group":
@@ -391,8 +407,7 @@ class PhpExtractor:
                     if attr.type != "attribute":
                         continue
                     name_node = attr.child_by_field_name("name") or next(
-                        (c for c in attr.named_children
-                         if c.type in ("name", "qualified_name")),
+                        (c for c in attr.named_children if c.type in ("name", "qualified_name")),
                         None,
                     )
                     if name_node is None:
@@ -400,17 +415,18 @@ class PhpExtractor:
                     callee_text = _norm(node_text(name_node))
                     out.references.append(
                         RawReference(
-                            kind="decorator", callee_text=callee_text,
+                            kind="decorator",
+                            callee_text=callee_text,
                             callee_name=callee_text.rsplit(".", 1)[-1],
                             receiver_text=(
-                                callee_text.rsplit(".", 1)[0]
-                                if "." in callee_text else None
+                                callee_text.rsplit(".", 1)[0] if "." in callee_text else None
                             ),
-                            span=span_of(attr), caller_qualified_name=owner_qname,
+                            span=span_of(attr),
+                            caller_qualified_name=owner_qname,
                         )
                     )
 
-    def _supertypes(self, node: "Node") -> tuple[list[str], list[str]]:
+    def _supertypes(self, node: Node) -> tuple[list[str], list[str]]:
         """Return (extends supertypes, implements interfaces)."""
         extends: list[str] = []
         interfaces: list[str] = []

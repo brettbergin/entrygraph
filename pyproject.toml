@@ -28,7 +28,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-cov"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+    "ruff>=0.15",
+    # mypy 2.x needs pathspec>=1.0 (imports pathspec.patterns.gitignore), which
+    # conflicts with our runtime pin pathspec<1.0; 1.x is compatible.
+    "mypy>=1.11,<2",
+    "bandit>=1.7",
+    "mdformat>=0.7",
+    "mdformat-gfm>=0.3",
+]
 
 [project.scripts]
 entrygraph = "entrygraph.cli.main:main"
@@ -54,3 +64,36 @@ packages = ["src/entrygraph"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["slow: performance guardrail tests (deselect with '-m \"not slow\"')"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["src/entrygraph/_version.py"]
+
+[tool.ruff.lint]
+# pyflakes, pycodestyle, isort, pyupgrade, bugbear, comprehensions, simplify
+select = ["F", "E", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "SIM105",  # contextlib.suppress over try/except/pass — try/except is clearer here
+    "B905",    # zip() without strict= — fine for equal-length paired iterables
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011", "E402", "SIM"]  # tests: allow assert False, late imports, verbose forms
+# B023: the DFS helper closes over loop-scoped stack/on_path but is invoked
+# synchronously within the same iteration, so the late-binding concern is moot.
+"src/entrygraph/graph/adjacency.py" = ["B023"]
+
+[tool.mypy]
+python_version = "3.13"
+mypy_path = "src"
+packages = ["entrygraph"]
+ignore_missing_imports = true   # tree-sitter, sqlalchemy internals, etc. ship partial stubs
+exclude = ["_version\\.py$"]
+
+[tool.bandit]
+# Scan library code only; tests/fixtures contain deliberately vulnerable sample apps.
+exclude_dirs = ["tests", "src/entrygraph/_version.py"]
+# B314/B405: ElementTree parses local project manifests (pom.xml/.csproj) the user is
+# already indexing — not attacker-controlled network XML, so XXE risk is not applicable.
+skips = ["B314", "B405"]

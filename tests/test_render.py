@@ -11,8 +11,7 @@ from entrygraph.cli import render
 def test_to_json_roundtrips_dataclasses():
     from entrygraph.results import Symbol
 
-    s = Symbol(id=1, kind="class", name="A", qname="pkg.A", file="a.py",
-               start_line=1, end_line=3)
+    s = Symbol(id=1, kind="class", name="A", qname="pkg.A", file="a.py", start_line=1, end_line=3)
     payload = json.loads(render.to_json([s]))
     assert payload[0]["qname"] == "pkg.A"
 

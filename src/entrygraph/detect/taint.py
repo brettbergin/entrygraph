@@ -63,7 +63,7 @@ def expand_braces(pattern: str) -> list[str]:
     match = re.search(r"\{([^{}]*)\}", pattern)
     if not match:
         return [pattern]
-    head, tail = pattern[: match.start()], pattern[match.end():]
+    head, tail = pattern[: match.start()], pattern[match.end() :]
     expanded: list[str] = []
     for option in match.group(1).split(","):
         expanded.extend(expand_braces(head + option.strip() + tail))
@@ -118,7 +118,7 @@ class SinkRegistry:
         sources: list[SourcePattern],
         disable: list[str] | None = None,
         sanitizers: list[SanitizerPattern] | None = None,
-    ) -> "SinkRegistry":
+    ) -> SinkRegistry:
         disabled = set(disable or [])
         kept = [s for s in self.sinks.values() if s.id not in disabled]
         kept_san = [s for s in self.sanitizers.values() if s.id not in disabled]

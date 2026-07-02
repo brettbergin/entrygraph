@@ -25,18 +25,18 @@ def repo(tmp_path) -> Path:
 
 def _graph_snapshot(engine) -> tuple[set, set]:
     with Session(engine) as s:
-        symbols = {
-            (sym.qname, sym.kind.value) for sym in s.execute(select(Symbol)).scalars()
-        }
+        symbols = {(sym.qname, sym.kind.value) for sym in s.execute(select(Symbol)).scalars()}
         edges = set()
         qname_of = {sym.id: sym.qname for sym in s.execute(select(Symbol)).scalars()}
         for e in s.execute(select(Edge)).scalars():
-            edges.add((
-                qname_of.get(e.src_symbol_id),
-                e.kind.value,
-                e.dst_qname,
-                e.dst_symbol_id is not None,
-            ))
+            edges.add(
+                (
+                    qname_of.get(e.src_symbol_id),
+                    e.kind.value,
+                    e.dst_qname,
+                    e.dst_symbol_id is not None,
+                )
+            )
     return symbols, edges
 
 
@@ -65,12 +65,11 @@ def test_edit_file_matches_full_reindex(repo, tmp_path):
     # add a new function to services.py that reaches subprocess directly
     services = repo / "app" / "services.py"
     text = services.read_text() + (
-        "\n\ndef extra_report(name):\n"
-        "    import subprocess\n"
-        "    return subprocess.run([name])\n"
+        "\n\ndef extra_report(name):\n    import subprocess\n    return subprocess.run([name])\n"
     )
     services.write_text(text)
     import os
+
     os.utime(services, ns=(0, 10**18))  # bump mtime so the diff notices
 
     inc_stats = index_repository(repo, engine, incremental=True)
@@ -88,6 +87,7 @@ def test_delete_file_matches_full_reindex(repo, tmp_path):
 
     (repo / "app" / "db.py").unlink()
     import os
+
     os.utime(repo / "app", ns=(0, 10**18))
 
     inc_stats = index_repository(repo, engine, incremental=True)
@@ -125,6 +125,7 @@ def test_cross_file_edge_heals(repo, tmp_path):
     services = repo / "app" / "services.py"
     services.write_text(services.read_text() + "\n# touch\n")
     import os
+
     os.utime(services, ns=(0, 10**18))
 
     index_repository(repo, engine, incremental=True)

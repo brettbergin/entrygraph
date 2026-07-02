@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from entrygraph import CodeGraph, SchemaMismatchError, SymbolNotFoundError
+from entrygraph import CodeGraph, SymbolNotFoundError
 from entrygraph.errors import DatabaseNotFoundError
 
 FLASK_APP = Path(__file__).parent / "fixtures" / "python" / "flask_app"
@@ -64,7 +64,7 @@ def test_files_and_detect(graph):
     files = graph.files(language="python")
     assert any(f.path == "app/services.py" for f in files)
     report = graph.detect()
-    assert any(l.name == "python" for l in report.languages)
+    assert any(lang.name == "python" for lang in report.languages)
 
 
 def test_callers_callees(graph):

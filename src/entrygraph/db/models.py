@@ -13,6 +13,7 @@ flush, so ad-hoc sessions must flush between dependency levels.
 
 from __future__ import annotations
 
+import enum
 from datetime import datetime
 
 from sqlalchemy import (
@@ -31,7 +32,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from entrygraph.kinds import EdgeKind, EntrypointKind, SymbolKind
 
 
-def _values(enum_cls: type) -> list[str]:
+def _values(enum_cls: type[enum.Enum]) -> list[str]:
     return [m.value for m in enum_cls]
 
 
@@ -71,7 +72,9 @@ class File(Base):
     size_bytes: Mapped[int] = mapped_column(BigInteger)
     mtime_ns: Mapped[int] = mapped_column(BigInteger)
     generation: Mapped[int] = mapped_column(Integer)  # index_generation at last (re)index
-    skip_reason: Mapped[str | None] = mapped_column(String(32))  # too_large/binary/minified/parse_error
+    skip_reason: Mapped[str | None] = mapped_column(
+        String(32)
+    )  # too_large/binary/minified/parse_error
 
     __table_args__ = (
         UniqueConstraint("repo_id", "path", name="uq_files_repo_path"),
@@ -171,6 +174,4 @@ class Detection(Base):
     confidence: Mapped[float] = mapped_column(default=1.0)
     evidence: Mapped[str | None] = mapped_column(Text)  # JSON: file counts, manifest paths
 
-    __table_args__ = (
-        UniqueConstraint("repo_id", "category", "name", name="uq_detections"),
-    )
+    __table_args__ = (UniqueConstraint("repo_id", "category", "name", name="uq_detections"),)

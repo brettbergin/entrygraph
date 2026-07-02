@@ -73,9 +73,12 @@ def _gin_routes(x: FileExtraction) -> list[EntrypointHint]:
         ):
             route = first_string_arg("(" + ref.arg_preview.lstrip("("))
             if route is not None and route.startswith("/"):
-                method = ref.callee_name.upper() if ref.callee_name in {
-                    "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"
-                } else "*"
+                method = (
+                    ref.callee_name.upper()
+                    if ref.callee_name
+                    in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
+                    else "*"
+                )
                 hints.append(
                     EntrypointHint(
                         rule_id="go.gin.route",
@@ -96,10 +99,17 @@ def _gin_style(framework: str):
     def matcher(x: FileExtraction) -> list[EntrypointHint]:
         hints = []
         for hint in _gin_routes(x):
-            hints.append(EntrypointHint(
-                rule_id=f"go.{framework}.route", kind=hint.kind,
-                handler_qualified_name=hint.handler_qualified_name, route=hint.route,
-                http_methods=hint.http_methods, framework=framework, metadata=hint.metadata))
+            hints.append(
+                EntrypointHint(
+                    rule_id=f"go.{framework}.route",
+                    kind=hint.kind,
+                    handler_qualified_name=hint.handler_qualified_name,
+                    route=hint.route,
+                    http_methods=hint.http_methods,
+                    framework=framework,
+                    metadata=hint.metadata,
+                )
+            )
         return hints
 
     return matcher
@@ -117,11 +127,17 @@ def _gorilla_routes(x: FileExtraction) -> list[EntrypointHint]:
         ):
             route = first_string_arg("(" + ref.arg_preview.lstrip("("))
             if route is not None and route.startswith("/"):
-                hints.append(EntrypointHint(
-                    rule_id="go.gorilla-mux.route", kind=EntrypointKind.HTTP_ROUTE,
-                    handler_qualified_name=ref.caller_qualified_name, route=route,
-                    http_methods=["*"], framework="gorilla-mux",
-                    metadata={"registration": ref.arg_preview}))
+                hints.append(
+                    EntrypointHint(
+                        rule_id="go.gorilla-mux.route",
+                        kind=EntrypointKind.HTTP_ROUTE,
+                        handler_qualified_name=ref.caller_qualified_name,
+                        route=route,
+                        http_methods=["*"],
+                        framework="gorilla-mux",
+                        metadata={"registration": ref.arg_preview},
+                    )
+                )
     return hints
 
 
@@ -142,17 +158,20 @@ def _cobra_commands(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
-register(EntrypointRule("go.core.main", "go", None,
-                        EntrypointKind.MAIN, _go_main))
-register(EntrypointRule("go.nethttp.route", "go", "net/http",
-                        EntrypointKind.HTTP_ROUTE, _nethttp_routes))
-register(EntrypointRule("go.gin.route", "go", "gin",
-                        EntrypointKind.HTTP_ROUTE, _gin_routes))
-register(EntrypointRule("go.chi.route", "go", "chi",
-                        EntrypointKind.HTTP_ROUTE, _gin_style("chi")))
-register(EntrypointRule("go.fiber.route", "go", "fiber",
-                        EntrypointKind.HTTP_ROUTE, _gin_style("fiber")))
-register(EntrypointRule("go.gorilla-mux.route", "go", "gorilla-mux",
-                        EntrypointKind.HTTP_ROUTE, _gorilla_routes))
-register(EntrypointRule("go.cobra.command", "go", "cobra",
-                        EntrypointKind.CLI_COMMAND, _cobra_commands))
+register(EntrypointRule("go.core.main", "go", None, EntrypointKind.MAIN, _go_main))
+register(
+    EntrypointRule("go.nethttp.route", "go", "net/http", EntrypointKind.HTTP_ROUTE, _nethttp_routes)
+)
+register(EntrypointRule("go.gin.route", "go", "gin", EntrypointKind.HTTP_ROUTE, _gin_routes))
+register(EntrypointRule("go.chi.route", "go", "chi", EntrypointKind.HTTP_ROUTE, _gin_style("chi")))
+register(
+    EntrypointRule("go.fiber.route", "go", "fiber", EntrypointKind.HTTP_ROUTE, _gin_style("fiber"))
+)
+register(
+    EntrypointRule(
+        "go.gorilla-mux.route", "go", "gorilla-mux", EntrypointKind.HTTP_ROUTE, _gorilla_routes
+    )
+)
+register(
+    EntrypointRule("go.cobra.command", "go", "cobra", EntrypointKind.CLI_COMMAND, _cobra_commands)
+)

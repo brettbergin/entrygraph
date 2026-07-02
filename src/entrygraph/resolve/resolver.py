@@ -105,8 +105,14 @@ class FileResolver:
         for cand in cha_candidates(self.table, ref.callee_name, exclude=exclude):
             out.append(
                 ResolvedEdge(
-                    EdgeKind.CALLS, primary.src_symbol_id, cand, self.table.qname_of[cand],
-                    ref.span.start_line, Confidence.FUZZY, arg_preview=ref.arg_preview, via="cha",
+                    EdgeKind.CALLS,
+                    primary.src_symbol_id,
+                    cand,
+                    self.table.qname_of[cand],
+                    ref.span.start_line,
+                    Confidence.FUZZY,
+                    arg_preview=ref.arg_preview,
+                    via="cha",
                 )
             )
         return out
@@ -124,15 +130,27 @@ class FileResolver:
             if self.table.is_project_path(module):
                 dst_id = self.table.module_symbol_ids.get(module) or self.table.by_fqn.get(module)
                 edges.append(
-                    ResolvedEdge(EdgeKind.IMPORTS, self.module_symbol_id, dst_id, module,
-                                 imp.span.start_line, Confidence.IMPORT if dst_id else Confidence.UNRESOLVED)
+                    ResolvedEdge(
+                        EdgeKind.IMPORTS,
+                        self.module_symbol_id,
+                        dst_id,
+                        module,
+                        imp.span.start_line,
+                        Confidence.IMPORT if dst_id else Confidence.UNRESOLVED,
+                    )
                 )
             else:
                 qname = f"{self.prefix}:{module}"
                 dst_id = self.externals.get_or_create(qname)
                 edges.append(
-                    ResolvedEdge(EdgeKind.IMPORTS, self.module_symbol_id, dst_id, qname,
-                                 imp.span.start_line, Confidence.IMPORT)
+                    ResolvedEdge(
+                        EdgeKind.IMPORTS,
+                        self.module_symbol_id,
+                        dst_id,
+                        qname,
+                        imp.span.start_line,
+                        Confidence.IMPORT,
+                    )
                 )
         return edges
 
@@ -146,8 +164,14 @@ class FileResolver:
             dst_id = self._bind_project_callable(ref.callee_name)
             if dst_id is None:
                 return None
-            return ResolvedEdge(kind, src_id, dst_id, self.table.qname_of[dst_id],
-                                 ref.span.start_line, Confidence.IMPORT)
+            return ResolvedEdge(
+                kind,
+                src_id,
+                dst_id,
+                self.table.qname_of[dst_id],
+                ref.span.start_line,
+                Confidence.IMPORT,
+            )
 
         if ref.kind == "dynamic_call":
             # getattr/computed/send — target isn't statically knowable. Keep a
@@ -157,8 +181,16 @@ class FileResolver:
             else:
                 guess = f"{self.prefix}:{ref.callee_name}.*"
             dst_id = self.externals.get_or_create(guess)
-            return ResolvedEdge(kind, src_id, dst_id, guess, ref.span.start_line,
-                                Confidence.UNRESOLVED, arg_preview=ref.arg_preview, via="dynamic")
+            return ResolvedEdge(
+                kind,
+                src_id,
+                dst_id,
+                guess,
+                ref.span.start_line,
+                Confidence.UNRESOLVED,
+                arg_preview=ref.arg_preview,
+                via="dynamic",
+            )
 
         dst_id, dst_qname, confidence, via = self._bind(ref)
         return ResolvedEdge(
@@ -186,7 +218,7 @@ class FileResolver:
         # 1. import-map expansion (chase re-export chains for project targets)
         first_seg = ref.callee_text.split(".", 1)[0].split("(", 1)[0]
         if first_seg in self.import_map:
-            rest = ref.callee_text[len(first_seg):]
+            rest = ref.callee_text[len(first_seg) :]
             expanded = self.import_map[first_seg] + rest
             if self.table.is_project_path(expanded):
                 dst_id = self.table.by_fqn.get(expanded)

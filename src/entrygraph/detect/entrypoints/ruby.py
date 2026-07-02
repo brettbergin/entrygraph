@@ -63,7 +63,8 @@ def _rails_routes(x: FileExtraction) -> list[EntrypointHint]:
                 kind=EntrypointKind.HTTP_ROUTE,
                 handler_qualified_name=None,  # handler resolved as a normal call edge
                 route=route if route is not None else "",
-                http_methods=["*"] if ref.callee_name in ("resources", "resource", "root")
+                http_methods=["*"]
+                if ref.callee_name in ("resources", "resource", "root")
                 else [ref.callee_name.upper()],
                 framework="rails",
                 metadata={"registration": ref.arg_preview or ref.callee_name},
@@ -108,10 +109,16 @@ def _grape_routes(x: FileExtraction) -> list[EntrypointHint]:
         ):
             route = first_string_arg("(" + ref.arg_preview.lstrip("("))
             if route is not None:
-                hints.append(EntrypointHint(
-                    rule_id="ruby.grape.route", kind=EntrypointKind.HTTP_ROUTE,
-                    handler_qualified_name=ref.caller_qualified_name,
-                    route=route, http_methods=[ref.callee_name.upper()], framework="grape"))
+                hints.append(
+                    EntrypointHint(
+                        rule_id="ruby.grape.route",
+                        kind=EntrypointKind.HTTP_ROUTE,
+                        handler_qualified_name=ref.caller_qualified_name,
+                        route=route,
+                        http_methods=[ref.callee_name.upper()],
+                        framework="grape",
+                    )
+                )
     return hints
 
 
@@ -120,28 +127,39 @@ def _sidekiq_workers(x: FileExtraction) -> list[EntrypointHint]:
     worker_modules = {
         ref.caller_qualified_name
         for ref in x.references
-        if ref.callee_name == "include" and ref.arg_preview
-        and "Sidekiq" in ref.arg_preview
+        if ref.callee_name == "include" and ref.arg_preview and "Sidekiq" in ref.arg_preview
     }
     hints = []
     for symbol in x.symbols:
-        if symbol.name == "perform" and (
-            symbol.parent_qualified_name in worker_modules or not worker_modules
-        ) and worker_modules:
-            hints.append(EntrypointHint(
-                rule_id="ruby.sidekiq.worker", kind=EntrypointKind.TASK,
-                handler_qualified_name=symbol.qualified_name,
-                name=symbol.parent_qualified_name or symbol.name, framework="sidekiq"))
+        if (
+            symbol.name == "perform"
+            and (symbol.parent_qualified_name in worker_modules or not worker_modules)
+            and worker_modules
+        ):
+            hints.append(
+                EntrypointHint(
+                    rule_id="ruby.sidekiq.worker",
+                    kind=EntrypointKind.TASK,
+                    handler_qualified_name=symbol.qualified_name,
+                    name=symbol.parent_qualified_name or symbol.name,
+                    framework="sidekiq",
+                )
+            )
     return hints
 
 
-register(EntrypointRule("ruby.sinatra.route", "ruby", "sinatra",
-                        EntrypointKind.HTTP_ROUTE, _sinatra_routes))
-register(EntrypointRule("ruby.grape.route", "ruby", "grape",
-                        EntrypointKind.HTTP_ROUTE, _grape_routes))
-register(EntrypointRule("ruby.sidekiq.worker", "ruby", "sidekiq",
-                        EntrypointKind.TASK, _sidekiq_workers))
-register(EntrypointRule("ruby.rails.routes", "ruby", "rails",
-                        EntrypointKind.HTTP_ROUTE, _rails_routes))
-register(EntrypointRule("ruby.rake.task", "ruby", "rake",
-                        EntrypointKind.CLI_COMMAND, _rake_tasks))
+register(
+    EntrypointRule(
+        "ruby.sinatra.route", "ruby", "sinatra", EntrypointKind.HTTP_ROUTE, _sinatra_routes
+    )
+)
+register(
+    EntrypointRule("ruby.grape.route", "ruby", "grape", EntrypointKind.HTTP_ROUTE, _grape_routes)
+)
+register(
+    EntrypointRule("ruby.sidekiq.worker", "ruby", "sidekiq", EntrypointKind.TASK, _sidekiq_workers)
+)
+register(
+    EntrypointRule("ruby.rails.routes", "ruby", "rails", EntrypointKind.HTTP_ROUTE, _rails_routes)
+)
+register(EntrypointRule("ruby.rake.task", "ruby", "rake", EntrypointKind.CLI_COMMAND, _rake_tasks))

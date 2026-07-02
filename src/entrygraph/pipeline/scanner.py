@@ -13,7 +13,7 @@ import json
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import Engine, delete, select, update
@@ -65,8 +65,9 @@ def index_repository(
         diff = diff_files(walked, known, paranoid=paranoid)
 
         if incremental:
-            deleted = _wipe_files(session, repo.id, [*[w.path for w in diff.changed],
-                                                     *diff.deleted_paths])
+            deleted = _wipe_files(
+                session, repo.id, [*[w.path for w in diff.changed], *diff.deleted_paths]
+            )
         else:
             _wipe_repo_graph(session, repo.id)
             deleted = 0
@@ -84,9 +85,7 @@ def index_repository(
         file_id_by_path = _write_files(session, repo, walked, diff, alloc, incremental)
 
         # ---- framework detection + entrypoint rules ----
-        frameworks, detected_names = _detect_frameworks(
-            manifests, extractions, walked, profile
-        )
+        frameworks, detected_names = _detect_frameworks(manifests, extractions, walked, profile)
         for _path, x, _pkg in extractions:
             for rule in entrypoint_rules.rules_for(x.language, detected_names):
                 x.entrypoint_hints.extend(rule.match(x))
@@ -105,8 +104,15 @@ def index_repository(
             externals.preload(_existing_externals(session))
         new_qnames = set(symbol_id_by_qname) | {x.module_path for _p, x, _pkg in extractions}
         edge_count, entrypoint_count = _write_edges_and_entrypoints(
-            session, extractions, file_id_by_path, module_ids, symbol_id_by_qname,
-            table, externals, alloc, sink_registry,
+            session,
+            extractions,
+            file_id_by_path,
+            module_ids,
+            symbol_id_by_qname,
+            table,
+            externals,
+            alloc,
+            sink_registry,
         )
         entrypoint_count += _write_config_entrypoints(
             session, root, symbol_id_by_qname, table, alloc, incremental
@@ -136,6 +142,7 @@ def index_repository(
 
 
 # ---------------- phase helpers ----------------
+
 
 def _pool_context():
     """multiprocessing context for the parse pool.
@@ -178,14 +185,16 @@ def _parse_phase(
 
 
 def _load_or_create_repo(session: Session, root: Path, incremental: bool) -> Repository:
-    repo = session.execute(
-        select(Repository).where(Repository.root_path == str(root))
-    ).scalars().first()
+    repo = (
+        session.execute(select(Repository).where(Repository.root_path == str(root)))
+        .scalars()
+        .first()
+    )
     if repo is None:
         repo = Repository(id=1, root_path=str(root), index_generation=0)
         session.add(repo)
         session.flush()
-    repo.indexed_at = datetime.now(timezone.utc)
+    repo.indexed_at = datetime.now(UTC)
     repo.index_generation += 1
     return repo
 
@@ -229,9 +238,7 @@ def _wipe_files(session: Session, repo_id: int, paths: list[str]) -> int:
 
 
 def _load_existing_symbols(session: Session, repo_id: int, table: SymbolTable) -> None:
-    rows = session.execute(
-        select(Symbol.id, Symbol.qname, Symbol.name, Symbol.kind)
-    )
+    rows = session.execute(select(Symbol.id, Symbol.qname, Symbol.name, Symbol.kind))
     for sid, qname, name, kind in rows:
         if kind is SymbolKind.MODULE:
             table.add_module(qname, sid)
@@ -241,9 +248,9 @@ def _load_existing_symbols(session: Session, repo_id: int, table: SymbolTable) -
     # dst_qname is the already-resolved parent FQN, so it feeds both class_bases
     # (raw text, legacy) and class_parents (the transitive ancestor walk).
     base_rows = session.execute(
-        select(Symbol.qname, Edge.dst_qname).join(Edge, Edge.src_symbol_id == Symbol.id).where(
-            Edge.kind.in_((EdgeKind.INHERITS, EdgeKind.IMPLEMENTS))
-        )
+        select(Symbol.qname, Edge.dst_qname)
+        .join(Edge, Edge.src_symbol_id == Symbol.id)
+        .where(Edge.kind.in_((EdgeKind.INHERITS, EdgeKind.IMPLEMENTS)))
     )
     for class_qname, base_qname in base_rows:
         table.class_bases.setdefault(class_qname, []).append(base_qname)
@@ -255,7 +262,9 @@ def _existing_externals(session: Session) -> dict[str, int]:
     rows = session.execute(
         select(Symbol.qname, Symbol.id).where(Symbol.kind == SymbolKind.EXTERNAL)
     )
-    return {qname: sid for qname, sid in rows}
+    # NOT dict(rows): a SQLAlchemy Result exposes .keys(), so dict() would treat it
+    # as a mapping and subscript it (TypeError). Unpack each Row explicitly.
+    return {qname: sid for qname, sid in rows}  # noqa: C416
 
 
 def _write_files(
@@ -273,9 +282,7 @@ def _write_files(
     """
     file_id_by_path: dict[str, int] = {}
     if incremental:
-        for path, fid in session.execute(
-            select(File.path, File.id).where(File.repo_id == repo.id)
-        ):
+        for path, fid in session.execute(select(File.path, File.id).where(File.repo_id == repo.id)):
             file_id_by_path[path] = fid
 
     reindexed = {w.path for w in diff.to_index} | {
@@ -318,7 +325,10 @@ def _detect_frameworks(manifests, extractions, walked, profile: RepoLanguageProf
     if languages_present & {"typescript", "tsx"}:
         languages_present.add("javascript")
     frameworks = detect_frameworks(
-        manifests, import_signals, [w.path for w in walked], symbol_names,
+        manifests,
+        import_signals,
+        [w.path for w in walked],
+        symbol_names,
         languages_present=languages_present,
     )
     return frameworks, {fw.name for fw in frameworks}
@@ -333,10 +343,18 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
         table.add_module(x.module_path, module_id)
         symbol_rows.append(
             {
-                "id": module_id, "file_id": file_id_by_path[path], "kind": SymbolKind.MODULE,
-                "name": x.module_path.rsplit(".", 1)[-1], "qname": x.module_path,
-                "parent_id": None, "start_line": 1, "end_line": 0, "start_col": 0,
-                "signature": None, "docstring": None, "is_exported": True,
+                "id": module_id,
+                "file_id": file_id_by_path[path],
+                "kind": SymbolKind.MODULE,
+                "name": x.module_path.rsplit(".", 1)[-1],
+                "qname": x.module_path,
+                "parent_id": None,
+                "start_line": 1,
+                "end_line": 0,
+                "start_col": 0,
+                "signature": None,
+                "docstring": None,
+                "is_exported": True,
             }
         )
 
@@ -350,18 +368,27 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
                 table.class_bases[raw.qualified_name] = raw.bases
             symbol_rows.append(
                 {
-                    "id": symbol_id, "file_id": file_id_by_path[path], "kind": raw.kind,
-                    "name": raw.name, "qname": raw.qualified_name, "parent_id": None,
-                    "start_line": raw.span.start_line, "end_line": raw.span.end_line,
-                    "start_col": raw.span.start_col, "signature": raw.signature,
-                    "docstring": raw.docstring, "is_exported": raw.is_exported,
+                    "id": symbol_id,
+                    "file_id": file_id_by_path[path],
+                    "kind": raw.kind,
+                    "name": raw.name,
+                    "qname": raw.qualified_name,
+                    "parent_id": None,
+                    "start_line": raw.span.start_line,
+                    "end_line": raw.span.end_line,
+                    "start_col": raw.span.start_col,
+                    "signature": raw.signature,
+                    "docstring": raw.docstring,
+                    "is_exported": raw.is_exported,
                 }
             )
     for row in symbol_rows:
         qname = row["qname"]
         if row["kind"] is not SymbolKind.MODULE and "." in qname:
             parent_q = qname.rsplit(".", 1)[0]
-            row["parent_id"] = symbol_id_by_qname.get(parent_q) or table.module_symbol_ids.get(parent_q)
+            row["parent_id"] = symbol_id_by_qname.get(parent_q) or table.module_symbol_ids.get(
+                parent_q
+            )
     # A row's parent has one fewer qname segment, so inserting shallowest-first
     # guarantees the self-referential parent_id FK is satisfied within the batch.
     symbol_rows.sort(key=lambda r: r["qname"].count("."))
@@ -370,8 +397,15 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
 
 
 def _write_edges_and_entrypoints(
-    session, extractions, file_id_by_path, module_ids, symbol_id_by_qname,
-    table, externals, alloc, sink_registry: SinkRegistry,
+    session,
+    extractions,
+    file_id_by_path,
+    module_ids,
+    symbol_id_by_qname,
+    table,
+    externals,
+    alloc,
+    sink_registry: SinkRegistry,
 ):
     edge_rows: list[dict] = []
     entrypoint_rows: list[dict] = []
@@ -382,23 +416,35 @@ def _write_edges_and_entrypoints(
         for edge in resolver.resolve():
             sink_id = (
                 sink_registry.match(edge.dst_qname, edge.arg_preview)
-                if edge.kind is EdgeKind.CALLS else None
+                if edge.kind is EdgeKind.CALLS
+                else None
             )
             edge_rows.append(
                 {
-                    "id": alloc.take(Edge), "kind": edge.kind,
-                    "src_symbol_id": edge.src_symbol_id, "dst_symbol_id": edge.dst_symbol_id,
-                    "dst_qname": edge.dst_qname, "src_file_id": file_id, "line": edge.line,
-                    "confidence": int(edge.confidence), "arg_preview": edge.arg_preview,
-                    "sink_id": sink_id, "via": edge.via,
+                    "id": alloc.take(Edge),
+                    "kind": edge.kind,
+                    "src_symbol_id": edge.src_symbol_id,
+                    "dst_symbol_id": edge.dst_symbol_id,
+                    "dst_qname": edge.dst_qname,
+                    "src_file_id": file_id,
+                    "line": edge.line,
+                    "confidence": int(edge.confidence),
+                    "arg_preview": edge.arg_preview,
+                    "sink_id": sink_id,
+                    "via": edge.via,
                 }
             )
         for hint in x.entrypoint_hints:
-            symbol_id = symbol_id_by_qname.get(hint.handler_qualified_name or "") or module_ids[path]
+            symbol_id = (
+                symbol_id_by_qname.get(hint.handler_qualified_name or "") or module_ids[path]
+            )
             entrypoint_rows.append(
                 {
-                    "id": alloc.take(Entrypoint), "kind": hint.kind, "framework": hint.framework,
-                    "symbol_id": symbol_id, "route": hint.route,
+                    "id": alloc.take(Entrypoint),
+                    "kind": hint.kind,
+                    "framework": hint.framework,
+                    "symbol_id": symbol_id,
+                    "route": hint.route,
                     "http_method": ",".join(hint.http_methods) or None,
                     "extra": json.dumps(hint.metadata) if hint.metadata else None,
                 }
@@ -410,8 +456,12 @@ def _write_edges_and_entrypoints(
 
 
 def _write_config_entrypoints(
-    session, root, symbol_id_by_qname: dict[str, int], table: SymbolTable,
-    alloc: IdAllocator, incremental: bool,
+    session,
+    root,
+    symbol_id_by_qname: dict[str, int],
+    table: SymbolTable,
+    alloc: IdAllocator,
+    incremental: bool,
 ) -> int:
     """Scan serverless/SAM/Procfile/Dockerfile and bind their handlers to symbols.
 
@@ -425,9 +475,7 @@ def _write_config_entrypoints(
     )
 
     if incremental:
-        session.execute(
-            delete(Entrypoint).where(Entrypoint.framework.in_(CONFIG_FRAMEWORKS))
-        )
+        session.execute(delete(Entrypoint).where(Entrypoint.framework.in_(CONFIG_FRAMEWORKS)))
 
     rows = []
     for hint in scan_config_entrypoints(root):
@@ -436,8 +484,12 @@ def _write_config_entrypoints(
             continue
         rows.append(
             {
-                "id": alloc.take(Entrypoint), "kind": hint.kind, "framework": hint.framework,
-                "symbol_id": symbol_id, "route": hint.route, "http_method": None,
+                "id": alloc.take(Entrypoint),
+                "kind": hint.kind,
+                "framework": hint.framework,
+                "symbol_id": symbol_id,
+                "route": hint.route,
+                "http_method": None,
                 "extra": json.dumps(hint.metadata) if hint.metadata else None,
             }
         )
@@ -457,8 +509,9 @@ def _heal_dangling_edges(session, table: SymbolTable, new_qnames: set[str]) -> N
     for edge_id, dst_qname in dangling:
         target = table.by_fqn.get(dst_qname)
         if target is not None:
-            updates.append({"id": edge_id, "dst_symbol_id": target,
-                            "confidence": int(Confidence.IMPORT)})
+            updates.append(
+                {"id": edge_id, "dst_symbol_id": target, "confidence": int(Confidence.IMPORT)}
+            )
     if updates:
         session.execute(update(Edge), updates)
 
@@ -471,9 +524,7 @@ def _gc_orphan_externals(session) -> None:
     """
     referenced = select(Edge.dst_symbol_id).where(Edge.dst_symbol_id.is_not(None))
     session.execute(
-        delete(Symbol).where(
-            Symbol.kind == SymbolKind.EXTERNAL, Symbol.id.not_in(referenced)
-        )
+        delete(Symbol).where(Symbol.kind == SymbolKind.EXTERNAL, Symbol.id.not_in(referenced))
     )
 
 
@@ -481,16 +532,27 @@ def _write_detections(session, repo, profile: RepoLanguageProfile, frameworks) -
     session.execute(delete(Detection).where(Detection.repo_id == repo.id))
     rows = [
         {
-            "repo_id": repo.id, "category": "language", "name": stat.name, "version": None,
+            "repo_id": repo.id,
+            "category": "language",
+            "name": stat.name,
+            "version": None,
             "confidence": 1.0,
-            "evidence": json.dumps({"files": stat.file_count, "bytes": stat.byte_count,
-                                    "percent": round(stat.percent, 2)}),
+            "evidence": json.dumps(
+                {
+                    "files": stat.file_count,
+                    "bytes": stat.byte_count,
+                    "percent": round(stat.percent, 2),
+                }
+            ),
         }
         for stat in profile.stats()
     ]
     rows.extend(
         {
-            "repo_id": repo.id, "category": "framework", "name": fw.name, "version": None,
+            "repo_id": repo.id,
+            "category": "framework",
+            "name": fw.name,
+            "version": None,
             "confidence": fw.confidence,
             "evidence": json.dumps({"language": fw.language, "signals": list(fw.evidence)}),
         }

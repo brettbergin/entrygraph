@@ -20,9 +20,7 @@ from entrygraph.detect.entrypoints.base import (
 from entrygraph.extract.ir import EntrypointHint, FileExtraction
 from entrygraph.kinds import EntrypointKind, SymbolKind
 
-_LARAVEL_VERBS = frozenset(
-    {"get", "post", "put", "delete", "patch", "any", "match"}
-)
+_LARAVEL_VERBS = frozenset({"get", "post", "put", "delete", "patch", "any", "match"})
 _SYMFONY_ROUTE = re.compile(r"#\[\s*Route\s*\(")
 _WORDPRESS_HOOKS = frozenset({"add_action", "add_filter"})
 
@@ -45,7 +43,8 @@ def _laravel_routes(x: FileExtraction) -> list[EntrypointHint]:
                     kind=EntrypointKind.HTTP_ROUTE,
                     handler_qualified_name=None,  # handler resolved as a call edge
                     route=route if route is not None else "",
-                    http_methods=["*"] if ref.callee_name in ("any", "match")
+                    http_methods=["*"]
+                    if ref.callee_name in ("any", "match")
                     else [ref.callee_name.upper()],
                     framework="laravel",
                     metadata={"registration": ref.arg_preview},
@@ -123,11 +122,19 @@ def _script(x: FileExtraction) -> list[EntrypointHint]:
     ]
 
 
-register(EntrypointRule("php.laravel.route", "php", "laravel",
-                        EntrypointKind.HTTP_ROUTE, _laravel_routes))
-register(EntrypointRule("php.symfony.route", "php", "symfony",
-                        EntrypointKind.HTTP_ROUTE, _symfony_routes))
-register(EntrypointRule("php.wordpress.hook", "php", "wordpress",
-                        EntrypointKind.EVENT_HANDLER, _wordpress_hooks))
-register(EntrypointRule("php.core.script", "php", None,
-                        EntrypointKind.MAIN, _script))
+register(
+    EntrypointRule(
+        "php.laravel.route", "php", "laravel", EntrypointKind.HTTP_ROUTE, _laravel_routes
+    )
+)
+register(
+    EntrypointRule(
+        "php.symfony.route", "php", "symfony", EntrypointKind.HTTP_ROUTE, _symfony_routes
+    )
+)
+register(
+    EntrypointRule(
+        "php.wordpress.hook", "php", "wordpress", EntrypointKind.EVENT_HANDLER, _wordpress_hooks
+    )
+)
+register(EntrypointRule("php.core.script", "php", None, EntrypointKind.MAIN, _script))
