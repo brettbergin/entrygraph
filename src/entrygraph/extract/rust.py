@@ -322,10 +322,17 @@ class RustExtractor:
                 callee_text = callee_name = node_text(fn)
                 receiver = None
             elif fn.type == "scoped_identifier":
+                # A `::`-scoped call (`std::process::Command::new`) is a fully
+                # qualified path, not a method on an unknown-typed value. Leave the
+                # receiver unset so the resolver keeps the whole path
+                # (`rs:std.process.Command.new`) instead of collapsing it to
+                # `rs:*.new`, which no sink pattern matches. Rust `Type::new`
+                # associated functions are METHODs, so an unset receiver can't
+                # fuzzy-bind them by name either.
                 text = _norm(node_text(fn))
                 callee_text = text
                 callee_name = text.rsplit(".", 1)[-1]
-                receiver = text.rsplit(".", 1)[0] if "." in text else None
+                receiver = None
             elif fn.type == "field_expression":
                 field = fn.child_by_field_name("field")
                 value = fn.child_by_field_name("value")
