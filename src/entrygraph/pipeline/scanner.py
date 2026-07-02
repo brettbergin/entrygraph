@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -147,19 +149,36 @@ def index_repository(
 def _pool_context():
     """multiprocessing context for the parse pool.
 
-    Prefer ``fork`` where available (POSIX): unlike the ``spawn`` default on
-    macOS/Windows, fork does not re-import the caller's ``__main__`` module, so
-    ``CodeGraph.index()`` works from any calling context — scripts without an
-    ``if __name__ == "__main__"`` guard, notebooks, web request handlers — rather
-    than raising a bootstrapping RuntimeError and re-running top-level code in
-    every worker. tree-sitter parsers are created lazily inside each worker, so
-    there is no pre-fork C state to corrupt.
+    On Linux, prefer ``fork``: unlike ``spawn``, fork does not re-import the
+    caller's ``__main__`` module, so ``CodeGraph.index()`` works from any calling
+    context — scripts without an ``if __name__ == "__main__"`` guard, notebooks,
+    web request handlers — rather than raising a bootstrapping RuntimeError and
+    re-running top-level code in every worker. tree-sitter parsers are created
+    lazily inside each worker, so there is no pre-fork C state to corrupt.
+
+    macOS is excluded: ``fork`` without ``exec`` is unsafe there because Apple
+    system frameworks (Objective-C runtime, libdispatch) abort the child if they
+    were touched by any thread in the parent (``+[NSNumber initialize] may have
+    been in progress ... when fork() was called``). macOS and Windows use
+    ``spawn``; the CLI entry points are ``__main__``-guarded, and unguarded
+    library callers fall back to sequential extraction in ``_parse_phase``.
     """
     import multiprocessing as mp
 
-    if "fork" in mp.get_all_start_methods():
+    if sys.platform != "darwin" and "fork" in mp.get_all_start_methods():
         return mp.get_context("fork")
-    return mp.get_context()  # spawn (Windows); callers must guard __main__
+    return mp.get_context("spawn")
+
+
+def _extract_sequential(
+    to_index: list[WalkedFile],
+) -> list[tuple[str, FileExtraction, bool]]:
+    results = []
+    for wf in to_index:
+        result = extract_one(wf)
+        if result is not None:
+            results.append(result)
+    return results
 
 
 def _parse_phase(
@@ -169,19 +188,20 @@ def _parse_phase(
         return []
     workers = max_workers if max_workers is not None else (os.cpu_count() or 2)
     if len(to_index) < _PARALLEL_THRESHOLD or workers <= 1:
-        results = []
-        for wf in to_index:
-            result = extract_one(wf)
-            if result is not None:
-                results.append(result)
-        return results
+        return _extract_sequential(to_index)
 
     batches = [to_index[i : i + _BATCH] for i in range(0, len(to_index), _BATCH)]
-    results = []
-    with ProcessPoolExecutor(max_workers=workers, mp_context=_pool_context()) as pool:
-        for batch_result in pool.map(extract_batch, batches):
-            results.extend(batch_result)
-    return results
+    try:
+        results = []
+        with ProcessPoolExecutor(max_workers=workers, mp_context=_pool_context()) as pool:
+            for batch_result in pool.map(extract_batch, batches):
+                results.extend(batch_result)
+        return results
+    except BrokenProcessPool:
+        # A worker pool couldn't start or died (e.g. an unguarded __main__ under
+        # spawn, or a sandbox with no subprocess support). Degrade to correct,
+        # single-threaded extraction rather than crashing the whole index.
+        return _extract_sequential(to_index)
 
 
 def _load_or_create_repo(session: Session, root: Path, incremental: bool) -> Repository:
