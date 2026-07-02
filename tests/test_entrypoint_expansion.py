@@ -128,6 +128,50 @@ def _js_ext(references=(), symbols=(), path="src/app.js"):
     )
 
 
+def _go_ext(references=(), symbols=(), path="main.go"):
+    return FileExtraction(
+        path=path,
+        language="go",
+        module_path="app",
+        parse_ok=True,
+        error_count=0,
+        symbols=list(symbols),
+        references=list(references),
+    )
+
+
+def _go_verb_ref(callee_name, receiver="r"):
+    return RawReference(
+        kind="call",
+        callee_text=f"{receiver}.{callee_name}",
+        callee_name=callee_name,
+        receiver_text=receiver,
+        span=SPAN,
+        caller_qualified_name="app.setup",
+        arg_preview="('/ping', handler)",
+    )
+
+
+def test_chi_titlecase_verb_methods_detected():
+    # chi/fiber use TitleCase r.Get('/x', h); gin uses UPPERCASE r.GET. Both must match.
+    from entrygraph.detect.entrypoints import rules_for
+
+    rules = {r.id: r for r in rules_for("go", {"chi"})}
+    hints = rules["go.chi.route"].match(_go_ext([_go_verb_ref("Get"), _go_verb_ref("Post")]))
+    got = {h.http_methods[0]: h.route for h in hints}
+    assert got == {"GET": "/ping", "POST": "/ping"}
+    assert all(h.framework == "chi" for h in hints)
+
+
+def test_gin_uppercase_verbs_still_detected():
+    from entrygraph.detect.entrypoints import rules_for
+
+    rules = {r.id: r for r in rules_for("go", {"gin"})}
+    hints = rules["go.gin.route"].match(_go_ext([_go_verb_ref("GET"), _go_verb_ref("DELETE")]))
+    got = {h.http_methods[0]: h.route for h in hints}
+    assert got == {"GET": "/ping", "DELETE": "/ping"}
+
+
 def test_koa_route_rule():
     from entrygraph.detect.entrypoints import rules_for
 
