@@ -85,3 +85,33 @@ id = "go.env"
 category = "env_input"
 callee = "go:os.Getenv"
 description = "Environment variable input"
+
+# ---------------- sanitizers ----------------
+
+[[sanitizer]]
+id = "go.sanitize.filepath-clean"
+category = "path_traversal"
+callee = "go:{path/filepath.Clean,path.Clean,path/filepath.Base,path.Base}"
+effect = "reduces"
+description = "Path normalization / basename"
+
+[[sanitizer]]
+id = "go.sanitize.html-escape"
+category = "template_injection"
+callee = "go:{html.EscapeString,template.HTMLEscapeString}"
+effect = "reduces"
+description = "HTML escaping"
+
+[[sanitizer]]
+id = "go.sanitize.url-escape"
+category = "ssrf"
+callee = "go:{url.QueryEscape,url.PathEscape}"
+effect = "reduces"
+description = "URL component escaping"
+
+[[sanitizer]]
+id = "go.sanitize.strconv-sql"
+category = "sql"
+callee = "go:{strconv.Atoi,strconv.ParseInt,strconv.ParseUint,strconv.ParseFloat}"
+effect = "neutralizes"
+description = "Numeric parse — a parsed number cannot carry SQL injection"
