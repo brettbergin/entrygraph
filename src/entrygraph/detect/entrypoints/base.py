@@ -56,6 +56,13 @@ def all_rules() -> list[EntrypointRule]:
 _STRING_ARG = re.compile(r"""\(\s*[rbf]*["']([^"']+)["']""")
 _METHODS_KWARG = re.compile(r"""methods\s*=\s*[\[(]([^\])]*)[\])]""")
 _QUOTED = re.compile(r"""["']([^"']+)["']""")
+_IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+_PARAMS = re.compile(r"\(([^)]*)\)")
+
+# names conventionally carrying user-controlled input across web frameworks
+_TAINTED_NAMES = frozenset(
+    {"request", "req", "params", "event", "body", "payload", "query", "form", "data"}
+)
 
 
 def first_string_arg(decorator_text: str) -> str | None:
@@ -68,3 +75,45 @@ def methods_kwarg(decorator_text: str) -> list[str]:
     if not match:
         return []
     return [m.upper() for m in _QUOTED.findall(match.group(1))]
+
+
+def identifier_args(arg_preview: str | None) -> list[str]:
+    """Bare identifiers appearing as call arguments (best-effort over the preview).
+
+    Skips string/number literals and keyword-argument names before '='.
+    """
+    if not arg_preview:
+        return []
+    names: list[str] = []
+    for part in arg_preview.strip("()").split(","):
+        token = part.strip()
+        if "=" in token:  # keyword arg: take the value side only
+            token = token.split("=", 1)[1].strip()
+        if token and _IDENTIFIER.fullmatch(token):
+            names.append(token)
+    return names
+
+
+def tainted_params(signature: str | None, kind: str) -> list[str]:
+    """Parameters of an entrypoint handler that are likely user-controlled.
+
+    HTTP handlers: every parameter except self/cls (path/query params flow in).
+    Lambda handlers: the `event` parameter. Otherwise: parameters whose names
+    match the conventional tainted-name set.
+    """
+    if not signature:
+        return []
+    match = _PARAMS.search(signature)
+    if not match:
+        return []
+    raw = [p.strip() for p in match.group(1).split(",") if p.strip()]
+    params = []
+    for p in raw:
+        name = p.split(":", 1)[0].split("=", 1)[0].strip().lstrip("*")
+        if name and name not in ("self", "cls"):
+            params.append(name)
+    if kind == "http_route":
+        return params
+    if kind == "lambda_handler":
+        return [p for p in params if p == "event"] or params[:1]
+    return [p for p in params if p in _TAINTED_NAMES]

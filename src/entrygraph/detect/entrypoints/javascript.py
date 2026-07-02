@@ -48,6 +48,28 @@ def _express_routes(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
+def _express_middleware(x: FileExtraction) -> list[EntrypointHint]:
+    """app.use(mw) / router.use('/path', mw) -> middleware registration."""
+    hints = []
+    for ref in x.references:
+        if (
+            ref.kind == "call"
+            and ref.callee_name == "use"
+            and ref.receiver_text in ("app", "router")
+        ):
+            hints.append(
+                EntrypointHint(
+                    rule_id="javascript.express.middleware",
+                    kind=EntrypointKind.MIDDLEWARE,
+                    handler_qualified_name=ref.caller_qualified_name,
+                    name="use",
+                    framework="express",
+                    metadata={"registration": ref.arg_preview} if ref.arg_preview else {},
+                )
+            )
+    return hints
+
+
 def _nest_routes(x: FileExtraction) -> list[EntrypointHint]:
     hints = []
     for symbol in x.symbols:
@@ -94,6 +116,8 @@ _HTTP_METHODS_UPPER = frozenset(m.upper() for m in _HTTP_METHODS)
 
 register(EntrypointRule("javascript.express.route", "javascript", "express",
                         EntrypointKind.HTTP_ROUTE, _express_routes))
+register(EntrypointRule("javascript.express.middleware", "javascript", "express",
+                        EntrypointKind.MIDDLEWARE, _express_middleware))
 register(EntrypointRule("javascript.fastify.route", "javascript", "fastify",
                         EntrypointKind.HTTP_ROUTE, _express_routes))
 register(EntrypointRule("javascript.nestjs.route", "javascript", "nestjs",

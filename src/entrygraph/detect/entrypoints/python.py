@@ -8,8 +8,10 @@ import re
 from entrygraph.detect.entrypoints.base import (
     EntrypointRule,
     first_string_arg,
+    identifier_args,
     methods_kwarg,
     register,
+    tainted_params,
 )
 from entrygraph.extract.ir import EntrypointHint, FileExtraction, RawSymbol
 from entrygraph.kinds import EntrypointKind, SymbolKind
@@ -18,6 +20,9 @@ _FLASK_ROUTE = re.compile(r"^@(\w+)\.route\(")
 _HTTP_VERB = re.compile(r"^@(\w+)\.(get|post|put|delete|patch|head|options)\(")
 _CLICK_CMD = re.compile(r"^@(?:click\.(command|group)|(\w+)\.(command|group))\b")
 _CELERY_TASK = re.compile(r"^@(?:shared_task\b|task\b|(\w+)\.task\b)")
+_MIDDLEWARE_DECORATOR = re.compile(
+    r"^@(\w+)\.(before_request|after_request|before_first_request|errorhandler|middleware|teardown_request)\b"
+)
 _DJANGO_PATH_CALL = frozenset({"path", "re_path", "url"})
 _LAMBDA_NAMES = frozenset({"lambda_handler", "handler"})
 
@@ -25,6 +30,11 @@ _LAMBDA_NAMES = frozenset({"lambda_handler", "handler"})
 def _decorated(x: FileExtraction) -> list[tuple[RawSymbol, str]]:
     return [(s, d) for s in x.symbols for d in s.decorators
             if s.kind in (SymbolKind.FUNCTION, SymbolKind.METHOD)]
+
+
+def _taint_meta(symbol: RawSymbol, kind: str) -> dict:
+    params = tainted_params(symbol.signature, kind)
+    return {"tainted_params": params} if params else {}
 
 
 def _flask_routes(x: FileExtraction) -> list[EntrypointHint]:
@@ -49,6 +59,53 @@ def _flask_routes(x: FileExtraction) -> list[EntrypointHint]:
                     route=route,
                     http_methods=methods,
                     framework="flask",
+                    metadata=_taint_meta(symbol, "http_route"),
+                )
+            )
+    return hints
+
+
+def _flask_add_url_rule(x: FileExtraction) -> list[EntrypointHint]:
+    """Call-based route registration: app.add_url_rule("/x", view_func=handler)."""
+    hints = []
+    for ref in x.references:
+        if ref.kind != "call" or ref.callee_name != "add_url_rule" or not ref.arg_preview:
+            continue
+        route = first_string_arg("(" + ref.arg_preview.lstrip("("))
+        handler = None
+        for name in identifier_args(ref.arg_preview):
+            candidate = f"{x.module_path}.{name}"
+            if any(s.qualified_name == candidate for s in x.symbols):
+                handler = candidate
+                break
+        hints.append(
+            EntrypointHint(
+                rule_id="python.flask.add_url_rule",
+                kind=EntrypointKind.HTTP_ROUTE,
+                handler_qualified_name=handler,
+                route=route if route is not None else "",
+                http_methods=["*"],
+                framework="flask",
+                metadata={"registration": ref.arg_preview},
+            )
+        )
+    return hints
+
+
+def _middleware(x: FileExtraction) -> list[EntrypointHint]:
+    """before_request / after_request / errorhandler / app.middleware wrappers."""
+    hints = []
+    for symbol, decorator in _decorated(x):
+        m = _MIDDLEWARE_DECORATOR.match(decorator)
+        if m:
+            framework = "fastapi" if m.group(2) == "middleware" else "flask"
+            hints.append(
+                EntrypointHint(
+                    rule_id="python.web.middleware",
+                    kind=EntrypointKind.MIDDLEWARE,
+                    handler_qualified_name=symbol.qualified_name,
+                    name=m.group(2),
+                    framework=framework,
                 )
             )
     return hints
@@ -69,6 +126,7 @@ def _fastapi_routes(x: FileExtraction) -> list[EntrypointHint]:
                         route=route,
                         http_methods=[verb.group(2).upper()],
                         framework="fastapi",
+                        metadata=_taint_meta(symbol, "http_route"),
                     )
                 )
     return hints
@@ -144,6 +202,7 @@ def _lambda_handlers(x: FileExtraction) -> list[EntrypointHint]:
                     handler_qualified_name=symbol.qualified_name,
                     name=symbol.name,
                     framework="aws-lambda",
+                    metadata=_taint_meta(symbol, "lambda_handler"),
                 )
             )
     return hints
@@ -164,6 +223,12 @@ def _main_guard(x: FileExtraction) -> list[EntrypointHint]:
 
 register(EntrypointRule("python.flask.route", "python", "flask",
                         EntrypointKind.HTTP_ROUTE, _flask_routes))
+register(EntrypointRule("python.flask.add_url_rule", "python", "flask",
+                        EntrypointKind.HTTP_ROUTE, _flask_add_url_rule))
+register(EntrypointRule("python.flask.middleware", "python", "flask",
+                        EntrypointKind.MIDDLEWARE, _middleware))
+register(EntrypointRule("python.fastapi.middleware", "python", "fastapi",
+                        EntrypointKind.MIDDLEWARE, _middleware))
 register(EntrypointRule("python.fastapi.route", "python", "fastapi",
                         EntrypointKind.HTTP_ROUTE, _fastapi_routes))
 register(EntrypointRule("python.django.urls", "python", "django",

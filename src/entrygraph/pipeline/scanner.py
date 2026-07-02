@@ -108,6 +108,9 @@ def index_repository(
             session, extractions, file_id_by_path, module_ids, symbol_id_by_qname,
             table, externals, alloc, sink_registry,
         )
+        entrypoint_count += _write_config_entrypoints(
+            session, root, symbol_id_by_qname, table, alloc, incremental
+        )
 
         if incremental:
             _heal_dangling_edges(session, table, new_qnames)
@@ -386,6 +389,42 @@ def _write_edges_and_entrypoints(
     bulk_insert(session, Edge, edge_rows)
     bulk_insert(session, Entrypoint, entrypoint_rows)
     return len(edge_rows), len(entrypoint_rows)
+
+
+def _write_config_entrypoints(
+    session, root, symbol_id_by_qname: dict[str, int], table: SymbolTable,
+    alloc: IdAllocator, incremental: bool,
+) -> int:
+    """Scan serverless/SAM/Procfile/Dockerfile and bind their handlers to symbols.
+
+    Config files aren't tracked in the files table, so on incremental runs their
+    entrypoints are fully deleted and re-derived each time.
+    """
+    from entrygraph.detect.entrypoints.configs import (
+        CONFIG_FRAMEWORKS,
+        bind_handler,
+        scan_config_entrypoints,
+    )
+
+    if incremental:
+        session.execute(
+            delete(Entrypoint).where(Entrypoint.framework.in_(CONFIG_FRAMEWORKS))
+        )
+
+    rows = []
+    for hint in scan_config_entrypoints(root):
+        symbol_id = bind_handler(hint.handler_ref, symbol_id_by_qname, table.module_symbol_ids)
+        if symbol_id is None:  # non-nullable FK: skip unbindable handlers
+            continue
+        rows.append(
+            {
+                "id": alloc.take(Entrypoint), "kind": hint.kind, "framework": hint.framework,
+                "symbol_id": symbol_id, "route": hint.route, "http_method": None,
+                "extra": json.dumps(hint.metadata) if hint.metadata else None,
+            }
+        )
+    bulk_insert(session, Entrypoint, rows)
+    return len(rows)
 
 
 def _heal_dangling_edges(session, table: SymbolTable, new_qnames: set[str]) -> None:
