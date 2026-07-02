@@ -4,9 +4,10 @@ Built-in catalogs ship as TOML package data — every ``entrygraph/data/sinks/
 *.toml`` file is loaded (per-language ``<lang>.toml`` plus ``lib_*.toml``
 third-party wrapper summaries) — in the same schema users write in a repo-root
 ``entrygraph.toml``. Patterns are language-prefixed qualified-name globs with
-brace expansion, e.g. ``py:subprocess.{run,call,Popen}``; they are compiled to
-one alternation regex per registry and matched against each call edge's
-canonical callee (dst_qname) at index time, stamping ``edges.sink_id``.
+brace expansion, e.g. ``py:subprocess.{run,call,Popen}``; each is compiled to a
+regex, bucketed by language prefix, and matched against each call edge's
+canonical callee (dst_qname) at index time, stamping ``edges.sink_id``. Bucketing
+means a ``py:`` callee only tests ``py:`` patterns, not the whole catalog.
 
 Sanitizers are matched at query time (not index time) so retuning them never
 requires a re-index: a path passing through a registered sanitizer for the
@@ -74,6 +75,36 @@ def _compile(callee: str) -> re.Pattern:
     return re.compile("|".join(fnmatch.translate(g) for g in expand_braces(callee)))
 
 
+def _prefix_of(callee: str) -> str:
+    """Language prefix of a callee glob/qname (`py:subprocess.run` -> `py`)."""
+    return callee.split(":", 1)[0] if ":" in callee else ""
+
+
+def _bucket(compiled: list) -> dict[str, list]:
+    """Group (regex, pattern) pairs by language prefix, preserving order."""
+    buckets: dict[str, list] = {}
+    for regex, pat in compiled:
+        buckets.setdefault(_prefix_of(pat.callee), []).append((regex, pat))
+    return buckets
+
+
+def _candidates(buckets: dict[str, list], canonical_callee: str) -> list:
+    """Compiled patterns that could match this callee: its language bucket plus
+    any prefix-less (catch-all) patterns, in registration order. A `py:` callee
+    never tests `js:`/`go:`/... patterns, cutting the per-edge scan from all
+    patterns to one language's worth."""
+    prefix = _prefix_of(canonical_callee)
+    specific = buckets.get(prefix, [])
+    if prefix == "":
+        return specific  # the catch-all bucket itself
+    catchall = buckets.get("", [])
+    if not catchall:
+        return specific
+    if not specific:
+        return catchall
+    return [*specific, *catchall]
+
+
 class SinkRegistry:
     def __init__(
         self,
@@ -84,13 +115,13 @@ class SinkRegistry:
         self.sinks = {s.id: s for s in sinks}
         self.sources = {s.id: s for s in sources}
         self.sanitizers = {s.id: s for s in (sanitizers or [])}
-        self._compiled = [(_compile(s.callee), s) for s in sinks]
-        self._compiled_sources = [(_compile(s.callee), s) for s in sources]
-        self._compiled_sanitizers = [(_compile(s.callee), s) for s in (sanitizers or [])]
+        self._sinks_by_prefix = _bucket([(_compile(s.callee), s) for s in sinks])
+        self._sources_by_prefix = _bucket([(_compile(s.callee), s) for s in sources])
+        self._sanitizers_by_prefix = _bucket([(_compile(s.callee), s) for s in (sanitizers or [])])
 
     def match(self, canonical_callee: str, arg_preview: str | None = None) -> str | None:
         """Return the first matching sink id, or None."""
-        for regex, sink in self._compiled:
+        for regex, sink in _candidates(self._sinks_by_prefix, canonical_callee):
             if regex.match(canonical_callee):
                 if sink.require_arg_hint and not (
                     arg_preview and re.search(sink.require_arg_hint, arg_preview)
@@ -105,14 +136,18 @@ class SinkRegistry:
         A call to a source function (e.g. ``flask.request.args.get``, ``os.getenv``)
         marks its calling site as a taint origin. Stamped on edges at index time,
         symmetric to :meth:`match`."""
-        for regex, source in self._compiled_sources:
+        for regex, source in _candidates(self._sources_by_prefix, canonical_callee):
             if regex.match(canonical_callee):
                 return source.id
         return None
 
     def match_sanitizers(self, canonical_callee: str) -> list[SanitizerPattern]:
         """Sanitizers whose pattern matches this callee qname."""
-        return [s for regex, s in self._compiled_sanitizers if regex.match(canonical_callee)]
+        return [
+            s
+            for regex, s in _candidates(self._sanitizers_by_prefix, canonical_callee)
+            if regex.match(canonical_callee)
+        ]
 
     def sanitizers_for_category(self, category: str) -> list[SanitizerPattern]:
         return [s for s in self.sanitizers.values() if s.category == category]
