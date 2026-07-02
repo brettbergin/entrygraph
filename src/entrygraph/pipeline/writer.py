@@ -39,3 +39,34 @@ def bulk_insert(session: Session, model: type[Base], rows: Iterable[dict]) -> in
     for start in range(0, len(rows), _BATCH):
         session.execute(insert(model), rows[start : start + _BATCH])
     return len(rows)
+
+
+class BatchedWriter:
+    """Accumulate rows and flush every ``_BATCH`` so a large graph's rows aren't
+    all materialized in one Python list before writing.
+
+    Only for tables with no intra-table ordering constraint (edges, entrypoints):
+    rows insert as they arrive, so a self-referential FK like Symbol.parent_id
+    could be violated mid-stream. A ``before_flush`` hook lets the caller satisfy a
+    cross-table dependency first (e.g. write newly-created external symbols before
+    the edge rows that reference them)."""
+
+    def __init__(self, session: Session, model: type[Base], before_flush=None) -> None:
+        self.session = session
+        self.model = model
+        self._before_flush = before_flush
+        self._buf: list[dict] = []
+        self.count = 0
+
+    def add(self, row: dict) -> None:
+        self._buf.append(row)
+        if len(self._buf) >= _BATCH:
+            self.flush()
+
+    def flush(self) -> None:
+        if self._buf:
+            if self._before_flush is not None:
+                self._before_flush()
+            self.session.execute(insert(self.model), self._buf)
+            self.count += len(self._buf)
+            self._buf = []

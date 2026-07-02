@@ -32,7 +32,7 @@ from entrygraph.fs.hashing import FileState, diff_files
 from entrygraph.fs.walker import RepoLanguageProfile, WalkedFile, walk_repo
 from entrygraph.kinds import Confidence, EdgeKind, SymbolKind
 from entrygraph.pipeline.worker import extract_batch, extract_one
-from entrygraph.pipeline.writer import IdAllocator, bulk_insert
+from entrygraph.pipeline.writer import BatchedWriter, IdAllocator, bulk_insert
 from entrygraph.resolve.externals import ExternalRegistry
 from entrygraph.resolve.hierarchy import resolve_hierarchy
 from entrygraph.resolve.resolver import FileResolver
@@ -471,8 +471,21 @@ def _write_edges_and_entrypoints(
     alloc,
     sink_registry: SinkRegistry,
 ):
-    edge_rows: list[dict] = []
-    entrypoint_rows: list[dict] = []
+    # Stream edge/entrypoint rows to the DB in batches instead of accumulating the
+    # whole graph's rows in Python lists first — the edge list alone is the largest
+    # allocation on a big repo. Newly-created external symbols are flushed just
+    # before each edge batch so the edge -> symbol FK always resolves at insert.
+    externals_written = 0
+
+    def _flush_new_externals() -> None:
+        nonlocal externals_written
+        pending = externals.new_rows[externals_written:]
+        if pending:
+            bulk_insert(session, Symbol, pending)
+            externals_written = len(externals.new_rows)
+
+    edge_writer = BatchedWriter(session, Edge, before_flush=_flush_new_externals)
+    entrypoint_writer = BatchedWriter(session, Entrypoint)
 
     for path, x, is_package in extractions:
         resolver = FileResolver(
@@ -483,7 +496,7 @@ def _write_edges_and_entrypoints(
             is_call = edge.kind is EdgeKind.CALLS
             sink_id = sink_registry.match(edge.dst_qname, edge.arg_preview) if is_call else None
             source_id = sink_registry.match_source(edge.dst_qname) if is_call else None
-            edge_rows.append(
+            edge_writer.add(
                 {
                     "id": alloc.take(Edge),
                     "kind": edge.kind,
@@ -503,7 +516,7 @@ def _write_edges_and_entrypoints(
             symbol_id = (
                 symbol_id_by_qname.get(hint.handler_qualified_name or "") or module_ids[path]
             )
-            entrypoint_rows.append(
+            entrypoint_writer.add(
                 {
                     "id": alloc.take(Entrypoint),
                     "kind": hint.kind,
@@ -514,10 +527,10 @@ def _write_edges_and_entrypoints(
                     "extra": json.dumps(hint.metadata) if hint.metadata else None,
                 }
             )
-    bulk_insert(session, Symbol, externals.new_rows)
-    bulk_insert(session, Edge, edge_rows)
-    bulk_insert(session, Entrypoint, entrypoint_rows)
-    return len(edge_rows), len(entrypoint_rows)
+    edge_writer.flush()  # before_flush writes any remaining new externals first
+    _flush_new_externals()  # externals with no trailing edge batch (belt-and-suspenders)
+    entrypoint_writer.flush()
+    return edge_writer.count, entrypoint_writer.count
 
 
 def _write_config_entrypoints(
