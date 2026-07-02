@@ -146,6 +146,12 @@ entrygraph paths --source '*' --sink-category command_exec && echo "reachable!"
 - **New languages** — add a `<lang>/{definitions,imports,calls}.scm` query set
   and a shaper implementing the `LanguageExtractor` protocol.
 
+## Releasing
+
+Merging to `main` auto-bumps the patch version (via a git tag) and publishes to
+PyPI through Trusted Publishing — see [RELEASING.md](RELEASING.md). The package
+version is derived from git tags by `hatch-vcs`, so it's never hand-edited.
+
 ## License
 
 MIT

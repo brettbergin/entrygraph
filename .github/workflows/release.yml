@@ -1,0 +1,92 @@
+name: Release
+
+# Every merge/push to main auto-bumps the patch version (via a new git tag) and
+# publishes the built package to PyPI using Trusted Publishing (OIDC — no tokens).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}  # allow a manual release from the Actions tab
+
+# Serialize releases so two quick merges can't race on the tag / version.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Run test suite
+        run: uv run --extra dev pytest -q
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push the new version tag
+      id-token: write   # PyPI Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + all tags so hatch-vcs can resolve the version
+
+      - name: Compute next version
+        id: ver
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --quiet
+          # Idempotency: if this commit is already released, do nothing.
+          if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
+            echo "HEAD is already tagged — nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          latest="$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1)"
+          if [ -z "$latest" ]; then
+            next="0.1.0"                       # first release
+          else
+            v="${latest#v}"
+            IFS=. read -r major minor patch <<< "$v"
+            next="${major}.${minor}.$((patch + 1))"   # bump patch on every merge
+          fi
+          echo "Releasing v${next} (previous: ${latest:-none})"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "version=${next}" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        if: steps.ver.outputs.release == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.ver.outputs.version }}" -m "Release v${{ steps.ver.outputs.version }}"
+          git push origin "v${{ steps.ver.outputs.version }}"
+
+      - uses: astral-sh/setup-uv@v5
+        if: steps.ver.outputs.release == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist + wheel
+        if: steps.ver.outputs.release == 'true'
+        run: uv build   # hatch-vcs reads the tag we just created -> clean X.Y.Z version
+
+      - name: Publish to PyPI
+        if: steps.ver.outputs.release == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No password/token: uses OIDC. Configure a Trusted Publisher on PyPI
+        # (see RELEASING.md) that maps this repo + workflow to the project.
+
+      - name: Create GitHub Release
+        if: steps.ver.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.ver.outputs.version }}" \
+            --title "v${{ steps.ver.outputs.version }}" \
+            --generate-notes \
+            dist/*
