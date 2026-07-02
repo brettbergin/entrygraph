@@ -37,6 +37,28 @@ effect = "neutralizes"
     assert disable == []
 
 
+def test_prefix_bucketing_preserves_match_semantics():
+    reg = SinkRegistry(
+        sinks=[
+            SinkPattern(id="py.a", category="sql", callee="py:*.execute"),
+            SinkPattern(id="py.b", category="sql", callee="py:cursor.execute"),  # shadowed
+            SinkPattern(id="js.a", category="cmd", callee="js:*.exec"),
+            SinkPattern(id="any", category="eval", callee="*.dangerous"),  # prefix-less
+        ],
+        sources=[],
+    )
+    # first-match-wins within a language (py.a before py.b)
+    assert reg.match("py:cursor.execute") == "py.a"
+    # cross-language isolation: a js callee never returns a py sink and vice versa
+    assert reg.match("js:child_process.exec") == "js.a"
+    assert reg.match("py:child_process.exec") is None
+    # a prefix-less (catch-all) pattern still matches any language
+    assert reg.match("py:foo.dangerous") == "any"
+    assert reg.match("js:foo.dangerous") == "any"
+    # no match -> None
+    assert reg.match("go:fmt.Println") is None
+
+
 def test_sanitizer_matching_and_category_lookup():
     reg = SinkRegistry(
         sinks=[SinkPattern(id="s", category="command_exec", callee="py:os.system")],
