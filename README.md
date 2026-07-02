@@ -151,7 +151,9 @@ entrygraph paths --source '*' --sink-category command_exec
   `--source-category http_input` / `env`) — `entrygraph paths --source-category http_input --sink-category sql`. Combine with `--source` to union both.
 - **Precision/recall dial**: by default only high-confidence edges are traversed.
   Widen with `--include-unresolved` (wildcard `py:*.execute` sinks + dynamic
-  calls) or `--include-fuzzy` (speculative class-hierarchy edges).
+  calls), `--include-fuzzy` (speculative class-hierarchy edges), or
+  `--include-callbacks` (function/method values passed as arguments — handler
+  registrations like `http.HandleFunc("/", handler)` or `this::handle`).
 - **Sanitizers**: a registered sanitizer for the sink's category called on a
   path (e.g. `shlex.quote`) *discounts* its risk score — heuristically, since
   there is no dataflow, so it never zeroes the risk or hides the path.

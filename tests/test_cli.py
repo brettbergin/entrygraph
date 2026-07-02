@@ -80,6 +80,30 @@ def test_paths_by_category(db, capsys):
     assert paths and paths[0]["symbols"][-1] == "py:subprocess.run"
 
 
+NETHTTP_APP = Path(__file__).parent / "fixtures" / "go" / "nethttp_app"
+
+
+def test_paths_include_callbacks(tmp_path, capsys):
+    # a handler passed to http.HandleFunc is severed unless callback edges are
+    # traversed; --include-callbacks flips the query from unreachable to reachable.
+    db = str(tmp_path / "go.db")
+    assert main(["index", str(NETHTTP_APP), "--db", db]) == 0
+    args = [
+        "paths",
+        "--db",
+        db,
+        "--source",
+        "_root.main",
+        "--sink-category",
+        "command_exec",
+        "--include-unresolved",
+    ]
+    assert main(args) == 1  # handler severed -> no path
+    capsys.readouterr()
+    assert main([*args, "--include-callbacks"]) == 0  # reachable via the callback edge
+    assert "_root.handler" in capsys.readouterr().out
+
+
 def test_callers(db, capsys):
     assert main(["callers", "--db", db, "app.services.run_report"]) == 0
     assert "app.routes.create_report" in capsys.readouterr().out
