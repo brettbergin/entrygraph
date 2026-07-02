@@ -56,8 +56,12 @@ def test_symbol_exact(graph):
 
 
 def test_iter_symbols(graph):
-    seen = list(graph.iter_symbols(batch_size=5))
-    assert len(seen) == len(graph.symbols())
+    full = graph.symbols()
+    # keyset pagination with a tiny batch must reproduce the full ordered set
+    # exactly, with no gaps or dupes across page boundaries
+    for batch_size in (1, 2, 5):
+        seen = list(graph.iter_symbols(batch_size=batch_size))
+        assert [s.id for s in seen] == [s.id for s in full]
 
 
 def test_files_and_detect(graph):
