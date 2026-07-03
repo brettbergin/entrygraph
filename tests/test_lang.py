@@ -31,6 +31,25 @@ def test_not_extracted_group_is_not_in_extractable():
         assert _EXTENSION_MAP[ext] in EXTRACTABLE
 
 
+def test_common_unsupported_languages_are_recognized():
+    # A repo's dominant language must be recognized (not None) so its files stay in
+    # stats and the files table; pandoc's .hs files used to vanish, making it look
+    # 82% markdown (#49). These have no extractor, so they're recognized-not-extracted.
+    cases = {
+        "src/Text/Pandoc.hs": "haskell",
+        "lib/app.ex": "elixir",
+        "src/core.clj": "clojure",
+        "main.lua": "lua",
+        "analysis.R": "r",  # extension matched case-insensitively
+        "cmd/tool.dart": "dart",
+        "contracts/Token.sol": "solidity",
+        "src/App.vue": "vue",
+    }
+    for path, lang in cases.items():
+        assert detect_language(path) == lang
+        assert lang not in EXTRACTABLE  # recognized for honest stats, no extractor
+
+
 def test_filename_detection():
     assert detect_language("Gemfile") == "ruby"
     assert detect_language("subdir/Rakefile") == "ruby"
