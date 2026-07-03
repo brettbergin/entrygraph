@@ -114,6 +114,16 @@ def test_parse_manifests_skips_benchmark_and_example_manifests(tmp_path: Path):
     assert "react" not in deps.javascript
 
 
+def test_parse_manifests_treats_package_name_as_self_dependency(tmp_path: Path):
+    # A framework's own repo lists it as the package `name`, not a dependency, so it
+    # went undetected (laravel-framework's composer name is laravel/framework) (#38).
+    (tmp_path / "composer.json").write_text('{"name": "laravel/framework", "require": {}}')
+    (tmp_path / "package.json").write_text('{"name": "express", "dependencies": {}}')
+    deps = parse_manifests(tmp_path)
+    assert "laravel/framework" in deps.php
+    assert "express" in deps.javascript
+
+
 def test_parse_manifests_finds_deep_monorepo_manifests(tmp_path: Path):
     # nopcommerce nests .csproj at src/Libraries/<Proj>/<Proj>.csproj (depth 3);
     # a shallow search read 0 C# deps and left detection empty (#38 / F-H30).

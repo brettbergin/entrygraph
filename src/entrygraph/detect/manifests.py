@@ -271,7 +271,27 @@ def parse_manifests(root: str | Path) -> ManifestDeps:
                 except OSError:
                     continue
                 deps = parser(text)
+                # A framework's own repo lists the framework as its package `name`,
+                # not as a dependency (laravel-framework's composer name is
+                # "laravel/framework"), so it went undetected. Treat the self-name as
+                # a dependency so a framework source repo detects itself (#38).
+                self_name = _manifest_self_name(pattern, text)
+                if self_name:
+                    deps.add(self_name)
                 if deps:
                     getattr(result, ecosystem).update(deps)
                     result.sources.append(manifest.relative_to(root).as_posix())
     return result
+
+
+def _manifest_self_name(pattern: str, text: str) -> str | None:
+    """The manifest's own package name, for JSON manifests (package.json /
+    composer.json). Lowercased to match how deps are normalized."""
+    if pattern not in ("package.json", "composer.json"):
+        return None
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    name = data.get("name") if isinstance(data, dict) else None
+    return name.lower() if isinstance(name, str) and name else None
