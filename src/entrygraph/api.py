@@ -331,11 +331,28 @@ class CodeGraph:
                 return PathResults()
             traverser = self._traverser(session, engine, kinds, floor, include_cha)
             raw_paths = traverser.paths(sources, sinks, max_depth=max_depth, max_paths=max_paths)
+            truncated = bool(getattr(raw_paths, "truncated", False))
+            if sink_category is not None:
+                # A category sink is tagged per-EDGE (with arg hints), but traversal
+                # stops at the sink SYMBOL. A path reaching that symbol via an
+                # untagged sibling edge — createHash('sha256') vs the md5 edge that
+                # tagged the shared createHash symbol — is a false positive. Keep a
+                # path only if its terminal edge is a category sink (or its terminal
+                # node is an explicit --sink symbol). This also drops degenerate
+                # length-1 `--source '*'` self-matches, which have no terminal edge.
+                explicit_ids = self._spec_to_ids(session, sink) if sink is not None else set()
+                sink_edges = self._category_sink_edge_ids(session, sink_category)
+                raw_paths = [
+                    p
+                    for p in raw_paths
+                    if p[-1][0] in explicit_ids
+                    or (p[-1][1] is not None and p[-1][1].edge_id in sink_edges)
+                ]
             if not raw_paths:
                 # 0 paths may mean the visit budget was spent before any sink was
                 # reached — propagate the flag so this isn't mistaken for "safe".
                 empty = PathResults()
-                empty.truncated = bool(getattr(raw_paths, "truncated", False))
+                empty.truncated = truncated
                 return empty
             all_ids = {node for path in raw_paths for node, _ in path}
             symbol_map = q.symbols_by_ids(session, all_ids)
@@ -366,7 +383,7 @@ class CodeGraph:
         # Truncating after the risk rank (not during DFS) is what makes the widen
         # flags monotonic — a wider edge set can only add candidates to rank.
         out = PathResults(results[:max_paths])
-        out.truncated = bool(getattr(raw_paths, "truncated", False))
+        out.truncated = truncated
         return out
 
     def reachable(
@@ -521,6 +538,18 @@ class CodeGraph:
                 ).scalars()
                 ids |= set(ep_rows)
         return ids
+
+    def _category_sink_edge_ids(self, session: Session, sink_category: str) -> set[int]:
+        """Edge ids tagged as a sink of `sink_category` — used to require that a
+        path terminates at a sink EDGE, not merely a shared sink symbol."""
+        registry = self._registry(session)
+        sink_ids = registry.ids_for_category(sink_category)
+        if not sink_ids:
+            return set()
+        rows = session.execute(
+            select(models.Edge.id).where(models.Edge.sink_id.in_(sink_ids))
+        ).scalars()
+        return set(rows)
 
     def _sink_ids(self, session: Session, sink, sink_category: str | None) -> set[int]:
         ids = self._spec_to_ids(session, sink) if sink is not None else set()

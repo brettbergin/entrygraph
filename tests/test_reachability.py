@@ -170,3 +170,21 @@ def test_http_route_handler_is_an_http_input_source(tmp_path):
     graph.close()
     chains = [[s.qname for s in p.symbols] for p in paths]
     assert ["app.runReport", "js:child_process.exec"] in chains
+
+
+def test_category_path_requires_a_sink_tagged_terminal_edge(tmp_path):
+    # createHash('md5') is weak_crypto; createHash('sha256') is not. Both call the
+    # same crypto.createHash symbol, so a path must end at the *tagged* edge — the
+    # sha256 call must not be reported as weak_crypto (#34 / F-H15).
+    (tmp_path / "a.js").write_text(
+        'const crypto = require("crypto");\n'
+        'function weak(x) { return crypto.createHash("md5").update(x).digest("hex"); }\n'
+        'function strong(x) { return crypto.createHash("sha256").update(x).digest("hex"); }\n'
+    )
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    paths = graph.paths(source="*", sink_category="weak_crypto")
+    graph.close()
+    chains = [[s.qname for s in p.symbols] for p in paths]
+    assert ["a.weak", "js:crypto.createHash"] in chains  # md5 kept
+    assert all("a.strong" not in c for c in chains)  # sha256 dropped
+    assert all(len(c) >= 2 for c in chains)  # no degenerate single-node paths
