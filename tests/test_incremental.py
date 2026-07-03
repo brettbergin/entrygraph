@@ -215,3 +215,34 @@ def test_parallel_matches_sequential(repo, tmp_path):
         scanner._PARALLEL_THRESHOLD = original
     seq.dispose()
     par.dispose()
+
+
+def test_reindex_shared_package_file_matches_full(tmp_path):
+    # Two files in the same Go package share a module_path and both define
+    # `func init()`. Re-indexing one file must not cascade-delete the other file's
+    # symbols/edges (parent_id and edge.src_symbol_id FKs are ondelete=CASCADE, and
+    # both were bound to the last-written colliding symbol). Regression for #41 F-H11.
+    repo = tmp_path / "gomod"
+    (repo / "middleware").mkdir(parents=True)
+    (repo / "middleware" / "a.go").write_text(
+        'package middleware\nimport "fmt"\nfunc init() { doThing() }\n'
+        'func doThing() { fmt.Println("a") }\n'
+    )
+    terminal = repo / "middleware" / "terminal.go"
+    terminal.write_text(
+        'package middleware\nimport "fmt"\nfunc init() { other() }\n'
+        'func other() { fmt.Println("b") }\n'
+    )
+    engine = make_engine(tmp_path / "inc.db")
+    index_repository(repo, engine)
+
+    terminal.write_text(terminal.read_text() + "\n// touch\n")
+    stats = index_repository(repo, engine, incremental=True)
+    assert stats.files_indexed == 1  # only terminal.go reparsed
+    incremental = _graph_snapshot(engine)
+    engine.dispose()
+
+    assert incremental == _full_reindex_snapshot(repo, tmp_path)
+    # the sibling file's symbols/edges survive the re-index
+    syms = {q for q, _ in incremental[0]}
+    assert {"middleware.doThing", "middleware.other"} <= syms

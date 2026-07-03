@@ -491,13 +491,23 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
                     "is_exported": raw.is_exported,
                 }
             )
+    # file id -> that file's module symbol id, so a top-level symbol is parented to
+    # ITS OWN module. When several files share a package/module_path (every
+    # multi-file Go package), `module_symbol_ids` keeps only the last file's module
+    # id; parenting siblings to it means wiping one file cascade-deletes the others'
+    # symbols (parent_id FK is ondelete=CASCADE). This was the incremental-reindex
+    # data loss in #41 (F-H11).
+    module_id_by_file_id = {file_id_by_path[p]: mid for p, mid in module_ids.items()}
     for row in symbol_rows:
         qname = row["qname"]
         if row["kind"] is not SymbolKind.MODULE and "." in qname:
             parent_q = qname.rsplit(".", 1)[0]
-            row["parent_id"] = symbol_id_by_qname.get(parent_q) or table.module_symbol_ids.get(
-                parent_q
-            )
+            parent = symbol_id_by_qname.get(parent_q)
+            if parent is None:  # parent is the module itself, not a project symbol
+                parent = module_id_by_file_id.get(row["file_id"]) or table.module_symbol_ids.get(
+                    parent_q
+                )
+            row["parent_id"] = parent
     # A row's parent has one fewer qname segment, so inserting shallowest-first
     # guarantees the self-referential parent_id FK is satisfied within the batch.
     symbol_rows.sort(key=lambda r: r["qname"].count("."))
@@ -535,7 +545,13 @@ def _write_edges_and_entrypoints(
 
     for path, x, is_package in extractions:
         resolver = FileResolver(
-            x, module_ids[path], table, externals, is_package, sink_registry=sink_registry
+            x,
+            module_ids[path],
+            table,
+            externals,
+            is_package,
+            sink_registry=sink_registry,
+            local_symbol_ids=handler_ids_by_path.get(path, {}),
         )
         file_id = file_id_by_path[path]
         for edge in resolver.resolve():
