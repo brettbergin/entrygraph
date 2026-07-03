@@ -554,10 +554,17 @@ def _write_edges_and_entrypoints(
             local_symbol_ids=handler_ids_by_path.get(path, {}),
         )
         file_id = file_id_by_path[path]
+        # registration line -> handler symbol, for routes whose handler is passed by
+        # reference (router.get('/x', ctrl.fn)): the resolver emits a callback edge
+        # at the same line, and the entrypoint below binds to it instead of falling
+        # back to the module symbol.
+        callback_handler_by_line: dict[int, int] = {}
         for edge in resolver.resolve():
             is_call = edge.kind is EdgeKind.CALLS
             sink_id = sink_registry.match(edge.dst_qname, edge.arg_preview) if is_call else None
             source_id = sink_registry.match_source(edge.dst_qname) if is_call else None
+            if edge.kind is EdgeKind.PASSED_AS_CALLBACK and edge.dst_symbol_id is not None:
+                callback_handler_by_line.setdefault(edge.line, edge.dst_symbol_id)
             edge_writer.add(
                 {
                     "id": alloc.take(Edge),
@@ -579,10 +586,15 @@ def _write_edges_and_entrypoints(
             handler_q = hint.handler_qualified_name or ""
             # Bind to the handler defined in this file first (so same-package
             # collisions like per-file `func init()` each keep their own row),
-            # then the global map, then the file's module symbol as a last resort.
-            symbol_id = (
-                per_file.get(handler_q) or symbol_id_by_qname.get(handler_q) or module_ids[path]
-            )
+            # then the global map.
+            symbol_id = per_file.get(handler_q) or symbol_id_by_qname.get(handler_q)
+            # Route handler passed by reference (router.get('/x', ctrl.fn)) — the
+            # name isn't a symbol in scope, but the resolver bound the callback at
+            # the registration line. Bind the route to that real handler instead of
+            # the module, so it (not the whole module) is the http_input source.
+            if symbol_id is None and hint.span is not None:
+                symbol_id = callback_handler_by_line.get(hint.span.start_line)
+            symbol_id = symbol_id or module_ids[path]
             entrypoint_writer.add(
                 {
                     "id": alloc.take(Entrypoint),
