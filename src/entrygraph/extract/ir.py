@@ -112,3 +112,10 @@ class FileExtraction:
     # across all files before rules run, so a per-file rule can follow one level of
     # wrapper indirection (#50).
     route_wrappers: set[str] = field(default_factory=set)
+    # `export default <identifier>` — the local name re-exported as the module's
+    # default. Lets the Express mount resolver alias the default export to the router
+    # var routes are registered on (#36).
+    default_export: str | None = None
+    # Express router var -> the path prefix it is mounted under, resolved across
+    # files by the scanner's mount graph and consumed by the express route rule (#36).
+    route_prefixes: dict[str, str] = field(default_factory=dict)

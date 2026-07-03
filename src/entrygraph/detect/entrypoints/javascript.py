@@ -5,7 +5,12 @@ from __future__ import annotations
 
 import re
 
-from entrygraph.detect.entrypoints.base import EntrypointRule, first_string_arg, register
+from entrygraph.detect.entrypoints.base import (
+    EntrypointRule,
+    compose_route,
+    first_string_arg,
+    register,
+)
 from entrygraph.extract.ir import EntrypointHint, FileExtraction
 from entrygraph.kinds import EntrypointKind, SymbolKind
 
@@ -61,6 +66,10 @@ def _router_routes(framework: str):
                 route = first_string_arg("(" + ref.arg_preview.lstrip("("))
                 if route is None or not route.startswith("/"):
                     continue
+                # a router registered on a var mounted under a path prefix (resolved
+                # cross-file by the scanner) inherits that prefix (#36).
+                prefix = x.route_prefixes.get(ref.receiver_text or "", "")
+                full = compose_route(prefix, route) if prefix else route
                 # link a named handler argument (app.post('/x', createReport)); an
                 # inline function falls back to the enclosing scope / module.
                 handler = ref.caller_qualified_name
@@ -72,7 +81,7 @@ def _router_routes(framework: str):
                         rule_id=f"javascript.{framework}.route",
                         kind=EntrypointKind.HTTP_ROUTE,
                         handler_qualified_name=handler,
-                        route=route,
+                        route=full,
                         http_methods=[ref.callee_name.upper()],
                         framework=framework,
                         # registration line, so the scanner can bind a
