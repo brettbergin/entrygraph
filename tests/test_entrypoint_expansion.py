@@ -205,10 +205,19 @@ def test_compose_route_helper():
 def test_spring_class_requestmapping_prefix_composed():
     from entrygraph.detect.entrypoints import rules_for
 
-    cls = _typed(SymbolKind.CLASS, "UserController", "com.ex.UserController",
-                 ["@RestController", '@RequestMapping("/api")'])
-    method = _typed(SymbolKind.METHOD, "get", "com.ex.UserController.get",
-                    ['@GetMapping("/users/{id}")'], parent="com.ex.UserController")
+    cls = _typed(
+        SymbolKind.CLASS,
+        "UserController",
+        "com.ex.UserController",
+        ["@RestController", '@RequestMapping("/api")'],
+    )
+    method = _typed(
+        SymbolKind.METHOD,
+        "get",
+        "com.ex.UserController.get",
+        ['@GetMapping("/users/{id}")'],
+        parent="com.ex.UserController",
+    )
     x = _ext("java", [cls, method], "UserController.java", "com.ex")
     rules = {r.id: r for r in rules_for("java", {"spring-boot"})}
     hints = rules["java.spring.route"].match(x)
@@ -219,8 +228,13 @@ def test_jaxrs_class_path_prefix_composed():
     from entrygraph.detect.entrypoints import rules_for
 
     cls = _typed(SymbolKind.CLASS, "Resource", "com.ex.Resource", ['@Path("/api")'])
-    method = _typed(SymbolKind.METHOD, "list", "com.ex.Resource.list",
-                    ["@GET", '@Path("/items")'], parent="com.ex.Resource")
+    method = _typed(
+        SymbolKind.METHOD,
+        "list",
+        "com.ex.Resource.list",
+        ["@GET", '@Path("/items")'],
+        parent="com.ex.Resource",
+    )
     x = _ext("java", [cls, method], "Resource.java", "com.ex")
     rules = {r.id: r for r in rules_for("java", {"jax-rs"})}
     hints = rules["java.jaxrs"].match(x)
@@ -230,10 +244,19 @@ def test_jaxrs_class_path_prefix_composed():
 def test_aspnet_controller_route_token_composed():
     from entrygraph.detect.entrypoints import rules_for
 
-    cls = _typed(SymbolKind.CLASS, "UsersController", "Api.UsersController",
-                 ["[ApiController]", '[Route("api/[controller]")]'])
-    method = _typed(SymbolKind.METHOD, "Get", "Api.UsersController.Get",
-                    ['[HttpGet("{id}")]'], parent="Api.UsersController")
+    cls = _typed(
+        SymbolKind.CLASS,
+        "UsersController",
+        "Api.UsersController",
+        ["[ApiController]", '[Route("api/[controller]")]'],
+    )
+    method = _typed(
+        SymbolKind.METHOD,
+        "Get",
+        "Api.UsersController.Get",
+        ['[HttpGet("{id}")]'],
+        parent="Api.UsersController",
+    )
     x = _ext("csharp", [cls, method], "UsersController.cs", "Api")
     rules = {r.id: r for r in rules_for("csharp", {"aspnetcore"})}
     hints = rules["csharp.aspnet.controller-route"].match(x)
@@ -256,13 +279,21 @@ def test_mock_patch_decorator_is_not_a_route():
 def test_supertest_client_calls_are_not_routes():
     # request(app).get('/users') is a test *request*, not a route registration.
     client = RawReference(
-        kind="call", callee_text="request(app).get", callee_name="get",
-        receiver_text="request(app)", span=SPAN, caller_qualified_name="tests.t",
+        kind="call",
+        callee_text="request(app).get",
+        callee_name="get",
+        receiver_text="request(app)",
+        span=SPAN,
+        caller_qualified_name="tests.t",
         arg_preview="('/users')",
     )
     real = RawReference(
-        kind="call", callee_text="router.get", callee_name="get",
-        receiver_text="router", span=SPAN, caller_qualified_name="app.h",
+        kind="call",
+        callee_text="router.get",
+        callee_name="get",
+        receiver_text="router",
+        span=SPAN,
+        caller_qualified_name="app.h",
         arg_preview="('/ping', handler)",
     )
     from entrygraph.detect.entrypoints import rules_for

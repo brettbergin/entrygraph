@@ -19,8 +19,20 @@ _RECEIVER_ROOT = re.compile(r"^\s*([A-Za-z_$][\w$]*)")
 # route registrations: supertest/nock/chai/superagent and Node/browser clients.
 # Excludes them so test suites don't flood the route table (ghost 72%, strapi 99%).
 _CLIENT_ROOTS = frozenset(
-    {"nock", "supertest", "request", "superagent", "agent", "chai", "axios", "got",
-     "fetch", "http", "https", "fastify"}  # fastify.inject(...).get is a test call
+    {
+        "nock",
+        "supertest",
+        "request",
+        "superagent",
+        "agent",
+        "chai",
+        "axios",
+        "got",
+        "fetch",
+        "http",
+        "https",
+        "fastify",
+    }  # fastify.inject(...).get is a test call
 )
 
 

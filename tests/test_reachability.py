@@ -123,9 +123,7 @@ def test_widen_flags_are_monotonic(graph):
 
     base = graph.paths(source="*", sink_category="command_exec", max_paths=50)
     for flag in ("include_fuzzy", "include_unresolved", "include_callbacks"):
-        wide = graph.paths(
-            source="*", sink_category="command_exec", max_paths=50, **{flag: True}
-        )
+        wide = graph.paths(source="*", sink_category="command_exec", max_paths=50, **{flag: True})
         assert sig(base) <= sig(wide), f"{flag} dropped base paths"
 
 

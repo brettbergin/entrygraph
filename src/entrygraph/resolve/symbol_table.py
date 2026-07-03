@@ -34,9 +34,7 @@ class SymbolTable:
         if language is not None:
             self.lang[symbol_id] = language
 
-    def add_module(
-        self, module_path: str, symbol_id: int, language: str | None = None
-    ) -> None:
+    def add_module(self, module_path: str, symbol_id: int, language: str | None = None) -> None:
         self.project_modules.add(module_path)
         self.module_symbol_ids[module_path] = symbol_id
         self.add_symbol(

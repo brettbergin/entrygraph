@@ -14,7 +14,9 @@ from entrygraph.kinds import EntrypointKind, SymbolKind
 # gin exports UPPERCASE verbs (r.GET); chi/fiber use TitleCase (r.Get). Accept
 # both so the shared _gin_style matcher recognizes chi/fiber, not just gin.
 _HTTP_VERBS = frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"})
-_GIN_METHODS = _HTTP_VERBS | frozenset(v.title() for v in _HTTP_VERBS) | frozenset({"Any", "Handle"})
+_GIN_METHODS = (
+    _HTTP_VERBS | frozenset(v.title() for v in _HTTP_VERBS) | frozenset({"Any", "Handle"})
+)
 _NETHTTP_REGISTER = frozenset({"HandleFunc", "Handle"})
 
 

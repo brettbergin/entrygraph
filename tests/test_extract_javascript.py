@@ -47,7 +47,10 @@ def test_dotted_filename_stem_is_one_atomic_segment():
 def test_relative_import_of_dotted_file_resolves_to_the_real_module():
     # a sibling import of ./article.service from article.controller must land on
     # the same module the service file was assigned — not an extra `article` hop.
-    src = 'import { getArticles } from "./article.service";\nexport function h() { return getArticles(); }\n'
+    src = (
+        'import { getArticles } from "./article.service";\n'
+        "export function h() { return getArticles(); }\n"
+    )
     x = extract(src, path="src/app/routes/article/article.controller.ts", lang="typescript")
     targets = {imp.alias: imp.module for imp in x.imports}
     # getArticles resolves into app.routes.article.article_service (no triple article)

@@ -27,7 +27,7 @@ from entrygraph.detect import entrypoints as entrypoint_rules
 from entrygraph.detect.frameworks import detect_frameworks
 from entrygraph.detect.manifests import parse_manifests
 from entrygraph.detect.taint import SinkRegistry, registry_for_repo
-from entrygraph.extract.ir import FileExtraction
+from entrygraph.extract.ir import EntrypointHint, FileExtraction
 from entrygraph.fs.hashing import FileState, diff_files
 from entrygraph.fs.walker import RepoLanguageProfile, WalkedFile, walk_repo
 from entrygraph.kinds import Confidence, EdgeKind, SymbolKind
@@ -308,7 +308,9 @@ def _wipe_files(session: Session, repo_id: int, paths: list[str]) -> int:
     return len(file_ids)
 
 
-def _dedup_entrypoint_hints(hints: list, fw_confidence: dict[str, float] | None = None) -> list:
+def _dedup_entrypoint_hints(
+    hints: list[EntrypointHint], fw_confidence: dict[str, float] | None = None
+) -> list[EntrypointHint]:
     """Collapse hints that duplicate another in (kind, handler, route, methods).
 
     Shared-shape router rules (express/fastify/koa/hono; gin/chi/fiber) each fire
@@ -318,14 +320,14 @@ def _dedup_entrypoint_hints(hints: list, fw_confidence: dict[str, float] | None 
     framework wins over a spuriously-detected one), preserving first-seen order.
     """
     conf = fw_confidence or {}
-    best: dict[tuple, object] = {}
+    best: dict[tuple, EntrypointHint] = {}
     order: list[tuple] = []
     for h in hints:
         key = (h.kind, h.handler_qualified_name, h.route, tuple(h.http_methods))
         if key not in best:
             best[key] = h
             order.append(key)
-        elif conf.get(h.framework, 0.0) > conf.get(best[key].framework, 0.0):
+        elif conf.get(h.framework or "", 0.0) > conf.get(best[key].framework or "", 0.0):
             best[key] = h
     return [best[k] for k in order]
 
@@ -563,9 +565,7 @@ def _write_edges_and_entrypoints(
             # collisions like per-file `func init()` each keep their own row),
             # then the global map, then the file's module symbol as a last resort.
             symbol_id = (
-                per_file.get(handler_q)
-                or symbol_id_by_qname.get(handler_q)
-                or module_ids[path]
+                per_file.get(handler_q) or symbol_id_by_qname.get(handler_q) or module_ids[path]
             )
             entrypoint_writer.add(
                 {

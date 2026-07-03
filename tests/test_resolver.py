@@ -365,8 +365,12 @@ def test_fuzzy_resolution_does_not_cross_languages():
     table.add_module("app.rb_mod", 1, "ruby")
     table.add_symbol(20, "front.widget.render", "render", SymbolKind.FUNCTION, "javascript")
     x = FileExtraction(
-        path="app/thing.rb", language="ruby", module_path="app.rb_mod",
-        parse_ok=True, error_count=0, references=[ref("render")],
+        path="app/thing.rb",
+        language="ruby",
+        module_path="app.rb_mod",
+        parse_ok=True,
+        error_count=0,
+        references=[ref("render")],
     )
     externals = ExternalRegistry(iter(range(100, 200)).__next__)
     resolver = FileResolver(x, 1, table, externals)
@@ -382,8 +386,12 @@ def test_fuzzy_resolution_binds_within_same_language():
     table.add_module("app.rb_mod", 1, "ruby")
     table.add_symbol(21, "app.helpers.render", "render", SymbolKind.FUNCTION, "ruby")
     x = FileExtraction(
-        path="app/thing.rb", language="ruby", module_path="app.rb_mod",
-        parse_ok=True, error_count=0, references=[ref("render")],
+        path="app/thing.rb",
+        language="ruby",
+        module_path="app.rb_mod",
+        parse_ok=True,
+        error_count=0,
+        references=[ref("render")],
     )
     externals = ExternalRegistry(iter(range(100, 200)).__next__)
     resolver = FileResolver(x, 1, table, externals)

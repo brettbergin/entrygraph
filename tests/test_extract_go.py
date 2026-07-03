@@ -253,16 +253,18 @@ def test_per_file_main_collisions_bind_to_distinct_symbols(tmp_path):
 
     pkg = tmp_path / "tools"
     pkg.mkdir()
-    (pkg / "a.go").write_text("package main\n\nfunc main() {\n\tprintln(\"a\")\n}\n")
-    (pkg / "b.go").write_text("package main\n\nfunc main() {\n\tprintln(\"b\")\n}\n")
+    (pkg / "a.go").write_text('package main\n\nfunc main() {\n\tprintln("a")\n}\n')
+    (pkg / "b.go").write_text('package main\n\nfunc main() {\n\tprintln("b")\n}\n')
     graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
     with Session(graph._engine) as s:
         main_syms = s.execute(
             select(func.count()).select_from(Symbol).where(Symbol.qname == "tools.main")
         ).scalar_one()
-        rows = s.execute(
-            select(Entrypoint.symbol_id).where(Entrypoint.kind == EntrypointKind.MAIN)
-        ).scalars().all()
+        rows = (
+            s.execute(select(Entrypoint.symbol_id).where(Entrypoint.kind == EntrypointKind.MAIN))
+            .scalars()
+            .all()
+        )
     graph.close()
     assert main_syms == 2
     assert len(rows) == 2  # two distinct main entrypoints
