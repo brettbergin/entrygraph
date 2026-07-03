@@ -36,6 +36,22 @@ _SCOPE_TYPES = frozenset(
 _NAMED_SCOPES = frozenset({"function_declaration", "method_definition", "class_declaration"})
 _SRC_ROOTS = ("src", "lib", "app")
 _EXPORT_PARENTS = frozenset({"export_statement"})
+_JS_EXTS = (".d.ts", ".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx")
+
+
+def _atomic_segment(filename: str) -> str:
+    """A filename -> one module-path segment: strip a JS/TS extension, then map any
+    remaining internal dots to `_`.
+
+    A dotted stem like ``article.service`` must NOT become two dotted segments, or
+    ``.split(".")`` in relative-import resolution mis-counts package depth and
+    duplicates a directory name (``article.article.article.service``) — issue #42.
+    """
+    for ext in _JS_EXTS:
+        if filename.endswith(ext):
+            filename = filename[: -len(ext)]
+            break
+    return filename.replace(".", "_")
 
 
 class JavaScriptExtractor:
@@ -45,11 +61,7 @@ class JavaScriptExtractor:
         parts = repo_relative_path.split("/")
         if parts[0] in _SRC_ROOTS and len(parts) > 1:
             parts = parts[1:]
-        stem = parts[-1]
-        for ext in (".d.ts", ".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx"):
-            if stem.endswith(ext):
-                stem = stem[: -len(ext)]
-                break
+        stem = _atomic_segment(parts[-1])
         is_package = stem in ("index", "mod")
         parts = parts[:-1] if is_package else [*parts[:-1], stem]
         return ".".join(p for p in parts if p) or "_root", is_package
@@ -358,10 +370,7 @@ class JavaScriptExtractor:
             if segment == "..":
                 parts = parts[:-1]
             else:
-                seg = segment
-                for ext in (".ts", ".tsx", ".js", ".jsx"):
-                    if seg.endswith(ext):
-                        seg = seg[: -len(ext)]
+                seg = _atomic_segment(segment)
                 if seg not in ("index", "mod"):
                     parts.append(seg)
         return ".".join(p for p in parts if p) or "_root"
