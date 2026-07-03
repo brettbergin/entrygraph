@@ -116,6 +116,62 @@ def _gin_style(framework: str):
     return matcher
 
 
+def _compose_prefixes(parts: list[str]) -> str:
+    segs = [p.strip("/") for p in parts if p and p.strip("/")]
+    return "/" + "/".join(segs)
+
+
+def _chi_routes(x: FileExtraction) -> list[EntrypointHint]:
+    """chi routes, with `r.Route("/prefix", func(r){...})` sub-router prefixes.
+
+    Route nests its sub-routes in an inline closure, so a verb route whose line
+    falls inside a Route call's span gets that prefix (nested Routes stack). Mount
+    (`r.Mount("/api", subRouter())`) points at a router built in another function,
+    which is out of static reach, so its prefix isn't composed."""
+    scopes: list[tuple[int, int, str]] = []
+    for ref in x.references:
+        if (
+            ref.kind == "call"
+            and ref.callee_name in ("Route", "Mount")
+            and ref.receiver_text is not None
+            and ref.arg_preview
+            and ref.span.end_line > ref.span.start_line  # has an inline closure body
+        ):
+            prefix = first_string_arg("(" + ref.arg_preview.lstrip("("))
+            if prefix and prefix.startswith("/"):
+                scopes.append((ref.span.start_line, ref.span.end_line, prefix))
+    scopes.sort()
+
+    hints = []
+    for ref in x.references:
+        if (
+            ref.kind != "call"
+            or ref.receiver_text is None
+            or ref.callee_name not in _GIN_METHODS
+            or not ref.arg_preview
+        ):
+            continue
+        route = first_string_arg("(" + ref.arg_preview.lstrip("("))
+        if route is None or not route.startswith("/"):
+            continue
+        verb = ref.callee_name.upper()
+        method = verb if verb in _HTTP_VERBS else "*"
+        line = ref.span.start_line
+        prefixes = [p for (s, e, p) in scopes if s < line <= e]
+        hints.append(
+            EntrypointHint(
+                rule_id="go.chi.route",
+                kind=EntrypointKind.HTTP_ROUTE,
+                handler_qualified_name=ref.caller_qualified_name,
+                route=_compose_prefixes([*prefixes, route]),
+                http_methods=[method],
+                framework="chi",
+                metadata={"registration": ref.arg_preview},
+            )
+        )
+    return hints
+
+
 _QUOTED = re.compile(r'"([^"]+)"')
 
 
@@ -185,7 +241,7 @@ register(
     EntrypointRule("go.nethttp.route", "go", "net/http", EntrypointKind.HTTP_ROUTE, _nethttp_routes)
 )
 register(EntrypointRule("go.gin.route", "go", "gin", EntrypointKind.HTTP_ROUTE, _gin_routes))
-register(EntrypointRule("go.chi.route", "go", "chi", EntrypointKind.HTTP_ROUTE, _gin_style("chi")))
+register(EntrypointRule("go.chi.route", "go", "chi", EntrypointKind.HTTP_ROUTE, _chi_routes))
 register(
     EntrypointRule("go.fiber.route", "go", "fiber", EntrypointKind.HTTP_ROUTE, _gin_style("fiber"))
 )
