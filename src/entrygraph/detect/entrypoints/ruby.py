@@ -21,6 +21,13 @@ _SINATRA_VERBS = frozenset({"get", "post", "put", "delete", "patch"})
 _RAILS_VERBS = frozenset({"get", "post", "put", "patch", "delete", "resources", "resource", "root"})
 
 
+def _is_rails_routes_file(path: str) -> bool:
+    """The main `config/routes.rb` plus split route files loaded via `draw(:x)`
+    (`config/routes/api.rb`, `config/routes/admin.rb`, ...). Missing the split
+    files hid most of the route surface on large Rails apps (mastodon/forem)."""
+    return path.endswith("config/routes.rb") or "/config/routes/" in f"/{path}"
+
+
 def _sinatra_routes(x: FileExtraction) -> list[EntrypointHint]:
     hints = []
     for ref in x.references:
@@ -46,7 +53,7 @@ def _sinatra_routes(x: FileExtraction) -> list[EntrypointHint]:
 
 
 def _rails_routes(x: FileExtraction) -> list[EntrypointHint]:
-    if not x.path.endswith("config/routes.rb"):
+    if not _is_rails_routes_file(x.path):
         return []
     hints = []
     for ref in x.references:

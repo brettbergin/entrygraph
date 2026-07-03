@@ -402,3 +402,41 @@ def test_nestjs_decorator_routes_with_controller_prefix():
     hints = {h.http_methods[0]: h.route for h in rules["javascript.nestjs.route"].match(x)}
     assert hints["GET"] == "/users/:id"  # controller prefix + method path
     assert hints["POST"] == "/users"
+
+
+def _ruby_ext(references, path):
+    return FileExtraction(
+        path=path,
+        language="ruby",
+        module_path=path.replace("/", ".").removesuffix(".rb"),
+        parse_ok=True,
+        error_count=0,
+        symbols=[],
+        references=list(references),
+    )
+
+
+def _ruby_route_ref(verb, route):
+    return RawReference(
+        kind="call",
+        callee_text=verb,
+        callee_name=verb,
+        receiver_text=None,
+        span=SPAN,
+        caller_qualified_name=None,
+        arg_preview=f"('{route}', to: 'x#y')",
+    )
+
+
+def test_rails_routes_read_from_split_route_files():
+    # Rails apps split routes into config/routes/*.rb loaded via `draw(:api)`; the
+    # rule must read those, not only the top-level config/routes.rb (#37 / F-H22).
+    from entrygraph.detect.entrypoints import rules_for
+
+    rule = {r.id: r for r in rules_for("ruby", {"rails"})}["ruby.rails.routes"]
+    main = rule.match(_ruby_ext([_ruby_route_ref("get", "/health")], "config/routes.rb"))
+    split = rule.match(_ruby_ext([_ruby_route_ref("post", "/users")], "config/routes/api.rb"))
+    unrelated = rule.match(_ruby_ext([_ruby_route_ref("get", "/x")], "app/models/user.rb"))
+    assert [h.route for h in main] == ["/health"]
+    assert [h.route for h in split] == ["/users"]  # the split file is now read
+    assert unrelated == []  # a non-routes file is still ignored
