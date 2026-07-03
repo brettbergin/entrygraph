@@ -161,7 +161,7 @@ def index_repository(
             _gc_orphan_externals(session)
 
         # ---- detections ----
-        _write_detections(session, repo, profile, frameworks)
+        _write_detections(session, repo, profile, frameworks, incremental=incremental)
 
         repo.file_count = len(walked)
         repo.symbol_count = _count_symbols(session)
@@ -718,8 +718,40 @@ def _gc_orphan_externals(session) -> None:
     )
 
 
-def _write_detections(session, repo, profile: RepoLanguageProfile, frameworks) -> None:
-    session.execute(delete(Detection).where(Detection.repo_id == repo.id))
+def _write_detections(
+    session, repo, profile: RepoLanguageProfile, frameworks, incremental: bool = False
+) -> None:
+    # Languages come from the whole-repo walk every run, so they're always replaced.
+    session.execute(
+        delete(Detection).where(Detection.repo_id == repo.id, Detection.category == "language")
+    )
+    # Framework detection only saw THIS run's extracted files. On an incremental run
+    # a framework whose import evidence lives in an *unchanged* file re-derives at a
+    # lower confidence (manifest-only) or not at all — which used to wipe it or
+    # degrade it (httpie's argparse vanished; photoprism's gin 0.94 -> 0.8) after any
+    # unrelated edit (#38 / F-H12). So merge with the existing rows, keeping the
+    # higher confidence per framework and never dropping one; a --full run rebuilds
+    # from scratch.
+    fresh = {
+        fw.name: (
+            fw.confidence,
+            json.dumps({"language": fw.language, "signals": list(fw.evidence)}),
+        )
+        for fw in frameworks
+    }
+    if incremental:
+        existing = session.execute(
+            select(Detection.name, Detection.confidence, Detection.evidence).where(
+                Detection.repo_id == repo.id, Detection.category == "framework"
+            )
+        ).all()
+        for name, confidence, evidence in existing:
+            prev = fresh.get(name)
+            if prev is None or confidence > prev[0]:  # keep the stronger prior signal
+                fresh[name] = (confidence, evidence)
+    session.execute(
+        delete(Detection).where(Detection.repo_id == repo.id, Detection.category == "framework")
+    )
     rows = [
         {
             "repo_id": repo.id,
@@ -741,12 +773,12 @@ def _write_detections(session, repo, profile: RepoLanguageProfile, frameworks) -
         {
             "repo_id": repo.id,
             "category": "framework",
-            "name": fw.name,
+            "name": name,
             "version": None,
-            "confidence": fw.confidence,
-            "evidence": json.dumps({"language": fw.language, "signals": list(fw.evidence)}),
+            "confidence": confidence,
+            "evidence": evidence,
         }
-        for fw in frameworks
+        for name, (confidence, evidence) in fresh.items()
     )
     if rows:
         bulk_insert(session, Detection, rows)

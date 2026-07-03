@@ -269,3 +269,25 @@ def test_reindex_shared_package_file_matches_full(tmp_path):
     # the sibling file's symbols/edges survive the re-index
     syms = {q for q, _ in incremental[0]}
     assert {"middleware.doThing", "middleware.other"} <= syms
+
+
+def test_unrelated_edit_preserves_framework_detection(repo, tmp_path):
+    # Framework detection ran over only the changed-files batch, so touching an
+    # unrelated file wiped frameworks whose import evidence lived elsewhere
+    # (httpie's argparse, photoprism's gin) (#38 / F-H12).
+    from entrygraph import CodeGraph
+
+    engine = make_engine(tmp_path / "inc.db")
+    index_repository(repo, engine)
+    before = {d.name: round(d.confidence, 3) for d in CodeGraph(engine).detect().frameworks}
+    assert "flask" in before
+
+    # edit db.py, which does NOT import flask (routes.py does)
+    db = repo / "app" / "db.py"
+    db.write_text(db.read_text() + "\n# unrelated change\n")
+    index_repository(repo, engine, incremental=True)
+
+    after = {d.name: round(d.confidence, 3) for d in CodeGraph(engine).detect().frameworks}
+    assert "flask" in after  # not wiped
+    assert after["flask"] == before["flask"]  # confidence not degraded
+    engine.dispose()
