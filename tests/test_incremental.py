@@ -58,6 +58,29 @@ def test_no_change_refresh_is_identical(repo, tmp_path):
     assert before == after
 
 
+def test_modified_file_counts_as_indexed_not_deleted(repo, tmp_path):
+    # A content change to one file must be reported under files_indexed, not
+    # files_deleted (which used to count reparsed files too) (#46).
+    engine = make_engine(tmp_path / "inc.db")
+    index_repository(repo, engine)
+    target = repo / "app" / "routes.py"
+    target.write_text(target.read_text() + "\n# touched\n")
+    stats = index_repository(repo, engine, incremental=True)
+    assert stats.files_indexed == 1
+    assert stats.files_deleted == 0
+    engine.dispose()
+
+
+def test_removed_file_counts_as_deleted(repo, tmp_path):
+    engine = make_engine(tmp_path / "inc.db")
+    index_repository(repo, engine)
+    (repo / "cli.py").unlink()
+    stats = index_repository(repo, engine, incremental=True)
+    assert stats.files_deleted == 1
+    assert stats.files_indexed == 0  # nothing else changed
+    engine.dispose()
+
+
 def test_no_change_refresh_preserves_detection_confidence(repo, tmp_path):
     # zero-change early-exit must NOT rewrite detections; a full re-detect with
     # empty extractions would drop import-based signals (flask 0.94 -> 0.8).

@@ -90,9 +90,11 @@ def index_repository(
             )
 
         if incremental:
-            deleted = _wipe_files(
-                session, repo.id, [*[w.path for w in diff.changed], *diff.deleted_paths]
-            )
+            # Changed files are wiped so they can be re-inserted fresh, but only the
+            # genuinely-removed paths count as "deleted"; a modified file is reported
+            # under files_indexed (it's in diff.to_index), not deleted (#46).
+            _wipe_files(session, repo.id, [*[w.path for w in diff.changed], *diff.deleted_paths])
+            deleted = len(diff.deleted_paths)
         else:
             _wipe_repo_graph(session, repo.id)
             deleted = 0
