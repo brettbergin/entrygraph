@@ -38,7 +38,12 @@ __all__ = ["FileResolver", "ResolvedEdge", "expand_relative"]
 
 _REF_EDGE_KIND = {
     "call": EdgeKind.CALLS,
-    "decorator": EdgeKind.CALLS,
+    # An annotation/attribute/derive application (@Autowired, [HttpPost], #[derive])
+    # is metadata, not an invocation; a Python decorator is technically a call but is
+    # not part of source->sink data flow. Emitting these as CALLS inflated the call
+    # graph (Java/C#/Rust repos: thousands of phantom edges) — keep them as a distinct
+    # DECORATES edge so they stay queryable without polluting reachability (#43).
+    "decorator": EdgeKind.DECORATES,
     "inherit": EdgeKind.INHERITS,
     "implement": EdgeKind.IMPLEMENTS,
     "annotation": EdgeKind.REFERENCES,

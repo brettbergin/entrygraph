@@ -57,6 +57,19 @@ def test_import_based_project_resolution():
     assert call.confidence is Confidence.IMPORT
 
 
+def test_decorator_refs_resolve_to_decorates_not_calls():
+    # An annotation/attribute/derive application (kind="decorator") must not inflate
+    # the call graph; it resolves to a DECORATES edge, never CALLS (#43).
+    table = make_table()
+    resolver, _ = make_resolver(
+        table, [ref("run_report", caller="app.routes.handler", kind="decorator")]
+    )
+    edges = resolver.resolve()
+    assert all(e.kind is not EdgeKind.CALLS for e in edges)
+    decorates = [e for e in edges if e.kind is EdgeKind.DECORATES]
+    assert decorates and decorates[0].dst_symbol_id == 10
+
+
 def test_relative_import_from_package_init_resolves_submodule():
     # `from .sub import thing` in the package's own __init__.py (module_path
     # "app", is_package=True) must resolve to the project module "app.sub".
