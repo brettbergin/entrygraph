@@ -75,6 +75,10 @@ def _router_routes(framework: str):
                         route=route,
                         http_methods=[ref.callee_name.upper()],
                         framework=framework,
+                        # registration line, so the scanner can bind a
+                        # handler-passed-by-reference (router.get('/x', ctrl.fn))
+                        # to the callback edge emitted at the same site.
+                        span=ref.span,
                     )
                 )
         return hints

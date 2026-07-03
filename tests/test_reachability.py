@@ -188,3 +188,34 @@ def test_category_path_requires_a_sink_tagged_terminal_edge(tmp_path):
     assert ["a.weak", "js:crypto.createHash"] in chains  # md5 kept
     assert all("a.strong" not in c for c in chains)  # sha256 dropped
     assert all(len(c) >= 2 for c in chains)  # no degenerate single-node paths
+
+
+def test_route_handler_passed_by_reference_binds_to_the_handler(tmp_path):
+    # router.get('/x', ctrl.fn) binds to the module, but the resolver emits a
+    # callback edge at the registration line — the route must bind to that real
+    # handler so ctrl.fn (not the whole module) is the http_input source, and the
+    # taint path resolves WITHOUT --include-callbacks (#34, call-based binding).
+    src = tmp_path / "src"
+    src.mkdir(parents=True)
+    (tmp_path / "package.json").write_text('{"name":"app","dependencies":{"express":"^4"}}')
+    (src / "controller.js").write_text(
+        'const { exec } = require("child_process");\n'
+        "function getUser(req, res) { exec('lookup ' + req.body.id); }\n"
+        "module.exports = { getUser };\n"
+    )
+    (src / "routes.js").write_text(
+        'const { Router } = require("express");\n'
+        'const ctrl = require("./controller");\n'
+        "const router = Router();\n"
+        'router.get("/user", ctrl.getUser);\n'
+        "module.exports = router;\n"
+    )
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    # the route binds to the handler function, not the routes module
+    eps = graph.entrypoints(kind="http_route")
+    assert eps and eps[0].symbol.qname == "controller.getUser"
+    # and the taint path resolves by default (no include_callbacks)
+    paths = graph.paths(source_category="http_input", sink_category="command_exec")
+    graph.close()
+    chains = [[s.qname for s in p.symbols] for p in paths]
+    assert ["controller.getUser", "js:child_process.exec"] in chains
