@@ -484,7 +484,11 @@ FRAMEWORKS: list[FrameworkSpec] = [
         "wordpress",
         "php",
         (
-            FrameworkSignal("file_presence", "wp-config.php", 0.7),
+            # wp-config.php is git-ignored (only wp-config-sample.php ships), so key
+            # off WP core files that are always present in a checkout instead.
+            FrameworkSignal("file_presence", "*wp-blog-header.php", 0.7),
+            FrameworkSignal("file_presence", "*wp-login.php", 0.5),
+            FrameworkSignal("file_presence", "*wp-includes/functions.php", 0.6),
             FrameworkSignal("symbol_name", "wp_*", 0.2),
         ),
     ),

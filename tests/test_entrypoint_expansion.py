@@ -520,3 +520,48 @@ def test_gorilla_chained_routes_and_methods():
     got = {(tuple(h.http_methods), h.route) for h in rule.match(_go_ext(refs))}
     assert (("GET",), "/users") in got  # HandleFunc route + chained method
     assert (("POST", "PUT"), "/reports") in got  # Path().Methods().Handler() form
+
+
+def _php_ref(callee, arg):
+    return RawReference(
+        kind="call",
+        callee_text=callee,
+        callee_name=callee,
+        receiver_text=None,
+        span=SPAN,
+        caller_qualified_name=None,
+        arg_preview=arg,
+    )
+
+
+def _php_ext(refs, path="wp-includes/rest.php"):
+    return FileExtraction(
+        path=path,
+        language="php",
+        module_path="wp.rest",
+        parse_ok=True,
+        error_count=0,
+        symbols=[],
+        references=list(refs),
+    )
+
+
+def test_wordpress_register_rest_route():
+    from entrygraph.detect.entrypoints import rules_for
+
+    refs = [
+        _php_ref("register_rest_route", "('myplugin/v1', '/authors', array('methods' => 'GET'))"),
+        # variable namespace + WP_REST_Server constant method
+        _php_ref(
+            "register_rest_route",
+            "($this->namespace, '/items', array('methods' => WP_REST_Server::CREATABLE))",
+        ),
+        # both namespace and route dynamic -> not statically resolvable, skipped
+        _php_ref("register_rest_route", "($ns, $route, array('methods' => 'DELETE'))"),
+    ]
+    # framework=None rule runs for any PHP file (WP is often undetected in plugins)
+    rule = {r.id: r for r in rules_for("php", set())}["php.wordpress.rest"]
+    got = {(tuple(h.http_methods), h.route) for h in rule.match(_php_ext(refs))}
+    assert (("GET",), "/myplugin/v1/authors") in got  # namespace + route composed
+    assert (("POST",), "/items") in got  # CREATABLE -> POST; dynamic namespace dropped
+    assert not any(h.route in ("", "/methods") for h in rule.match(_php_ext(refs)))  # no garbage

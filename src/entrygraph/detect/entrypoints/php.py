@@ -24,6 +24,67 @@ _LARAVEL_VERBS = frozenset({"get", "post", "put", "delete", "patch", "any", "mat
 _LARAVEL_RESOURCE = frozenset({"resource", "apiResource"})
 _SYMFONY_ROUTE = re.compile(r"#\[\s*Route\s*\(")
 _WORDPRESS_HOOKS = frozenset({"add_action", "add_filter"})
+# register_rest_route($namespace, $route, ...). Anchor to the first two positional
+# args: arg 1 is the namespace (a literal like 'wp/v2' or a variable such as
+# $this->namespace), arg 2 is the route literal. Requiring arg 2 to be quoted keeps
+# array keys ('methods'/'GET') from being mistaken for the route when arg 1 is a var.
+_WP_REST_NS_ROUTE = re.compile(r"""\(\s*(?:['"]([^'"]+)['"]|[^,'"]+?)\s*,\s*['"]([^'"]+)['"]""")
+# 'methods' => 'GET' / 'GET,POST'  or  'methods' => WP_REST_Server::READABLE
+_WP_METHODS_KV = re.compile(
+    r"""['"]methods['"]\s*=>\s*(?:['"]([A-Za-z,\s|]+)['"]|WP_REST_Server::(\w+))"""
+)
+_WP_REST_CONST = {
+    "READABLE": "GET",
+    "CREATABLE": "POST",
+    "EDITABLE": "PUT",
+    "DELETABLE": "DELETE",
+    "ALLMETHODS": "*",
+}
+
+
+def _wp_rest_methods(arg_preview: str) -> list[str]:
+    m = _WP_METHODS_KV.search(arg_preview)
+    if not m:
+        return ["*"]  # WP defaults to all methods when 'methods' is omitted
+    if m.group(1):  # a 'GET' / 'GET, POST' string
+        return [v.strip().upper() for v in re.split(r"[,|]", m.group(1)) if v.strip()]
+    return [_WP_REST_CONST.get(m.group(2), "*")]  # a WP_REST_Server:: constant
+
+
+def _wordpress_rest_routes(x: FileExtraction) -> list[EntrypointHint]:
+    """WP REST API: register_rest_route($namespace, $route, ['methods' => ...]).
+
+    Not framework-gated: the function is unambiguously WordPress, and WP is often
+    undetected (plugins ship no core files), which otherwise hid the whole REST
+    surface (wordpress core: 0/112 routes)."""
+    hints = []
+    for ref in x.references:
+        if (
+            ref.kind != "call"
+            or ref.receiver_text is not None
+            or ref.callee_name != "register_rest_route"
+            or not ref.arg_preview
+        ):
+            continue
+        m = _WP_REST_NS_ROUTE.match(ref.arg_preview)
+        if m is None:  # a dynamic route literal we can't read — skip
+            continue
+        namespace, route = m.group(1), m.group(2)  # namespace None if it's a variable
+        parts = [p.strip("/") for p in (namespace, route) if p and p.strip("/")]
+        full = "/" + "/".join(parts)
+        for method in _wp_rest_methods(ref.arg_preview):
+            hints.append(
+                EntrypointHint(
+                    rule_id="php.wordpress.rest",
+                    kind=EntrypointKind.HTTP_ROUTE,
+                    handler_qualified_name=None,  # callback resolved as a call edge
+                    route=full,
+                    http_methods=[method],
+                    framework="wordpress",
+                    metadata={"registration": ref.arg_preview},
+                )
+            )
+    return hints
 
 
 def _resource_param(name: str) -> str:
@@ -181,6 +242,13 @@ register(
 register(
     EntrypointRule(
         "php.wordpress.hook", "php", "wordpress", EntrypointKind.EVENT_HANDLER, _wordpress_hooks
+    )
+)
+# framework=None: register_rest_route is unambiguously WP but plugins ship no core
+# files, so WP is often undetected — run it for any PHP file rather than gate it.
+register(
+    EntrypointRule(
+        "php.wordpress.rest", "php", None, EntrypointKind.HTTP_ROUTE, _wordpress_rest_routes
     )
 )
 register(EntrypointRule("php.core.script", "php", None, EntrypointKind.MAIN, _script))
