@@ -206,3 +206,22 @@ def test_fiber_group_prefix_end_to_end():
     x = GoExtractor().extract(parse("go", src), ctx)
     got = {(h.http_methods[0], h.route) for h in _fiber_rule().match(x)}
     assert got == {("GET", "/api"), ("POST", "/api/auth/login")}
+
+
+def test_go_route_rules_skip_test_files():
+    # *_test.go registers routes only to exercise handlers (chi corpus: 152/204
+    # routes came from _test.go). All Go HTTP-route rules must skip them (#33).
+    refs = [_call("Get", "r", '("/users", h)')]
+    assert _chi_rule().match(_go_ext(refs, path="middleware/compress_test.go")) == []
+    assert _gin_rule().match(_go_ext(refs, path="api/routes_test.go")) == []
+    assert _fiber_rule().match(_go_ext(refs, path="api/routes_test.go")) == []
+    # sanity: the same refs in a non-test file still produce a route
+    assert _chi_rule().match(_go_ext(refs, path="middleware/compress.go"))
+
+
+def test_go_nethttp_and_grpc_skip_test_files():
+    nethttp = {r.id: r for r in rules_for("go", {"net/http"})}["go.nethttp.route"]
+    refs = [_call("HandleFunc", "http", '("/x", h)')]
+    assert nethttp.match(_go_ext(refs, path="server_test.go")) == []
+    grpc = [_call("RegisterPusherServer", "pb", "(s, impl)")]
+    assert _grpc_rule().match(_go_ext(grpc, path="server_test.go")) == []
