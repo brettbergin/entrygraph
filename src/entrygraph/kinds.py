@@ -30,6 +30,7 @@ class EdgeKind(enum.Enum):
     IMPLEMENTS = "implements"
     REFERENCES = "references"
     PASSED_AS_CALLBACK = "callback"  # function name handed to another call as an argument
+    DECORATES = "decorates"  # annotation / attribute / derive-macro application (not a call)
 
 
 class EntrypointKind(enum.Enum):
