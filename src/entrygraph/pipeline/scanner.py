@@ -117,7 +117,9 @@ def index_repository(
         # ---- framework detection + entrypoint rules ----
         frameworks, detected_names = _detect_frameworks(manifests, extractions, walked, profile)
         fw_confidence = {fw.name: fw.confidence for fw in frameworks}
+        route_wrappers = _collect_route_wrappers(extractions)
         for _path, x, _pkg in extractions:
+            x.route_wrappers = route_wrappers
             for rule in entrypoint_rules.rules_for(x.language, detected_names):
                 x.entrypoint_hints.extend(rule.match(x))
             # express/fastify/koa/hono (and gin/chi/fiber) share a registration
@@ -414,6 +416,32 @@ def _write_files(
         )
     bulk_insert(session, File, new_rows)
     return file_id_by_path
+
+
+_DJANGO_REGISTRARS = frozenset({"path", "re_path", "url"})
+
+
+def _collect_route_wrappers(extractions) -> set[str]:
+    """Names of project functions that forward to a native Django route registrar.
+
+    A function whose body makes a bare `path(...)` / `re_path(...)` / `url(...)`
+    call is a thin routing wrapper (Zulip's `rest_path` forwards to `path`), so
+    calls to it in a urls.py are route registrations. Module-level registrar calls
+    (the urlpatterns themselves) have no enclosing function and are excluded (#50).
+    """
+    wrappers: set[str] = set()
+    for _p, x, _pkg in extractions:
+        if x.language != "python":
+            continue
+        for ref in x.references:
+            if (
+                ref.kind == "call"
+                and ref.receiver_text is None
+                and ref.callee_name in _DJANGO_REGISTRARS
+                and ref.caller_qualified_name  # inside a def, not module-level urlpatterns
+            ):
+                wrappers.add(ref.caller_qualified_name.rsplit(".", 1)[-1])
+    return wrappers
 
 
 def _detect_frameworks(manifests, extractions, walked, profile: RepoLanguageProfile):
