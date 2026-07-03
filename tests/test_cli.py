@@ -62,6 +62,20 @@ def test_paths_exit_codes(db, capsys):
     assert rc == 1
 
 
+def test_paths_requires_a_sink(db, capsys):
+    # A query with a source but no sink would silently print "no paths found",
+    # which reads like a clean result — it must error instead.
+    rc = main(["paths", "--db", db, "--source", "*"])
+    assert rc == 2
+    assert "provide --sink" in capsys.readouterr().err
+
+
+def test_paths_requires_a_source(db, capsys):
+    rc = main(["paths", "--db", db, "--sink-category", "command_exec"])
+    assert rc == 2
+    assert "provide --source" in capsys.readouterr().err
+
+
 def test_paths_by_category(db, capsys):
     rc = main(
         [

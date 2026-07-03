@@ -264,6 +264,11 @@ def _path_tree(index: int, path) -> Tree:
 def cmd_paths(args) -> int:
     if not args.source and not args.source_category:
         raise EntrygraphError("provide --source and/or --source-category")
+    # A missing sink would leave the sink set empty and print "no paths found",
+    # which reads like a clean result — require an explicit sink so an incomplete
+    # query can't be mistaken for "no reachable sinks".
+    if not args.sink and not args.sink_category:
+        raise EntrygraphError("provide --sink and/or --sink-category")
     with _open(args) as graph:
         paths = graph.paths(
             source=args.source,
