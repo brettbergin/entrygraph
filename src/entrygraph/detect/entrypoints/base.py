@@ -74,6 +74,17 @@ def first_string_arg(decorator_text: str) -> str | None:
     return match.group(1) if match else None
 
 
+def compose_route(prefix: str | None, path: str | None) -> str:
+    """Join a class/group-level route prefix with a method-level path.
+
+    Either side may be None/empty or carry stray leading/trailing slashes. The
+    result is a single slash-prefixed route ("/" when both are empty), matching
+    the NestJS rule so composed routes read consistently across frameworks.
+    """
+    parts = [seg.strip("/") for seg in (prefix, path) if seg and seg.strip("/")]
+    return "/" + "/".join(parts)
+
+
 def methods_kwarg(decorator_text: str) -> list[str]:
     match = _METHODS_KWARG.search(decorator_text)
     if not match:

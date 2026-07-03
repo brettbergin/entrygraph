@@ -172,6 +172,75 @@ def test_gin_uppercase_verbs_still_detected():
     assert got == {"GET": "/ping", "DELETE": "/ping"}
 
 
+def _typed(kind, name, qname, decorators, parent=None, bases=()):
+    s = RawSymbol(kind=kind, name=name, qualified_name=qname, span=SPAN)
+    s.decorators = list(decorators)
+    s.parent_qualified_name = parent
+    s.bases = list(bases)
+    return s
+
+
+def _ext(language, symbols, path, module):
+    return FileExtraction(
+        path=path,
+        language=language,
+        module_path=module,
+        parse_ok=True,
+        error_count=0,
+        symbols=list(symbols),
+        references=[],
+    )
+
+
+def test_compose_route_helper():
+    from entrygraph.detect.entrypoints.base import compose_route
+
+    assert compose_route("/api", "/users/{id}") == "/api/users/{id}"
+    assert compose_route("api/", "users") == "/api/users"
+    assert compose_route("/api", None) == "/api"  # class path with no method path
+    assert compose_route(None, "/x") == "/x"
+    assert compose_route(None, None) == "/"
+
+
+def test_spring_class_requestmapping_prefix_composed():
+    from entrygraph.detect.entrypoints import rules_for
+
+    cls = _typed(SymbolKind.CLASS, "UserController", "com.ex.UserController",
+                 ["@RestController", '@RequestMapping("/api")'])
+    method = _typed(SymbolKind.METHOD, "get", "com.ex.UserController.get",
+                    ['@GetMapping("/users/{id}")'], parent="com.ex.UserController")
+    x = _ext("java", [cls, method], "UserController.java", "com.ex")
+    rules = {r.id: r for r in rules_for("java", {"spring-boot"})}
+    hints = rules["java.spring.route"].match(x)
+    assert hints and hints[0].route == "/api/users/{id}" and hints[0].http_methods == ["GET"]
+
+
+def test_jaxrs_class_path_prefix_composed():
+    from entrygraph.detect.entrypoints import rules_for
+
+    cls = _typed(SymbolKind.CLASS, "Resource", "com.ex.Resource", ['@Path("/api")'])
+    method = _typed(SymbolKind.METHOD, "list", "com.ex.Resource.list",
+                    ["@GET", '@Path("/items")'], parent="com.ex.Resource")
+    x = _ext("java", [cls, method], "Resource.java", "com.ex")
+    rules = {r.id: r for r in rules_for("java", {"jax-rs"})}
+    hints = rules["java.jaxrs"].match(x)
+    assert hints and hints[0].route == "/api/items" and hints[0].http_methods == ["GET"]
+
+
+def test_aspnet_controller_route_token_composed():
+    from entrygraph.detect.entrypoints import rules_for
+
+    cls = _typed(SymbolKind.CLASS, "UsersController", "Api.UsersController",
+                 ["[ApiController]", '[Route("api/[controller]")]'])
+    method = _typed(SymbolKind.METHOD, "Get", "Api.UsersController.Get",
+                    ['[HttpGet("{id}")]'], parent="Api.UsersController")
+    x = _ext("csharp", [cls, method], "UsersController.cs", "Api")
+    rules = {r.id: r for r in rules_for("csharp", {"aspnetcore"})}
+    hints = rules["csharp.aspnet.controller-route"].match(x)
+    # [controller] token expands to the class name minus "Controller" (case preserved)
+    assert hints and hints[0].route == "/api/Users/{id}" and hints[0].http_methods == ["GET"]
+
+
 def test_koa_route_rule():
     from entrygraph.detect.entrypoints import rules_for
 
