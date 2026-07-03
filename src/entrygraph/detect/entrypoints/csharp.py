@@ -25,6 +25,9 @@ from entrygraph.kinds import EntrypointKind, SymbolKind
 _HTTP_ATTR = re.compile(r"^\[Http(Get|Post|Put|Delete|Patch|Head|Options)\b")
 _ROUTE_ATTR = re.compile(r"^\[Route\b")
 _CONTROLLER_ATTR = re.compile(r"^\[(ApiController|Controller)\b")
+_APICONTROLLER_ATTR = re.compile(r"^\[ApiController\b")
+_AREA_ATTR = re.compile(r"^\[Area\b")
+_NONACTION_ATTR = re.compile(r"^\[NonAction\b")
 
 _MINIMAL_MAP = {
     "MapGet": "GET",
@@ -64,45 +67,93 @@ def _class_route_prefix(t: RawSymbol) -> str:
     return prefix.replace("[controller]", _controller_token(t.qualified_name))
 
 
+def _is_conventional_controller(t: RawSymbol) -> bool:
+    """A classic MVC controller reached by convention (`{controller}/{action}`),
+    not attribute routing. `[ApiController]` mandates attribute routing, and a
+    class-level `[Route]` opts the whole controller into attribute routing, so
+    neither can be convention-routed."""
+    return not any(_APICONTROLLER_ATTR.match(d) or _ROUTE_ATTR.match(d) for d in t.decorators)
+
+
+def _is_action_method(m: RawSymbol, ctor_name: str) -> bool:
+    """A public instance method that MVC exposes as a convention-routed action.
+
+    Excludes constructors, static/override members (framework overrides like
+    `OnActionExecuting`), `[NonAction]`, and anything already carrying an
+    `[Http*]`/`[Route]` attribute (handled by the attribute-routing branches)."""
+    if "public" not in m.modifiers or "static" in m.modifiers or "override" in m.modifiers:
+        return False
+    if m.name == ctor_name:
+        return False
+    return not any(
+        _NONACTION_ATTR.match(d) or _HTTP_ATTR.match(d) or _ROUTE_ATTR.match(d)
+        for d in m.decorators
+    )
+
+
+def _conventional_route(t: RawSymbol, action: str) -> str:
+    """`[Area("Admin")]` + FooController + Bar -> /Admin/Foo/Bar."""
+    area_dec = next((d for d in t.decorators if _AREA_ATTR.match(d)), None)
+    area = (first_string_arg(area_dec) if area_dec else None) or ""
+    parts = [area, _controller_token(t.qualified_name), action]
+    return "/" + "/".join(p.strip("/") for p in parts if p and p.strip("/"))
+
+
 def _aspnet_controller_routes(x: FileExtraction) -> list[EntrypointHint]:
     controller_syms = [t for t in _type_symbols(x) if _is_controller(t)]
     controllers = {t.qualified_name for t in controller_syms}
     if not controllers:
         return []
     prefixes = {t.qualified_name: _class_route_prefix(t) for t in controller_syms}
+    # controllers reached by convention -> their symbol, for building /controller/action
+    conventional = {t.qualified_name: t for t in controller_syms if _is_conventional_controller(t)}
     hints: list[EntrypointHint] = []
     for method in _methods(x):
-        if method.parent_qualified_name not in controllers:
+        parent = method.parent_qualified_name or ""
+        if parent not in controllers:
             continue
-        prefix = prefixes.get(method.parent_qualified_name or "", "")
-        for decorator in method.decorators:
-            m = _HTTP_ATTR.match(decorator)
-            if m:
-                hints.append(
-                    EntrypointHint(
-                        rule_id="csharp.aspnet.controller-route",
-                        kind=EntrypointKind.HTTP_ROUTE,
-                        handler_qualified_name=method.qualified_name,
-                        route=compose_route(prefix, first_string_arg(decorator)),
-                        http_methods=[m.group(1).upper()],
-                        framework="aspnetcore",
-                    )
+        prefix = prefixes.get(parent, "")
+        verb_match = next((m for d in method.decorators if (m := _HTTP_ATTR.match(d))), None)
+        if verb_match is not None:
+            hints.append(
+                EntrypointHint(
+                    rule_id="csharp.aspnet.controller-route",
+                    kind=EntrypointKind.HTTP_ROUTE,
+                    handler_qualified_name=method.qualified_name,
+                    route=compose_route(prefix, first_string_arg(verb_match.string)),
+                    http_methods=[verb_match.group(1).upper()],
+                    framework="aspnetcore",
                 )
-                break
-        else:
-            # No Http* verb attribute; a bare [Route("...")] still exposes it.
-            route_dec = next((d for d in method.decorators if _ROUTE_ATTR.match(d)), None)
-            if route_dec is not None:
-                hints.append(
-                    EntrypointHint(
-                        rule_id="csharp.aspnet.controller-route",
-                        kind=EntrypointKind.HTTP_ROUTE,
-                        handler_qualified_name=method.qualified_name,
-                        route=compose_route(prefix, first_string_arg(route_dec)),
-                        http_methods=["*"],
-                        framework="aspnetcore",
-                    )
+            )
+            continue
+        # No Http* verb attribute; a bare [Route("...")] still exposes it.
+        route_dec = next((d for d in method.decorators if _ROUTE_ATTR.match(d)), None)
+        if route_dec is not None:
+            hints.append(
+                EntrypointHint(
+                    rule_id="csharp.aspnet.controller-route",
+                    kind=EntrypointKind.HTTP_ROUTE,
+                    handler_qualified_name=method.qualified_name,
+                    route=compose_route(prefix, first_string_arg(route_dec)),
+                    http_methods=["*"],
+                    framework="aspnetcore",
                 )
+            )
+            continue
+        # No attribute at all: a convention-routed MVC action (/controller/action),
+        # reachable via GET. Only for non-attribute controllers (#37).
+        controller = conventional.get(parent)
+        if controller is not None and _is_action_method(method, controller.name):
+            hints.append(
+                EntrypointHint(
+                    rule_id="csharp.aspnet.mvc-conventional",
+                    kind=EntrypointKind.HTTP_ROUTE,
+                    handler_qualified_name=method.qualified_name,
+                    route=_conventional_route(controller, method.name),
+                    http_methods=["GET"],
+                    framework="aspnetcore",
+                )
+            )
     return hints
 
 
