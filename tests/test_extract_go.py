@@ -239,3 +239,31 @@ def test_index_gin_app_reachability(tmp_engine):
 
     by_category = graph.paths(source="_root.reportHandler", sink_category="command_exec")
     assert by_category, "expected a command_exec-category path from reportHandler"
+
+
+def test_per_file_main_collisions_bind_to_distinct_symbols(tmp_path):
+    # Two files in the same package each define `func main()`, so both symbols get
+    # qname `tools.main`. Each main entrypoint must bind to its OWN file's symbol,
+    # not collapse onto whichever was written last (regression: F-H2 / #41).
+    from sqlalchemy import func, select
+    from sqlalchemy.orm import Session
+
+    from entrygraph.db.models import Entrypoint, Symbol
+    from entrygraph.kinds import EntrypointKind
+
+    pkg = tmp_path / "tools"
+    pkg.mkdir()
+    (pkg / "a.go").write_text("package main\n\nfunc main() {\n\tprintln(\"a\")\n}\n")
+    (pkg / "b.go").write_text("package main\n\nfunc main() {\n\tprintln(\"b\")\n}\n")
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    with Session(graph._engine) as s:
+        main_syms = s.execute(
+            select(func.count()).select_from(Symbol).where(Symbol.qname == "tools.main")
+        ).scalar_one()
+        rows = s.execute(
+            select(Entrypoint.symbol_id).where(Entrypoint.kind == EntrypointKind.MAIN)
+        ).scalars().all()
+    graph.close()
+    assert main_syms == 2
+    assert len(rows) == 2  # two distinct main entrypoints
+    assert len(set(rows)) == 2  # bound to two distinct symbols, not collapsed

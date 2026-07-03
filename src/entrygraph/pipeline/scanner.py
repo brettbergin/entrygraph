@@ -126,7 +126,7 @@ def index_repository(
             x.entrypoint_hints = _dedup_entrypoint_hints(x.entrypoint_hints, fw_confidence)
 
         # ---- symbols ----
-        symbol_id_by_qname, module_ids = _write_symbols(
+        symbol_id_by_qname, module_ids, handler_ids_by_path = _write_symbols(
             session, extractions, file_id_by_path, alloc, table
         )
 
@@ -144,6 +144,7 @@ def index_repository(
             file_id_by_path,
             module_ids,
             symbol_id_by_qname,
+            handler_ids_by_path,
             table,
             externals,
             alloc,
@@ -457,10 +458,18 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
         )
 
     symbol_id_by_qname: dict[str, int] = {}
+    # Per-file qname -> id, so an entrypoint binds to the definition in ITS OWN
+    # file rather than whichever same-qname symbol happened to be written last.
+    # Without this, N same-package `func init()` / overloads collapse in the
+    # global map and all their entrypoints bind to one symbol (duplicate rows,
+    # the rest of the real definitions unrepresented).
+    handler_ids_by_path: dict[str, dict[str, int]] = {}
     for path, x, _pkg in extractions:
+        per_file = handler_ids_by_path.setdefault(path, {})
         for raw in x.symbols:
             symbol_id = alloc.take(Symbol)
             symbol_id_by_qname[raw.qualified_name] = symbol_id
+            per_file[raw.qualified_name] = symbol_id
             table.add_symbol(symbol_id, raw.qualified_name, raw.name, raw.kind, x.language)
             if raw.kind is SymbolKind.CLASS and raw.bases:
                 table.class_bases[raw.qualified_name] = raw.bases
@@ -491,7 +500,7 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
     # guarantees the self-referential parent_id FK is satisfied within the batch.
     symbol_rows.sort(key=lambda r: r["qname"].count("."))
     bulk_insert(session, Symbol, symbol_rows)
-    return symbol_id_by_qname, module_ids
+    return symbol_id_by_qname, module_ids, handler_ids_by_path
 
 
 def _write_edges_and_entrypoints(
@@ -500,6 +509,7 @@ def _write_edges_and_entrypoints(
     file_id_by_path,
     module_ids,
     symbol_id_by_qname,
+    handler_ids_by_path,
     table,
     externals,
     alloc,
@@ -546,9 +556,16 @@ def _write_edges_and_entrypoints(
                     "via": edge.via,
                 }
             )
+        per_file = handler_ids_by_path.get(path, {})
         for hint in x.entrypoint_hints:
+            handler_q = hint.handler_qualified_name or ""
+            # Bind to the handler defined in this file first (so same-package
+            # collisions like per-file `func init()` each keep their own row),
+            # then the global map, then the file's module symbol as a last resort.
             symbol_id = (
-                symbol_id_by_qname.get(hint.handler_qualified_name or "") or module_ids[path]
+                per_file.get(handler_q)
+                or symbol_id_by_qname.get(handler_q)
+                or module_ids[path]
             )
             entrypoint_writer.add(
                 {
