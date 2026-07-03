@@ -488,3 +488,35 @@ def test_laravel_apiresource_rule_emits_rest_routes():
     got = {(h.http_methods[0], h.route) for h in rule.match(x)}
     assert ("GET", "/articles") in got and ("DELETE", "/articles/{article}") in got
     assert ("GET", "/articles/create") not in got  # apiResource omits forms
+
+
+def _go_call_ref(callee, receiver, arg, line=1):
+    return RawReference(
+        kind="call",
+        callee_text=f"{receiver}.{callee}",
+        callee_name=callee,
+        receiver_text=receiver,
+        span=Span(line, 0, line, 40),
+        caller_qualified_name="app.setup",
+        arg_preview=arg,
+    )
+
+
+def test_gorilla_chained_routes_and_methods():
+    # gorilla registrations are method chains on one statement; the route (Path/
+    # HandleFunc) and verb(s) (Methods) must be aggregated per line (#37).
+    from entrygraph.detect.entrypoints import rules_for
+
+    refs = [
+        # r.HandleFunc("/users", h).Methods("GET")   (line 1)
+        _go_call_ref("HandleFunc", "r", '("/users", listUsers)', line=1),
+        _go_call_ref("Methods", 'r.HandleFunc("/users", listUsers)', '("GET")', line=1),
+        # r.Path("/reports").Methods("POST", "PUT").Handler(h)   (line 2)
+        _go_call_ref("Path", "r", '("/reports")', line=2),
+        _go_call_ref("Methods", 'r.Path("/reports")', '("POST", "PUT")', line=2),
+        _go_call_ref("Handler", 'r.Path("/reports").Methods("POST", "PUT")', "(h)", line=2),
+    ]
+    rule = {r.id: r for r in rules_for("go", {"gorilla-mux"})}["go.gorilla-mux.route"]
+    got = {(tuple(h.http_methods), h.route) for h in rule.match(_go_ext(refs))}
+    assert (("GET",), "/users") in got  # HandleFunc route + chained method
+    assert (("POST", "PUT"), "/reports") in got  # Path().Methods().Handler() form
