@@ -301,12 +301,17 @@ def _wipe_files(session: Session, repo_id: int, paths: list[str]) -> int:
 
 
 def _load_existing_symbols(session: Session, repo_id: int, table: SymbolTable) -> None:
-    rows = session.execute(select(Symbol.id, Symbol.qname, Symbol.name, Symbol.kind))
-    for sid, qname, name, kind in rows:
+    # File.language feeds same-language fuzzy scoping; external symbols have no file.
+    rows = session.execute(
+        select(Symbol.id, Symbol.qname, Symbol.name, Symbol.kind, File.language).join(
+            File, Symbol.file_id == File.id, isouter=True
+        )
+    )
+    for sid, qname, name, kind, language in rows:
         if kind is SymbolKind.MODULE:
-            table.add_module(qname, sid)
+            table.add_module(qname, sid, language)
         elif kind is not SymbolKind.EXTERNAL:
-            table.add_symbol(sid, qname, name, kind)
+            table.add_symbol(sid, qname, name, kind, language)
     # class bases/parents of surviving classes, from inherit + implement edges.
     # dst_qname is the already-resolved parent FQN, so it feeds both class_bases
     # (raw text, legacy) and class_parents (the transitive ancestor walk).
@@ -404,7 +409,7 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
     for path, x, _pkg in extractions:
         module_id = alloc.take(Symbol)
         module_ids[path] = module_id
-        table.add_module(x.module_path, module_id)
+        table.add_module(x.module_path, module_id, x.language)
         symbol_rows.append(
             {
                 "id": module_id,
@@ -427,7 +432,7 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
         for raw in x.symbols:
             symbol_id = alloc.take(Symbol)
             symbol_id_by_qname[raw.qualified_name] = symbol_id
-            table.add_symbol(symbol_id, raw.qualified_name, raw.name, raw.kind)
+            table.add_symbol(symbol_id, raw.qualified_name, raw.name, raw.kind, x.language)
             if raw.kind is SymbolKind.CLASS and raw.bases:
                 table.class_bases[raw.qualified_name] = raw.bases
             symbol_rows.append(

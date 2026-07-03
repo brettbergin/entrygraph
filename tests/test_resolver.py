@@ -333,3 +333,77 @@ def test_cha_survives_many_unrelated_same_name_methods():
     resolver, _ = make_resolver(table, [ref("h.process", receiver="h")])
     cha = {e.dst_symbol_id for e in resolver.resolve() if e.via == "cha"}
     assert cha == {43, 44}
+
+
+def test_chained_call_result_does_not_leak_args_into_dst_qname():
+    # `re.search(pattern).groups` is a member access on a call result; the dotted
+    # path is not a real qname. It must collapse to `py:*.groups`, not embed the
+    # call arguments verbatim (regression: hundreds-of-chars garbage dst_qnames).
+    from entrygraph.extract.ir import RawImport
+
+    table = make_table()
+    imports = [RawImport(module="re", imported_name="re", alias="re", span=SPAN)]
+    r = ref("re.search(pattern).groups", callee_name="groups", receiver="re.search(pattern)")
+    resolver, _ = make_resolver(table, [r], imports)
+    call = next(e for e in resolver.resolve() if e.kind is EdgeKind.CALLS)
+    assert call.dst_qname == "py:*.groups"
+    assert "(" not in call.dst_qname
+
+
+def test_bare_unresolved_name_keeps_its_dotted_text():
+    # a non-chained unknown bare call still keeps its readable dotted guess
+    table = make_table()
+    resolver, _ = make_resolver(table, [ref("mystery_helper")])
+    call = next(e for e in resolver.resolve() if e.kind is EdgeKind.CALLS)
+    assert call.dst_qname == "py:mystery_helper"
+
+
+def test_fuzzy_resolution_does_not_cross_languages():
+    # A Ruby call to render() must not fuzzy-bind to a uniquely-named JS render();
+    # cross-language unique-name matching pollutes callers/callees in polyglot repos.
+    table = SymbolTable()
+    table.add_module("app.rb_mod", 1, "ruby")
+    table.add_symbol(20, "front.widget.render", "render", SymbolKind.FUNCTION, "javascript")
+    x = FileExtraction(
+        path="app/thing.rb", language="ruby", module_path="app.rb_mod",
+        parse_ok=True, error_count=0, references=[ref("render")],
+    )
+    externals = ExternalRegistry(iter(range(100, 200)).__next__)
+    resolver = FileResolver(x, 1, table, externals)
+    call = next(e for e in resolver.resolve() if e.kind is EdgeKind.CALLS)
+    # unresolved (no same-language target), not a FUZZY bind to the JS symbol
+    assert call.dst_symbol_id != 20
+    assert call.confidence is Confidence.UNRESOLVED
+
+
+def test_fuzzy_resolution_binds_within_same_language():
+    # the same call resolves when the unique target shares the caller's language
+    table = SymbolTable()
+    table.add_module("app.rb_mod", 1, "ruby")
+    table.add_symbol(21, "app.helpers.render", "render", SymbolKind.FUNCTION, "ruby")
+    x = FileExtraction(
+        path="app/thing.rb", language="ruby", module_path="app.rb_mod",
+        parse_ok=True, error_count=0, references=[ref("render")],
+    )
+    externals = ExternalRegistry(iter(range(100, 200)).__next__)
+    resolver = FileResolver(x, 1, table, externals)
+    call = next(e for e in resolver.resolve() if e.kind is EdgeKind.CALLS)
+    assert call.dst_symbol_id == 21 and call.confidence is Confidence.FUZZY
+
+
+def test_cha_candidates_scoped_to_language():
+    # two related classes define handle(); a same-named method in another language
+    # must not be pulled into the virtual-dispatch candidate set.
+    from entrygraph.resolve.hierarchy import cha_candidates
+
+    table = SymbolTable()
+    table.add_symbol(1, "app.Base", "Base", SymbolKind.CLASS, "php")
+    table.add_symbol(2, "app.A", "A", SymbolKind.CLASS, "php")
+    table.add_symbol(3, "app.B", "B", SymbolKind.CLASS, "php")
+    table.add_symbol(4, "app.A.handle", "handle", SymbolKind.METHOD, "php")
+    table.add_symbol(5, "app.B.handle", "handle", SymbolKind.METHOD, "php")
+    table.add_symbol(6, "front.C.handle", "handle", SymbolKind.METHOD, "javascript")
+    table.class_parents["app.A"] = ["app.Base"]
+    table.class_parents["app.B"] = ["app.Base"]
+    got = set(cha_candidates(table, "handle", language="php"))
+    assert got == {4, 5}  # the JS handle() (id 6) is excluded

@@ -123,7 +123,10 @@ def ancestors(
 
 
 def cha_candidates(
-    table: SymbolTable, method_name: str, exclude: set[int] | None = None
+    table: SymbolTable,
+    method_name: str,
+    exclude: set[int] | None = None,
+    language: str | None = None,
 ) -> list[int]:
     """Symbol ids of all method overrides named `method_name` that share a hierarchy.
 
@@ -140,6 +143,11 @@ def cha_candidates(
     ]
     if exclude:
         candidates = [c for c in candidates if c not in exclude]
+    # Inheritance never crosses languages: a PHP virtual call can only dispatch to
+    # PHP overrides. Scope candidates to the caller's language so same-named methods
+    # in a co-located frontend (or another backend language) don't fan in.
+    if language is not None:
+        candidates = [c for c in candidates if table.lang.get(c, language) == language]
     # A pathological same-name count (get/set/run defined hundreds of times) can't
     # yield a useful dispatch set; skip before the O(n^2) closure scan. This is a
     # generous scan bound, NOT the result cap — the real cap is applied to the
