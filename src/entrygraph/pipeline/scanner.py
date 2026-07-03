@@ -442,6 +442,15 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
         module_id = alloc.take(Symbol)
         module_ids[path] = module_id
         table.add_module(x.module_path, module_id, x.language)
+        # A module spans its whole file. The extractor doesn't record a line count,
+        # so approximate the last line from the furthest span of any extracted
+        # symbol/import/reference (>= 1 = start_line). This keeps the module row
+        # inside the end_line >= start_line invariant instead of the old end_line=0
+        # (#44), while covering all of the file's content.
+        line_spans = [s.span.end_line for s in x.symbols]
+        line_spans += [r.span.end_line for r in x.references]
+        line_spans += [i.span.end_line for i in x.imports]
+        module_end_line = max(line_spans, default=1)
         symbol_rows.append(
             {
                 "id": module_id,
@@ -451,7 +460,7 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
                 "qname": x.module_path,
                 "parent_id": None,
                 "start_line": 1,
-                "end_line": 0,
+                "end_line": module_end_line,
                 "start_col": 0,
                 "signature": None,
                 "docstring": None,
