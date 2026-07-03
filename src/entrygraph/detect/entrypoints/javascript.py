@@ -239,6 +239,47 @@ def _next_handlers(x: FileExtraction) -> list[EntrypointHint]:
 
 
 _HTTP_METHODS_UPPER = frozenset(m.upper() for m in _HTTP_METHODS)
+_NEXT_PAGES_EXTS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+
+
+def _next_pages_handlers(x: FileExtraction) -> list[EntrypointHint]:
+    """Next.js Pages Router API routes: every file under `pages/api/**` is a route
+    (file-based routing), whatever the default-export shape — a named `handler`
+    function, a `createNextApiHandler(router)` wrapper, or a bare arrow. The IR has
+    no `export default` marker to key on, so we rely on the file convention itself.
+
+    The handler dispatches on `req.method` internally, so the route carries no
+    specific verb. Bind to a `handler`-named function when present (the Pages
+    Router convention) so taint reaches the real body; otherwise the module.
+    """
+    normalized = f"/{x.path}"  # leading slash so a top-level `pages/` dir also matches
+    if "/pages/api/" not in normalized or not x.path.endswith(_NEXT_PAGES_EXTS):
+        return []
+    if x.path.endswith(".d.ts") or ".test." in x.path or ".spec." in x.path:
+        return []  # type decls and colocated tests aren't routes (#33)
+    tail = normalized.split("/pages/api/", 1)[1].rsplit(".", 1)[0]  # after prefix, no ext
+    if tail == "index":
+        tail = ""
+    elif tail.endswith("/index"):
+        tail = tail[: -len("/index")]
+    route = "/api" + (f"/{tail}" if tail else "")
+    handler = next(
+        (
+            s.qualified_name
+            for s in x.symbols
+            if s.kind in (SymbolKind.FUNCTION, SymbolKind.METHOD) and s.name == "handler"
+        ),
+        None,
+    )
+    return [
+        EntrypointHint(
+            rule_id="javascript.next.pages-route",
+            kind=EntrypointKind.HTTP_ROUTE,
+            handler_qualified_name=handler,
+            route=route,
+            framework="next",
+        )
+    ]
 
 
 register(
@@ -321,5 +362,14 @@ register(
 register(
     EntrypointRule(
         "javascript.next.route", "javascript", "next", EntrypointKind.HTTP_ROUTE, _next_handlers
+    )
+)
+register(
+    EntrypointRule(
+        "javascript.next.pages-route",
+        "javascript",
+        "next",
+        EntrypointKind.HTTP_ROUTE,
+        _next_pages_handlers,
     )
 )

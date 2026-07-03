@@ -73,3 +73,55 @@ def test_next_ignores_non_method_symbols_and_non_route_files():
     assert _next_rule().match(_js_ext([_sym("helper", SymbolKind.VARIABLE)])) == []
     off_route = _js_ext([_sym("GET", SymbolKind.VARIABLE)], path="apps/web/app/api/me/page.ts")
     assert _next_rule().match(off_route) == []
+
+
+def _pages_rule():
+    return {r.id: r for r in rules_for("javascript", {"next"})}["javascript.next.pages-route"]
+
+
+def _handler_sym(qname="apps.web.pages.api.book.event.handler"):
+    return RawSymbol(
+        kind=SymbolKind.FUNCTION, name="handler", qualified_name=qname, span=Span(1, 0, 1, 40)
+    )
+
+
+def test_next_pages_route_binds_named_handler():
+    # Pages Router is file-based: pages/api/book/event.ts is the route /api/book/event,
+    # and the conventional `export default function handler` binds it (#37).
+    ext = _js_ext([_handler_sym()], path="apps/web/pages/api/book/event.ts")
+    hints = _pages_rule().match(ext)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.kind is EntrypointKind.HTTP_ROUTE
+    assert h.route == "/api/book/event"
+    assert h.http_methods == []  # method dispatched inside the handler
+    assert h.handler_qualified_name == "apps.web.pages.api.book.event.handler"
+
+
+def test_next_pages_route_without_handler_falls_back_to_module():
+    # `export default createNextApiHandler(router)` (tRPC) defines no handler symbol;
+    # the route is still detected, left unbound for the scanner to anchor on module.
+    ext = _js_ext(path="apps/web/pages/api/trpc/[trpc].ts")
+    hint = _pages_rule().match(ext)[0]
+    assert hint.route == "/api/trpc/[trpc]"
+    assert hint.handler_qualified_name is None
+
+
+def test_next_pages_index_files_map_to_parent():
+    foo = _pages_rule().match(_js_ext(path="apps/web/pages/api/foo/index.ts"))[0]
+    assert foo.route == "/api/foo"
+    assert _pages_rule().match(_js_ext(path="pages/api/index.ts"))[0].route == "/api"
+
+
+def test_next_pages_excludes_tests_and_type_decls():
+    for path in (
+        "apps/web/pages/api/book/recurring-event.test.ts",
+        "apps/web/pages/api/foo.spec.ts",
+        "apps/web/pages/api/types.d.ts",
+    ):
+        assert _pages_rule().match(_js_ext(path=path)) == []
+
+
+def test_next_pages_ignores_non_api_pages():
+    # A React page under pages/ (not pages/api/) is not an API route.
+    assert _pages_rule().match(_js_ext(path="apps/web/pages/about.tsx")) == []
