@@ -71,6 +71,7 @@ class FileResolver:
         externals: ExternalRegistry,
         is_package: bool = False,
         sink_registry: SinkRegistry | None = None,
+        local_symbol_ids: dict[str, int] | None = None,
     ) -> None:
         self.x = extraction
         self.module_symbol_id = module_symbol_id
@@ -78,6 +79,11 @@ class FileResolver:
         self.externals = externals
         self.is_package = is_package
         self.sink_registry = sink_registry
+        # This file's own qname -> id. The caller of every reference lives in this
+        # file, so an edge's source must resolve here first — resolving it through
+        # the global (last-wins) table would attribute a.go's edge to a same-named
+        # symbol in b.go, and wiping b.go would then cascade-delete a.go's edge.
+        self.local_symbol_ids = local_symbol_ids or {}
         self.prefix = LANG_PREFIX.get(extraction.language, extraction.language)
         self.import_map, self.wildcard_modules = build_import_map(extraction, is_package)
 
@@ -166,7 +172,10 @@ class FileResolver:
         return edges
 
     def _resolve_reference(self, ref: RawReference) -> ResolvedEdge | None:
-        src_id = self.table.by_fqn.get(ref.caller_qualified_name or "", self.module_symbol_id)
+        caller_q = ref.caller_qualified_name or ""
+        src_id = self.local_symbol_ids.get(caller_q) or self.table.by_fqn.get(
+            caller_q, self.module_symbol_id
+        )
         kind = _REF_EDGE_KIND.get(ref.kind, EdgeKind.REFERENCES)
 
         if ref.kind == "callback":
