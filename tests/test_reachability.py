@@ -146,3 +146,27 @@ def test_dfs_reports_truncation_when_budget_is_spent(monkeypatch):
     result = cache.paths({1}, {3}, max_paths=10)
     assert result == []  # budget spent before reaching the sink
     assert result.truncated is True
+
+
+def test_http_route_handler_is_an_http_input_source(tmp_path):
+    # Express reads request data as a property (`req.body`), not a catalog-matched
+    # call, so it produces no source edge — the handler itself must count as an
+    # http_input source or the app can never yield a taint path (#34 / F-H9).
+    src = tmp_path / "src"
+    src.mkdir(parents=True)
+    (tmp_path / "package.json").write_text('{"name":"app","dependencies":{"express":"^4"}}')
+    (src / "app.js").write_text(
+        'const express = require("express");\n'
+        'const { exec } = require("child_process");\n'
+        "const app = express();\n"
+        "function runReport(req, res) {\n"
+        "  const name = req.body.name;\n"  # property-read source (not a call)
+        '  exec("report " + name);\n'  # command_exec sink
+        "}\n"
+        'app.post("/reports", runReport);\n'
+    )
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    paths = graph.paths(source_category="http_input", sink_category="command_exec")
+    graph.close()
+    chains = [[s.qname for s in p.symbols] for p in paths]
+    assert ["app.runReport", "js:child_process.exec"] in chains
