@@ -26,7 +26,7 @@ from entrygraph.errors import (
 )
 from entrygraph.graph.adjacency import AdjacencyCache
 from entrygraph.graph.scoring import is_constant_args, score_path
-from entrygraph.kinds import Confidence
+from entrygraph.kinds import Confidence, EntrypointKind
 from entrygraph.results import (
     CallPath,
     DetectedFramework,
@@ -507,6 +507,19 @@ class CodeGraph:
                     )
                 ).scalars()
                 ids |= set(rows)
+            if source_category == "http_input":
+                # Every HTTP route handler receives attacker-controlled request
+                # data, so the handler itself is an http_input source. This covers
+                # frameworks whose request access is a property read (Express
+                # `req.body`, Symfony `$request->get`) rather than a catalog-matched
+                # call, which otherwise yield zero source edges (F-H9) — Express/
+                # Symfony apps could never produce a taint path.
+                ep_rows = session.execute(
+                    select(models.Entrypoint.symbol_id).where(
+                        models.Entrypoint.kind == EntrypointKind.HTTP_ROUTE
+                    )
+                ).scalars()
+                ids |= set(ep_rows)
         return ids
 
     def _sink_ids(self, session: Session, sink, sink_category: str | None) -> set[int]:
