@@ -3,6 +3,8 @@ registration, gin router routes, and cobra CLI commands."""
 
 from __future__ import annotations
 
+import re
+
 from entrygraph.detect.entrypoints.base import (
     EntrypointRule,
     first_string_arg,
@@ -114,30 +116,51 @@ def _gin_style(framework: str):
     return matcher
 
 
+_QUOTED = re.compile(r'"([^"]+)"')
+
+
 def _gorilla_routes(x: FileExtraction) -> list[EntrypointHint]:
-    """gorilla/mux: r.HandleFunc('/x', handler)."""
-    hints = []
+    """gorilla/mux, including the chained builder forms.
+
+    A registration is a method chain on one statement:
+        r.HandleFunc("/x", h).Methods("GET")
+        r.Path("/x").Methods("GET", "POST").HandlerFunc(h)
+    so the route (Path/HandleFunc), verb(s) (Methods) and handler are aggregated
+    per line. Previously only bare HandleFunc was matched — the `.Path().Methods()`
+    form and any `.Methods()` verb were dropped (loki: ~0% of gorilla routes).
+    """
+    routes: dict[int, str] = {}
+    methods: dict[int, list[str]] = {}
+    handlers: dict[int, str | None] = {}
     for ref in x.references:
-        if (
-            ref.kind == "call"
-            and ref.callee_name in ("HandleFunc", "Handle")
-            and ref.receiver_text not in (None, "http")
-            and ref.arg_preview
-        ):
+        if ref.kind != "call" or not ref.arg_preview:
+            continue
+        line = ref.span.start_line
+        # a route is opened by HandleFunc("/x", h) or Path("/x") on the router;
+        # exclude net/http's own http.HandleFunc.
+        defines_route = (
+            ref.callee_name in ("HandleFunc", "Handle") and ref.receiver_text not in (None, "http")
+        ) or (ref.callee_name == "Path" and ref.receiver_text is not None)
+        if defines_route:
             route = first_string_arg("(" + ref.arg_preview.lstrip("("))
             if route is not None and route.startswith("/"):
-                hints.append(
-                    EntrypointHint(
-                        rule_id="go.gorilla-mux.route",
-                        kind=EntrypointKind.HTTP_ROUTE,
-                        handler_qualified_name=ref.caller_qualified_name,
-                        route=route,
-                        http_methods=["*"],
-                        framework="gorilla-mux",
-                        metadata={"registration": ref.arg_preview},
-                    )
-                )
-    return hints
+                routes.setdefault(line, route)
+                handlers.setdefault(line, ref.caller_qualified_name)
+        elif ref.callee_name == "Methods":
+            verbs = [v.upper() for v in _QUOTED.findall(ref.arg_preview)]
+            if verbs:
+                methods.setdefault(line, []).extend(verbs)
+    return [
+        EntrypointHint(
+            rule_id="go.gorilla-mux.route",
+            kind=EntrypointKind.HTTP_ROUTE,
+            handler_qualified_name=handlers.get(line),
+            route=route,
+            http_methods=methods.get(line, ["*"]),
+            framework="gorilla-mux",
+        )
+        for line, route in routes.items()
+    ]
 
 
 def _cobra_commands(x: FileExtraction) -> list[EntrypointHint]:
