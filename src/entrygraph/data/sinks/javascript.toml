@@ -13,7 +13,12 @@ description = "Child process execution"
 id = "js.command-exec.member"
 category = "command_exec"
 severity = "high"
-callee = "js:*.{exec,execSync,spawn,spawnSync}"
+# `exec` is deliberately excluded from this unknown-receiver wildcard: it collides
+# with RegExp.prototype.exec (a very common false positive), and real child_process
+# exec — destructured `const {exec}` or aliased `cp.exec` — resolves to
+# js:child_process.exec via the import map and is caught by the specific sink above.
+# execSync/spawn/spawnSync have no built-in method collision, so they stay.
+callee = "js:*.{execSync,spawn,spawnSync}"
 description = "Child process execution (member call)"
 
 [[sink]]
@@ -28,7 +33,12 @@ id = "js.sql-query"
 category = "sql"
 severity = "medium"
 callee = "js:*.{query,execute,raw}"
-description = "SQL query execution (receiver-agnostic)"
+# Receiver-agnostic `.query`/`.execute` collide with non-SQL APIs (DOM/tRPC/nock
+# `.query`, `URL.query`). Require the argument to show string concatenation or
+# template interpolation — the actual SQL-injection signal — mirroring the knex/
+# sequelize lib patterns. A constant or parameterized query is not flagged.
+require_arg_hint = "\\+|\\$\\{|`"
+description = "SQL query execution (receiver-agnostic, dynamic-arg)"
 
 [[sink]]
 id = "js.file-write"
