@@ -109,7 +109,9 @@ class FileResolver:
             return []
         exclude = {primary.dst_symbol_id} if primary.dst_symbol_id is not None else set()
         out: list[ResolvedEdge] = []
-        for cand in cha_candidates(self.table, ref.callee_name, exclude=exclude):
+        for cand in cha_candidates(
+            self.table, ref.callee_name, exclude=exclude, language=self.x.language
+        ):
             out.append(
                 ResolvedEdge(
                     EdgeKind.CALLS,
@@ -221,7 +223,9 @@ class FileResolver:
             target = self.import_map[name]
             if target in self.table.by_fqn:
                 return self.table.by_fqn[target]
-        return self.table.unique_by_name(name, (SymbolKind.FUNCTION, SymbolKind.METHOD))
+        return self.table.unique_by_name(
+            name, (SymbolKind.FUNCTION, SymbolKind.METHOD), self.x.language
+        )
 
     def _guess_is_sink(self, ref: RawReference) -> bool:
         """Whether the receiver-agnostic guess for this attribute call matches a
@@ -232,9 +236,15 @@ class FileResolver:
         return self.sink_registry.match(guess, ref.arg_preview) is not None
 
     def _bind(self, ref: RawReference) -> tuple[int | None, str, Confidence, str | None]:
+        # A `(` in the callee text means it is a member access on a *call result*
+        # (`re.search(rx).groups`, `os.popen(cmd).read`), so the dotted path is not
+        # a real qname. Don't expand it through the import map or store it verbatim
+        # as a guess — that is what produced multi-hundred-char garbage dst_qnames.
+        chained = "(" in ref.callee_text
+
         # 1. import-map expansion (chase re-export chains for project targets)
         first_seg = ref.callee_text.split(".", 1)[0].split("(", 1)[0]
-        if first_seg in self.import_map:
+        if not chained and first_seg in self.import_map:
             rest = ref.callee_text[len(first_seg) :]
             expanded = self.import_map[first_seg] + rest
             if self.table.is_project_path(expanded):
@@ -296,12 +306,14 @@ class FileResolver:
                 if ref.receiver_text is not None
                 else (SymbolKind.FUNCTION, SymbolKind.CLASS)
             )
-            dst_id = self.table.unique_by_name(ref.callee_name, kinds)
+            dst_id = self.table.unique_by_name(ref.callee_name, kinds, self.x.language)
             if dst_id is not None:
                 return dst_id, self.table.qname_of[dst_id], Confidence.FUZZY, None
 
-        # 5. unresolved: language-prefixed guess, still a real node for sinks
-        if ref.receiver_text is not None:
+        # 5. unresolved: language-prefixed guess, still a real node for sinks.
+        # A bare name keeps its dotted text; a receiver call or a chained
+        # call-result member collapses to `*.name` so args never leak into qnames.
+        if ref.receiver_text is not None or chained:
             guess = f"{self.prefix}:*.{ref.callee_name}"
         else:
             guess = f"{self.prefix}:{ref.callee_text}"

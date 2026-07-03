@@ -14,6 +14,7 @@ import re
 
 from entrygraph.detect.entrypoints.base import (
     EntrypointRule,
+    compose_route,
     first_string_arg,
     register,
 )
@@ -48,14 +49,32 @@ def _is_controller(t: RawSymbol) -> bool:
     return any("Controller" in b for b in t.bases)
 
 
+def _controller_token(qname: str) -> str:
+    """The `[controller]` route-token value: the class name minus a Controller suffix."""
+    name = qname.rsplit(".", 1)[-1]
+    return name[: -len("Controller")] if name.endswith("Controller") else name
+
+
+def _class_route_prefix(t: RawSymbol) -> str:
+    """A controller's class-level [Route("...")] prefix, with [controller] expanded."""
+    route_dec = next((d for d in t.decorators if _ROUTE_ATTR.match(d)), None)
+    prefix = first_string_arg(route_dec) if route_dec else None
+    if not prefix:
+        return ""
+    return prefix.replace("[controller]", _controller_token(t.qualified_name))
+
+
 def _aspnet_controller_routes(x: FileExtraction) -> list[EntrypointHint]:
-    controllers = {t.qualified_name for t in _type_symbols(x) if _is_controller(t)}
+    controller_syms = [t for t in _type_symbols(x) if _is_controller(t)]
+    controllers = {t.qualified_name for t in controller_syms}
     if not controllers:
         return []
+    prefixes = {t.qualified_name: _class_route_prefix(t) for t in controller_syms}
     hints: list[EntrypointHint] = []
     for method in _methods(x):
         if method.parent_qualified_name not in controllers:
             continue
+        prefix = prefixes.get(method.parent_qualified_name or "", "")
         for decorator in method.decorators:
             m = _HTTP_ATTR.match(decorator)
             if m:
@@ -64,7 +83,7 @@ def _aspnet_controller_routes(x: FileExtraction) -> list[EntrypointHint]:
                         rule_id="csharp.aspnet.controller-route",
                         kind=EntrypointKind.HTTP_ROUTE,
                         handler_qualified_name=method.qualified_name,
-                        route=first_string_arg(decorator) or "",
+                        route=compose_route(prefix, first_string_arg(decorator)),
                         http_methods=[m.group(1).upper()],
                         framework="aspnetcore",
                     )
@@ -79,7 +98,7 @@ def _aspnet_controller_routes(x: FileExtraction) -> list[EntrypointHint]:
                         rule_id="csharp.aspnet.controller-route",
                         kind=EntrypointKind.HTTP_ROUTE,
                         handler_qualified_name=method.qualified_name,
-                        route=first_string_arg(route_dec) or "",
+                        route=compose_route(prefix, first_string_arg(route_dec)),
                         http_methods=["*"],
                         framework="aspnetcore",
                     )

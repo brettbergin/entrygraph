@@ -11,8 +11,11 @@ from entrygraph.detect.entrypoints.base import (
 from entrygraph.extract.ir import EntrypointHint, FileExtraction
 from entrygraph.kinds import EntrypointKind, SymbolKind
 
-_GIN_METHODS = frozenset(
-    {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "Any", "Handle"}
+# gin exports UPPERCASE verbs (r.GET); chi/fiber use TitleCase (r.Get). Accept
+# both so the shared _gin_style matcher recognizes chi/fiber, not just gin.
+_HTTP_VERBS = frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"})
+_GIN_METHODS = (
+    _HTTP_VERBS | frozenset(v.title() for v in _HTTP_VERBS) | frozenset({"Any", "Handle"})
 )
 _NETHTTP_REGISTER = frozenset({"HandleFunc", "Handle"})
 
@@ -73,12 +76,8 @@ def _gin_routes(x: FileExtraction) -> list[EntrypointHint]:
         ):
             route = first_string_arg("(" + ref.arg_preview.lstrip("("))
             if route is not None and route.startswith("/"):
-                method = (
-                    ref.callee_name.upper()
-                    if ref.callee_name
-                    in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
-                    else "*"
-                )
+                verb = ref.callee_name.upper()
+                method = verb if verb in _HTTP_VERBS else "*"
                 hints.append(
                     EntrypointHint(
                         rule_id="go.gin.route",

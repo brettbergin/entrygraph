@@ -13,6 +13,7 @@ import re
 
 from entrygraph.detect.entrypoints.base import (
     EntrypointRule,
+    compose_route,
     first_string_arg,
     register,
 )
@@ -38,6 +39,10 @@ def _annotation_names(decorators: list[str], pattern: re.Pattern) -> bool:
     return any(pattern.match(d) for d in decorators)
 
 
+def _class_prefix(qname: str | None, prefixes: dict[str, str]) -> str:
+    return prefixes.get(qname or "", "")
+
+
 def _type_symbols(x: FileExtraction) -> list[RawSymbol]:
     return [s for s in x.symbols if s.kind in (SymbolKind.CLASS, SymbolKind.INTERFACE)]
 
@@ -50,6 +55,17 @@ def _enclosing_type(method: RawSymbol, types: list[RawSymbol]) -> RawSymbol | No
     return next((t for t in types if t.qualified_name == method.parent_qualified_name), None)
 
 
+def _class_route_prefixes(types: list[RawSymbol], pattern: re.Pattern) -> dict[str, str]:
+    """Map controller/resource qname -> its class-level route prefix (via `pattern`)."""
+    prefixes: dict[str, str] = {}
+    for t in types:
+        for decorator in t.decorators:
+            if pattern.match(decorator):
+                prefixes[t.qualified_name] = first_string_arg(decorator) or ""
+                break
+    return prefixes
+
+
 def _spring_routes(x: FileExtraction) -> list[EntrypointHint]:
     types = _type_symbols(x)
     controllers = {
@@ -57,6 +73,10 @@ def _spring_routes(x: FileExtraction) -> list[EntrypointHint]:
     }
     if not controllers:
         return []
+    # A controller's own @RequestMapping("/api") is its route prefix.
+    prefixes = _class_route_prefixes(
+        [t for t in types if t.qualified_name in controllers], _SPRING_MAPPING
+    )
     hints = []
     for method in _methods(x):
         if method.parent_qualified_name not in controllers:
@@ -67,12 +87,15 @@ def _spring_routes(x: FileExtraction) -> list[EntrypointHint]:
                 continue
             verb = _MAPPING_VERB.get(match.group(1))
             methods = [verb] if verb else ["*"]
+            route = compose_route(
+                _class_prefix(method.parent_qualified_name, prefixes), first_string_arg(decorator)
+            )
             hints.append(
                 EntrypointHint(
                     rule_id="java.spring.route",
                     kind=EntrypointKind.HTTP_ROUTE,
                     handler_qualified_name=method.qualified_name,
-                    route=first_string_arg(decorator) or "",
+                    route=route,
                     http_methods=methods,
                     framework="spring-boot",
                 )
@@ -85,6 +108,10 @@ def _jaxrs_routes(x: FileExtraction) -> list[EntrypointHint]:
     resources = {t.qualified_name for t in types if _annotation_names(t.decorators, _JAXRS_PATH)}
     if not resources:
         return []
+    # A resource class's own @Path("/api") prefixes every sub-resource method.
+    prefixes = _class_route_prefixes(
+        [t for t in types if t.qualified_name in resources], _JAXRS_PATH
+    )
     hints = []
     for method in _methods(x):
         if method.parent_qualified_name not in resources:
@@ -95,13 +122,16 @@ def _jaxrs_routes(x: FileExtraction) -> list[EntrypointHint]:
         )
         if verb is None:
             continue
-        route = next((first_string_arg(d) for d in method.decorators if _JAXRS_PATH.match(d)), None)
+        method_path = next(
+            (first_string_arg(d) for d in method.decorators if _JAXRS_PATH.match(d)), None
+        )
+        route = compose_route(_class_prefix(method.parent_qualified_name, prefixes), method_path)
         hints.append(
             EntrypointHint(
                 rule_id="java.jaxrs",
                 kind=EntrypointKind.HTTP_ROUTE,
                 handler_qualified_name=method.qualified_name,
-                route=route or "",
+                route=route,
                 http_methods=[verb],
                 framework="jax-rs",
             )
@@ -121,6 +151,9 @@ def _micronaut_routes(x: FileExtraction) -> list[EntrypointHint]:
     }
     if not controllers:
         return []
+    prefixes = _class_route_prefixes(
+        [t for t in types if t.qualified_name in controllers], _MICRONAUT_CONTROLLER
+    )
     hints = []
     for method in _methods(x):
         if method.parent_qualified_name not in controllers:
@@ -128,12 +161,16 @@ def _micronaut_routes(x: FileExtraction) -> list[EntrypointHint]:
         for decorator in method.decorators:
             m = _MICRONAUT_MAPPING.match(decorator)
             if m:
+                route = compose_route(
+                    _class_prefix(method.parent_qualified_name, prefixes),
+                    first_string_arg(decorator),
+                )
                 hints.append(
                     EntrypointHint(
                         rule_id="java.micronaut.route",
                         kind=EntrypointKind.HTTP_ROUTE,
                         handler_qualified_name=method.qualified_name,
-                        route=first_string_arg(decorator) or "",
+                        route=route,
                         http_methods=[m.group(1).upper()],
                         framework="micronaut",
                     )

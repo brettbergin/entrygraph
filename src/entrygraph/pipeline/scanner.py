@@ -27,7 +27,7 @@ from entrygraph.detect import entrypoints as entrypoint_rules
 from entrygraph.detect.frameworks import detect_frameworks
 from entrygraph.detect.manifests import parse_manifests
 from entrygraph.detect.taint import SinkRegistry, registry_for_repo
-from entrygraph.extract.ir import FileExtraction
+from entrygraph.extract.ir import EntrypointHint, FileExtraction
 from entrygraph.fs.hashing import FileState, diff_files
 from entrygraph.fs.walker import RepoLanguageProfile, WalkedFile, walk_repo
 from entrygraph.kinds import Confidence, EdgeKind, SymbolKind
@@ -114,12 +114,19 @@ def index_repository(
 
         # ---- framework detection + entrypoint rules ----
         frameworks, detected_names = _detect_frameworks(manifests, extractions, walked, profile)
+        fw_confidence = {fw.name: fw.confidence for fw in frameworks}
         for _path, x, _pkg in extractions:
             for rule in entrypoint_rules.rules_for(x.language, detected_names):
                 x.entrypoint_hints.extend(rule.match(x))
+            # express/fastify/koa/hono (and gin/chi/fiber) share a registration
+            # shape, so when several are detected the same route is emitted once
+            # per framework. Collapse hints identical in kind/handler/route/method,
+            # keeping the highest-confidence framework's label — kills the ~2x
+            # inflation and prefers the real framework over a spuriously-detected one.
+            x.entrypoint_hints = _dedup_entrypoint_hints(x.entrypoint_hints, fw_confidence)
 
         # ---- symbols ----
-        symbol_id_by_qname, module_ids = _write_symbols(
+        symbol_id_by_qname, module_ids, handler_ids_by_path = _write_symbols(
             session, extractions, file_id_by_path, alloc, table
         )
 
@@ -137,6 +144,7 @@ def index_repository(
             file_id_by_path,
             module_ids,
             symbol_id_by_qname,
+            handler_ids_by_path,
             table,
             externals,
             alloc,
@@ -300,13 +308,42 @@ def _wipe_files(session: Session, repo_id: int, paths: list[str]) -> int:
     return len(file_ids)
 
 
+def _dedup_entrypoint_hints(
+    hints: list[EntrypointHint], fw_confidence: dict[str, float] | None = None
+) -> list[EntrypointHint]:
+    """Collapse hints that duplicate another in (kind, handler, route, methods).
+
+    Shared-shape router rules (express/fastify/koa/hono; gin/chi/fiber) each fire
+    when their framework is detected, emitting the same registration once per
+    framework. Hints identical in those fields are the same physical route; keep
+    the one whose framework has the highest detection confidence (so a real
+    framework wins over a spuriously-detected one), preserving first-seen order.
+    """
+    conf = fw_confidence or {}
+    best: dict[tuple, EntrypointHint] = {}
+    order: list[tuple] = []
+    for h in hints:
+        key = (h.kind, h.handler_qualified_name, h.route, tuple(h.http_methods))
+        if key not in best:
+            best[key] = h
+            order.append(key)
+        elif conf.get(h.framework or "", 0.0) > conf.get(best[key].framework or "", 0.0):
+            best[key] = h
+    return [best[k] for k in order]
+
+
 def _load_existing_symbols(session: Session, repo_id: int, table: SymbolTable) -> None:
-    rows = session.execute(select(Symbol.id, Symbol.qname, Symbol.name, Symbol.kind))
-    for sid, qname, name, kind in rows:
+    # File.language feeds same-language fuzzy scoping; external symbols have no file.
+    rows = session.execute(
+        select(Symbol.id, Symbol.qname, Symbol.name, Symbol.kind, File.language).join(
+            File, Symbol.file_id == File.id, isouter=True
+        )
+    )
+    for sid, qname, name, kind, language in rows:
         if kind is SymbolKind.MODULE:
-            table.add_module(qname, sid)
+            table.add_module(qname, sid, language)
         elif kind is not SymbolKind.EXTERNAL:
-            table.add_symbol(sid, qname, name, kind)
+            table.add_symbol(sid, qname, name, kind, language)
     # class bases/parents of surviving classes, from inherit + implement edges.
     # dst_qname is the already-resolved parent FQN, so it feeds both class_bases
     # (raw text, legacy) and class_parents (the transitive ancestor walk).
@@ -404,7 +441,7 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
     for path, x, _pkg in extractions:
         module_id = alloc.take(Symbol)
         module_ids[path] = module_id
-        table.add_module(x.module_path, module_id)
+        table.add_module(x.module_path, module_id, x.language)
         symbol_rows.append(
             {
                 "id": module_id,
@@ -423,11 +460,19 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
         )
 
     symbol_id_by_qname: dict[str, int] = {}
+    # Per-file qname -> id, so an entrypoint binds to the definition in ITS OWN
+    # file rather than whichever same-qname symbol happened to be written last.
+    # Without this, N same-package `func init()` / overloads collapse in the
+    # global map and all their entrypoints bind to one symbol (duplicate rows,
+    # the rest of the real definitions unrepresented).
+    handler_ids_by_path: dict[str, dict[str, int]] = {}
     for path, x, _pkg in extractions:
+        per_file = handler_ids_by_path.setdefault(path, {})
         for raw in x.symbols:
             symbol_id = alloc.take(Symbol)
             symbol_id_by_qname[raw.qualified_name] = symbol_id
-            table.add_symbol(symbol_id, raw.qualified_name, raw.name, raw.kind)
+            per_file[raw.qualified_name] = symbol_id
+            table.add_symbol(symbol_id, raw.qualified_name, raw.name, raw.kind, x.language)
             if raw.kind is SymbolKind.CLASS and raw.bases:
                 table.class_bases[raw.qualified_name] = raw.bases
             symbol_rows.append(
@@ -457,7 +502,7 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
     # guarantees the self-referential parent_id FK is satisfied within the batch.
     symbol_rows.sort(key=lambda r: r["qname"].count("."))
     bulk_insert(session, Symbol, symbol_rows)
-    return symbol_id_by_qname, module_ids
+    return symbol_id_by_qname, module_ids, handler_ids_by_path
 
 
 def _write_edges_and_entrypoints(
@@ -466,6 +511,7 @@ def _write_edges_and_entrypoints(
     file_id_by_path,
     module_ids,
     symbol_id_by_qname,
+    handler_ids_by_path,
     table,
     externals,
     alloc,
@@ -512,9 +558,14 @@ def _write_edges_and_entrypoints(
                     "via": edge.via,
                 }
             )
+        per_file = handler_ids_by_path.get(path, {})
         for hint in x.entrypoint_hints:
+            handler_q = hint.handler_qualified_name or ""
+            # Bind to the handler defined in this file first (so same-package
+            # collisions like per-file `func init()` each keep their own row),
+            # then the global map, then the file's module symbol as a last resort.
             symbol_id = (
-                symbol_id_by_qname.get(hint.handler_qualified_name or "") or module_ids[path]
+                per_file.get(handler_q) or symbol_id_by_qname.get(handler_q) or module_ids[path]
             )
             entrypoint_writer.add(
                 {

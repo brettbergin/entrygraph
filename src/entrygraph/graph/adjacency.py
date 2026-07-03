@@ -20,7 +20,39 @@ from sqlalchemy.orm import Session
 from entrygraph.db.models import Edge
 from entrygraph.kinds import EdgeKind
 
-_MAX_DFS_VISITS = 200_000  # hard bound on path-enumeration work
+# Path-enumeration work bound. The budget scales with graph size so large graphs
+# aren't cut off before any sink is reached (a flat cap silently returned 0 paths
+# on big repos — a false "no reachable sinks"). Floor keeps small graphs cheap;
+# ceiling bounds pathological ones. When the budget is spent, the result is flagged
+# `truncated` so callers can warn instead of treating 0 paths as "safe".
+_MIN_DFS_VISITS = 200_000
+_DFS_VISIT_CEILING = 40_000_000
+_DFS_VISIT_FACTOR = 200
+# Enumerate a candidate pool larger than the caller's max_paths, then let the
+# caller risk-rank and truncate. Decoupling enumeration from max_paths makes the
+# widen flags (--include-fuzzy/-unresolved/-callbacks) monotonic: a wider edge set
+# yields a superset of the pool instead of a different DFS-order slice.
+_CANDIDATE_FACTOR = 4
+_MIN_CANDIDATES = 64
+
+
+class PathList(list):
+    """A path list that also reports whether enumeration was budget-truncated."""
+
+    truncated: bool = False
+
+    @classmethod
+    def of(cls, items, truncated: bool = False) -> PathList:
+        out = cls(items)
+        out.truncated = truncated
+        return out
+
+
+def _candidate_cap(max_paths: int) -> int:
+    # reachable() passes max_paths=1 and only needs existence — don't over-enumerate.
+    if max_paths <= 1:
+        return 1
+    return max(max_paths * _CANDIDATE_FACTOR, _MIN_CANDIDATES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,22 +182,30 @@ class AdjacencyCache:
     ) -> list[list[tuple[int, Hop | None]]]:
         """Enumerate simple paths as [(symbol_id, hop_into_it | None), ...].
 
-        DFS with an on-path visited set; neighbor order is deterministic.
-        Results are sorted shortest-first. A global visit budget bounds work on
-        pathological graphs; enumeration also stops at max_paths.
+        DFS with an on-path visited set; neighbor order is deterministic. Results
+        are sorted shortest-first. Enumeration collects up to a candidate pool
+        (>= max_paths) so the caller can risk-rank and truncate; a size-scaled
+        visit budget bounds work, and the returned PathList reports `truncated`
+        when that budget was spent before enumeration finished.
         """
         results: list[list[tuple[int, Hop | None]]] = []
-        budget = _MAX_DFS_VISITS
+        total_hops = sum(len(hops) for hops in self.forward.values())
+        budget = min(_DFS_VISIT_CEILING, max(_MIN_DFS_VISITS, total_hops * _DFS_VISIT_FACTOR))
+        cap = _candidate_cap(max_paths)
+        exhausted = False
 
         for source in sorted(sources):
-            if budget <= 0 or len(results) >= max_paths:
+            if budget <= 0 or len(results) >= cap:
                 break
             stack: list[tuple[int, Hop | None]] = [(source, None)]
             on_path = {source}
 
             def dfs(node: int, depth: int) -> None:
-                nonlocal budget
-                if budget <= 0 or len(results) >= max_paths:
+                nonlocal budget, exhausted
+                if len(results) >= cap:
+                    return
+                if budget <= 0:
+                    exhausted = True
                     return
                 budget -= 1
                 if node in sinks:
@@ -187,4 +227,4 @@ class AdjacencyCache:
             dfs(source, 0)
 
         results.sort(key=lambda p: (len(p), [n for n, _ in p]))
-        return results[:max_paths]
+        return PathList.of(results, truncated=exhausted)

@@ -8,6 +8,7 @@ directly testable.
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -276,6 +277,15 @@ def cmd_paths(args) -> int:
             include_unresolved=args.include_unresolved,
             include_callbacks=args.include_callbacks,
             prune_sanitized=args.prune_sanitized,
+        )
+    truncated = bool(getattr(paths, "truncated", False))
+    if truncated:
+        # A budget-truncated search may have missed paths — never let an empty or
+        # short result read as a clean "no reachable sinks" on a large graph.
+        print(
+            "warning: path search hit its work budget and may be incomplete; "
+            "narrow --source/--sink or lower --max-depth for a complete answer.",
+            file=sys.stderr,
         )
     if args.json:
         print(

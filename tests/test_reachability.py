@@ -112,3 +112,37 @@ def test_engines_agree_on_risk_ranked_paths(graph):
     mem = graph.paths(source="app.routes.create_report", sink="py:subprocess.run", engine="memory")
     sql = graph.paths(source="app.routes.create_report", sink="py:subprocess.run", engine="sql")
     assert [round(p.risk_score, 4) for p in mem] == [round(p.risk_score, 4) for p in sql]
+
+
+def test_widen_flags_are_monotonic(graph):
+    # widening the edge frontier must yield a superset of the base paths, never
+    # drop them (regression: max_paths truncation during DFS made widening
+    # return a different, sometimes smaller, slice).
+    def sig(paths):
+        return {tuple(s.qname for s in p.symbols) for p in paths}
+
+    base = graph.paths(source="*", sink_category="command_exec", max_paths=50)
+    for flag in ("include_fuzzy", "include_unresolved", "include_callbacks"):
+        wide = graph.paths(source="*", sink_category="command_exec", max_paths=50, **{flag: True})
+        assert sig(base) <= sig(wide), f"{flag} dropped base paths"
+
+
+def test_paths_result_carries_truncated_flag(graph):
+    # a normal, complete search is not flagged truncated
+    paths = graph.paths(source="*", sink_category="command_exec")
+    assert getattr(paths, "truncated", None) is False
+
+
+def test_dfs_reports_truncation_when_budget_is_spent(monkeypatch):
+    from entrygraph.graph import adjacency
+    from entrygraph.graph.adjacency import AdjacencyCache, Hop
+
+    # force a budget of 1 so a multi-hop search cannot finish
+    monkeypatch.setattr(adjacency, "_MIN_DFS_VISITS", 1)
+    monkeypatch.setattr(adjacency, "_DFS_VISIT_FACTOR", 0)
+    cache = AdjacencyCache(1, frozenset({"calls"}))
+    # chain 1 -> 2 -> 3 (3 is the sink), needs >1 visit to reach
+    cache.forward = {1: [Hop(2, "calls", 1, 3)], 2: [Hop(3, "calls", 2, 3)]}
+    result = cache.paths({1}, {3}, max_paths=10)
+    assert result == []  # budget spent before reaching the sink
+    assert result.truncated is True

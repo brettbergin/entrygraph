@@ -30,6 +30,33 @@ def test_module_path():
     assert EXTRACTOR.module_path_for("lib/api/index.ts") == ("api", True)
 
 
+def test_dotted_filename_stem_is_one_atomic_segment():
+    # `article.service.ts` must become a single segment `article_service`, not two
+    # dotted segments — otherwise relative-import depth counting duplicates the
+    # directory name (issue #42).
+    assert EXTRACTOR.module_path_for("src/app/routes/article/article.service.ts") == (
+        "app.routes.article.article_service",
+        False,
+    )
+    assert EXTRACTOR.module_path_for("src/users/users.controller.ts") == (
+        "users.users_controller",
+        False,
+    )
+
+
+def test_relative_import_of_dotted_file_resolves_to_the_real_module():
+    # a sibling import of ./article.service from article.controller must land on
+    # the same module the service file was assigned — not an extra `article` hop.
+    src = (
+        'import { getArticles } from "./article.service";\n'
+        "export function h() { return getArticles(); }\n"
+    )
+    x = extract(src, path="src/app/routes/article/article.controller.ts", lang="typescript")
+    targets = {imp.alias: imp.module for imp in x.imports}
+    # getArticles resolves into app.routes.article.article_service (no triple article)
+    assert any(t.endswith("app.routes.article.article_service") for t in targets.values()), targets
+
+
 def test_functions_classes_methods():
     x = extract(
         """

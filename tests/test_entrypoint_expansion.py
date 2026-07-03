@@ -128,6 +128,181 @@ def _js_ext(references=(), symbols=(), path="src/app.js"):
     )
 
 
+def _go_ext(references=(), symbols=(), path="main.go"):
+    return FileExtraction(
+        path=path,
+        language="go",
+        module_path="app",
+        parse_ok=True,
+        error_count=0,
+        symbols=list(symbols),
+        references=list(references),
+    )
+
+
+def _go_verb_ref(callee_name, receiver="r"):
+    return RawReference(
+        kind="call",
+        callee_text=f"{receiver}.{callee_name}",
+        callee_name=callee_name,
+        receiver_text=receiver,
+        span=SPAN,
+        caller_qualified_name="app.setup",
+        arg_preview="('/ping', handler)",
+    )
+
+
+def test_chi_titlecase_verb_methods_detected():
+    # chi/fiber use TitleCase r.Get('/x', h); gin uses UPPERCASE r.GET. Both must match.
+    from entrygraph.detect.entrypoints import rules_for
+
+    rules = {r.id: r for r in rules_for("go", {"chi"})}
+    hints = rules["go.chi.route"].match(_go_ext([_go_verb_ref("Get"), _go_verb_ref("Post")]))
+    got = {h.http_methods[0]: h.route for h in hints}
+    assert got == {"GET": "/ping", "POST": "/ping"}
+    assert all(h.framework == "chi" for h in hints)
+
+
+def test_gin_uppercase_verbs_still_detected():
+    from entrygraph.detect.entrypoints import rules_for
+
+    rules = {r.id: r for r in rules_for("go", {"gin"})}
+    hints = rules["go.gin.route"].match(_go_ext([_go_verb_ref("GET"), _go_verb_ref("DELETE")]))
+    got = {h.http_methods[0]: h.route for h in hints}
+    assert got == {"GET": "/ping", "DELETE": "/ping"}
+
+
+def _typed(kind, name, qname, decorators, parent=None, bases=()):
+    s = RawSymbol(kind=kind, name=name, qualified_name=qname, span=SPAN)
+    s.decorators = list(decorators)
+    s.parent_qualified_name = parent
+    s.bases = list(bases)
+    return s
+
+
+def _ext(language, symbols, path, module):
+    return FileExtraction(
+        path=path,
+        language=language,
+        module_path=module,
+        parse_ok=True,
+        error_count=0,
+        symbols=list(symbols),
+        references=[],
+    )
+
+
+def test_compose_route_helper():
+    from entrygraph.detect.entrypoints.base import compose_route
+
+    assert compose_route("/api", "/users/{id}") == "/api/users/{id}"
+    assert compose_route("api/", "users") == "/api/users"
+    assert compose_route("/api", None) == "/api"  # class path with no method path
+    assert compose_route(None, "/x") == "/x"
+    assert compose_route(None, None) == "/"
+
+
+def test_spring_class_requestmapping_prefix_composed():
+    from entrygraph.detect.entrypoints import rules_for
+
+    cls = _typed(
+        SymbolKind.CLASS,
+        "UserController",
+        "com.ex.UserController",
+        ["@RestController", '@RequestMapping("/api")'],
+    )
+    method = _typed(
+        SymbolKind.METHOD,
+        "get",
+        "com.ex.UserController.get",
+        ['@GetMapping("/users/{id}")'],
+        parent="com.ex.UserController",
+    )
+    x = _ext("java", [cls, method], "UserController.java", "com.ex")
+    rules = {r.id: r for r in rules_for("java", {"spring-boot"})}
+    hints = rules["java.spring.route"].match(x)
+    assert hints and hints[0].route == "/api/users/{id}" and hints[0].http_methods == ["GET"]
+
+
+def test_jaxrs_class_path_prefix_composed():
+    from entrygraph.detect.entrypoints import rules_for
+
+    cls = _typed(SymbolKind.CLASS, "Resource", "com.ex.Resource", ['@Path("/api")'])
+    method = _typed(
+        SymbolKind.METHOD,
+        "list",
+        "com.ex.Resource.list",
+        ["@GET", '@Path("/items")'],
+        parent="com.ex.Resource",
+    )
+    x = _ext("java", [cls, method], "Resource.java", "com.ex")
+    rules = {r.id: r for r in rules_for("java", {"jax-rs"})}
+    hints = rules["java.jaxrs"].match(x)
+    assert hints and hints[0].route == "/api/items" and hints[0].http_methods == ["GET"]
+
+
+def test_aspnet_controller_route_token_composed():
+    from entrygraph.detect.entrypoints import rules_for
+
+    cls = _typed(
+        SymbolKind.CLASS,
+        "UsersController",
+        "Api.UsersController",
+        ["[ApiController]", '[Route("api/[controller]")]'],
+    )
+    method = _typed(
+        SymbolKind.METHOD,
+        "Get",
+        "Api.UsersController.Get",
+        ['[HttpGet("{id}")]'],
+        parent="Api.UsersController",
+    )
+    x = _ext("csharp", [cls, method], "UsersController.cs", "Api")
+    rules = {r.id: r for r in rules_for("csharp", {"aspnetcore"})}
+    hints = rules["csharp.aspnet.controller-route"].match(x)
+    # [controller] token expands to the class name minus "Controller" (case preserved)
+    assert hints and hints[0].route == "/api/Users/{id}" and hints[0].http_methods == ["GET"]
+
+
+def test_mock_patch_decorator_is_not_a_route():
+    # @mock.patch("dotted.target") shares the @app.patch shorthand shape but its
+    # arg is a dotted import path, not a URL — it must not become a PATCH route.
+    mocked = _sym("test_thing", "tests.test_x.test_thing")
+    mocked.decorators = ['@mock.patch("app.services.core.Database")']
+    real = _sym("get_user", "app.routes.get_user")
+    real.decorators = ['@app.get("/users/<id>")']
+    hints = _run("python.flask.route", _extraction([mocked, real]))
+    routes = {h.route for h in hints}
+    assert routes == {"/users/<id>"}  # the mock decorator produced no route
+
+
+def test_supertest_client_calls_are_not_routes():
+    # request(app).get('/users') is a test *request*, not a route registration.
+    client = RawReference(
+        kind="call",
+        callee_text="request(app).get",
+        callee_name="get",
+        receiver_text="request(app)",
+        span=SPAN,
+        caller_qualified_name="tests.t",
+        arg_preview="('/users')",
+    )
+    real = RawReference(
+        kind="call",
+        callee_text="router.get",
+        callee_name="get",
+        receiver_text="router",
+        span=SPAN,
+        caller_qualified_name="app.h",
+        arg_preview="('/ping', handler)",
+    )
+    from entrygraph.detect.entrypoints import rules_for
+
+    rules = {r.id: r for r in rules_for("javascript", {"express"})}
+    hints = rules["javascript.express.route"].match(_js_ext([client, real]))
+    assert {h.route for h in hints} == {"/ping"}
+
+
 def test_koa_route_rule():
     from entrygraph.detect.entrypoints import rules_for
 

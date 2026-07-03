@@ -296,11 +296,12 @@ def test_spring_routes_are_http_entrypoints(indexed):
             )
         ).all()
         by_route = {r.route: r for r in routes}
-        assert "/users/{id}" in by_route
-        assert by_route["/users/{id}"].http_method == "GET"
-        assert by_route["/users/{id}"].framework == "spring-boot"
-        assert "/reports" in by_route
-        assert by_route["/reports"].http_method == "POST"
+        # the class-level @RequestMapping("/api") prefix is composed into each route
+        assert "/api/users/{id}" in by_route
+        assert by_route["/api/users/{id}"].http_method == "GET"
+        assert by_route["/api/users/{id}"].framework == "spring-boot"
+        assert "/api/reports" in by_route
+        assert by_route["/api/reports"].http_method == "POST"
 
         # the language-core main entrypoint is also detected
         mains = (
