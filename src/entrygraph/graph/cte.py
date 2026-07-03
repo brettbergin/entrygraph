@@ -15,7 +15,7 @@ from __future__ import annotations
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
-from entrygraph.graph.adjacency import Hop
+from entrygraph.graph.adjacency import Hop, PathList, _candidate_cap
 from entrygraph.kinds import EdgeKind
 
 _SEP = ","
@@ -41,8 +41,9 @@ class CteEngine:
 
     def paths(
         self, sources: set[int], sinks: set[int], max_depth: int = 25, max_paths: int = 10
-    ) -> list[list[tuple[int, Hop | None]]]:
+    ) -> PathList:
         results: list[list[tuple[int, Hop | None]]] = []
+        cap = _candidate_cap(max_paths)
         # a source that is itself a sink is a length-1 path (matches memory engine)
         for src in sorted(sources & sinks):
             results.append([(src, None)])
@@ -86,7 +87,7 @@ class CteEngine:
                 SELECT nodes, lines, kinds, ids, confs, depth FROM walk
                 WHERE node IN :sinks
                 ORDER BY depth
-                LIMIT :max_paths
+                LIMIT :cap
                 """
             ).bindparams(
                 bindparam("sources", expanding=True),
@@ -100,20 +101,22 @@ class CteEngine:
                 "minconf": self.min_confidence,
                 "include_cha": 1 if self.include_cha else 0,
                 "max_depth": max_depth,
-                "max_paths": max_paths,
+                "cap": cap,
                 "sep": _SEP,
             },
         ).all()
 
         for nodes_str, lines_str, kinds_str, ids_str, confs_str, _depth in rows:
-            if len(results) >= max_paths:
+            if len(results) >= cap:
                 break
             path = self._decode(nodes_str, lines_str, kinds_str, ids_str, confs_str)
             if path is not None:
                 results.append(path)
 
         results.sort(key=lambda p: (len(p), [n for n, _ in p]))
-        return results[:max_paths]
+        # The CTE has no per-visit budget (SQLite bounds it), so it never
+        # silently under-returns the way the memory DFS could — never truncated.
+        return PathList.of(results, truncated=False)
 
     @staticmethod
     def _decode(

@@ -88,6 +88,17 @@ class _FilteredAdjacency:
         )
 
 
+class PathResults(list):
+    """CallPath list that also reports whether enumeration was budget-truncated.
+
+    It is a plain list for every existing use (iteration, len, indexing); the
+    `truncated` flag lets the CLI warn when 0 paths may mean "budget spent", not
+    "no reachable sink".
+    """
+
+    truncated: bool = False
+
+
 def _has_sanitizer(path: CallPath) -> bool:
     """True if a category sanitizer is called on the path (heuristic, no dataflow).
 
@@ -317,11 +328,15 @@ class CodeGraph:
             sources = self._source_ids(session, source, source_category)
             sinks = self._sink_ids(session, sink, sink_category)
             if not sources or not sinks:
-                return []
+                return PathResults()
             traverser = self._traverser(session, engine, kinds, floor, include_cha)
             raw_paths = traverser.paths(sources, sinks, max_depth=max_depth, max_paths=max_paths)
             if not raw_paths:
-                return []
+                # 0 paths may mean the visit budget was spent before any sink was
+                # reached — propagate the flag so this isn't mistaken for "safe".
+                empty = PathResults()
+                empty.truncated = bool(getattr(raw_paths, "truncated", False))
+                return empty
             all_ids = {node for path in raw_paths for node, _ in path}
             symbol_map = q.symbols_by_ids(session, all_ids)
             registry = self._registry(session)
@@ -347,7 +362,12 @@ class CodeGraph:
         results.sort(
             key=lambda p: (-(p.risk_score or 0.0), len(p.symbols), [s.id for s in p.symbols])
         )
-        return results
+        # Enumeration collected a candidate pool; return the top max_paths by risk.
+        # Truncating after the risk rank (not during DFS) is what makes the widen
+        # flags monotonic — a wider edge set can only add candidates to rank.
+        out = PathResults(results[:max_paths])
+        out.truncated = bool(getattr(raw_paths, "truncated", False))
+        return out
 
     def reachable(
         self,
