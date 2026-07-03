@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from entrygraph.db.meta import ensure_schema
 from entrygraph.db.models import Detection, Edge, Entrypoint, File, Repository, Symbol
 from entrygraph.detect import entrypoints as entrypoint_rules
+from entrygraph.detect.express_mounts import resolve_mount_prefixes
 from entrygraph.detect.frameworks import detect_frameworks
 from entrygraph.detect.manifests import parse_manifests
 from entrygraph.detect.taint import SinkRegistry, registry_for_repo
@@ -118,8 +119,10 @@ def index_repository(
         frameworks, detected_names = _detect_frameworks(manifests, extractions, walked, profile)
         fw_confidence = {fw.name: fw.confidence for fw in frameworks}
         route_wrappers = _collect_route_wrappers(extractions)
+        mount_prefixes = resolve_mount_prefixes(extractions)
         for _path, x, _pkg in extractions:
             x.route_wrappers = route_wrappers
+            x.route_prefixes = mount_prefixes.get(x.module_path, {})
             for rule in entrypoint_rules.rules_for(x.language, detected_names):
                 x.entrypoint_hints.extend(rule.match(x))
             # express/fastify/koa/hono (and gin/chi/fiber) share a registration

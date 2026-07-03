@@ -78,7 +78,23 @@ class JavaScriptExtractor:
         self._definitions(root, ctx, out)
         self._imports(root, ctx, out)
         self._calls(root, ctx, out)
+        out.default_export = self._default_export_ident(root)
         return out
+
+    def _default_export_ident(self, root) -> str | None:
+        """`export default <identifier>` -> that identifier (an Express router that
+        routes were registered on and other files import + mount) — #36."""
+        for child in root.named_children:
+            if child.type != "export_statement" or not any(
+                c.type == "default" for c in child.children
+            ):
+                continue
+            value = child.child_by_field_name("value") or (
+                child.named_children[-1] if child.named_children else None
+            )
+            if value is not None and value.type == "identifier":
+                return node_text(value)
+        return None
 
     # ---------------- definitions ----------------
 
@@ -410,9 +426,40 @@ class JavaScriptExtractor:
                     caller_qualified_name=caller,
                     arg_count=len(args.named_children) if args else 0,
                     arg_preview=truncate(node_text(args)) if args else None,
+                    assign_target=self._assign_target(node),
                 )
             )
             self._emit_callbacks(args, caller, out)
+
+    def _assign_target(self, call) -> str | None:
+        """The binding a call (or its enclosing call-chain) is assigned to, for
+        Express router composition (#36): `const api = Router().use(...)` -> "api",
+        `export default Router().use('/api', api)` -> "<default>". Walks up through
+        chained member/call expressions only, stopping at any statement/function
+        boundary so a call inside a function body isn't mis-attributed.
+        """
+        current = call.parent
+        while current is not None:
+            t = current.type
+            if t == "variable_declarator":
+                name = current.child_by_field_name("name")
+                return node_text(name) if name is not None and name.type == "identifier" else None
+            if t == "export_statement":
+                # `export default <chain>` — only the default export is a router root
+                return "<default>" if any(c.type == "default" for c in current.children) else None
+            if t in ("assignment_expression",):
+                left = current.child_by_field_name("left")
+                return node_text(left) if left is not None and left.type == "identifier" else None
+            # keep climbing only through the call-chain / parenthesized wrappers
+            if t not in (
+                "member_expression",
+                "call_expression",
+                "arguments",
+                "parenthesized_expression",
+            ):
+                return None
+            current = current.parent
+        return None
 
     def _emit_dynamic_call(self, node, fn, caller, out) -> None:
         args = node.child_by_field_name("arguments")

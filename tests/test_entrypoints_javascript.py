@@ -125,3 +125,87 @@ def test_next_pages_excludes_tests_and_type_decls():
 def test_next_pages_ignores_non_api_pages():
     # A React page under pages/ (not pages/api/) is not an API route.
     assert _pages_rule().match(_js_ext(path="apps/web/pages/about.tsx")) == []
+
+
+# ---------------- Express cross-file mount prefixes (#36) ----------------
+
+
+def _mount_ext(module, references=(), imports=(), default_export=None, path=None):
+    from entrygraph.extract.ir import FileExtraction
+
+    return FileExtraction(
+        path=path or f"src/{module.replace('.', '/')}.ts",
+        language="typescript",
+        module_path=module,
+        parse_ok=True,
+        error_count=0,
+        references=list(references),
+        imports=list(imports),
+        default_export=default_export,
+    )
+
+
+def _use(arg, receiver=None, assign=None):
+    from entrygraph.extract.ir import RawReference, Span
+
+    return RawReference(
+        kind="call",
+        callee_text=f"{receiver}.use" if receiver else "use",
+        callee_name="use",
+        receiver_text=receiver,
+        span=Span(1, 0, 1, 40),
+        caller_qualified_name=None,
+        arg_preview=arg,
+        assign_target=assign,
+    )
+
+
+def _imp(module, alias):
+    from entrygraph.extract.ir import RawImport, Span
+
+    return RawImport(module=module, imported_name=None, alias=alias, span=Span(1, 0, 1, 10))
+
+
+def test_resolve_mount_prefixes_transitive_chain():
+    # main: app.use(routes); routes: const api = Router().use(auth);
+    # export default Router().use('/api', api); auth: export default router.
+    from entrygraph.detect.express_mounts import resolve_mount_prefixes
+
+    main = _mount_ext("main", [_use("(routes)", receiver="app")], [_imp("routes", "routes")])
+    routes = _mount_ext(
+        "routes",
+        [_use("(auth)", assign="api"), _use("('/api', api)", assign="<default>")],
+        [_imp("auth", "auth")],
+    )
+    auth = _mount_ext("auth", default_export="router")
+    prefixes = resolve_mount_prefixes(
+        [("main.ts", main, False), ("routes.ts", routes, False), ("auth.ts", auth, False)]
+    )
+    assert prefixes.get("auth", {}).get("router") == "/api"
+
+
+def test_express_mount_prefix_end_to_end(tmp_path):
+    from entrygraph import CodeGraph
+
+    src = tmp_path / "src"
+    (src / "app" / "routes" / "auth").mkdir(parents=True)
+    (tmp_path / "package.json").write_text('{"name":"app","dependencies":{"express":"^4"}}')
+    (src / "main.ts").write_text(
+        "import express from 'express';\nimport routes from './app/routes/routes';\n"
+        "const app = express();\napp.use(routes);\n"
+    )
+    (src / "app" / "routes" / "routes.ts").write_text(
+        "import { Router } from 'express';\nimport authController from './auth/auth.controller';\n"
+        "const api = Router().use(authController);\n"
+        "export default Router().use('/api', api);\n"
+    )
+    (src / "app" / "routes" / "auth" / "auth.controller.ts").write_text(
+        "import { Router } from 'express';\nconst router = Router();\n"
+        "router.post('/users', createUser);\nrouter.get('/user', getUser);\n"
+        "export default router;\n"
+    )
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    routes = {(e.http_method, e.route) for e in graph.entrypoints(framework="express")}
+    graph.close()
+    assert ("POST", "/api/users") in routes
+    assert ("GET", "/api/user") in routes
