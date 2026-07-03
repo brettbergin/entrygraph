@@ -105,6 +105,20 @@ def test_import_edges(indexed):
         assert "app.services" in imports
 
 
+def test_module_symbols_satisfy_span_invariant(indexed):
+    # Module rows used to be written with end_line=0 < start_line=1 (#44). Every
+    # module symbol must now satisfy end_line >= start_line and span real content.
+    engine, _ = indexed
+    with Session(engine) as s:
+        modules = s.execute(select(Symbol).where(Symbol.kind == SymbolKind.MODULE)).scalars().all()
+        assert modules  # the flask fixture has several modules
+        for m in modules:
+            assert m.start_line == 1
+            assert m.end_line >= m.start_line
+        # at least one module spans past line 1 (files have content)
+        assert any(m.end_line > 1 for m in modules)
+
+
 def test_reindex_is_idempotent(indexed):
     engine, first = indexed
     second = index_repository(FLASK_APP, engine)
