@@ -49,3 +49,27 @@ def test_spot_check_new_sinks(registry):
 def test_categories_are_queryable(registry):
     for category in ("ssrf", "xxe", "weak_crypto", "path_traversal", "jndi"):
         assert registry.ids_for_category(category), f"no sinks for {category}"
+
+
+def test_regexp_exec_is_not_a_command_sink(registry):
+    # `js:*.exec` collided with RegExp.prototype.exec. Real child_process exec
+    # resolves to js:child_process.exec (imported/aliased) and stays tagged; the
+    # bare unknown-receiver `.exec` no longer matches command_exec.
+    assert registry.match("js:child_process.exec", "('ls ' + x)") == "js.command-exec.child_process"
+    assert registry.match("js:*.exec", "(input)") is None
+    # sibling child-process methods with no built-in collision still match
+    assert registry.match("js:*.spawn", "(cmd)") == "js.command-exec.member"
+    assert registry.match("js:*.execSync", "(cmd)") == "js.command-exec.member"
+
+
+def test_receiver_agnostic_sql_requires_dynamic_arg(registry):
+    # `*.Query`/`*.query` collided with url.Query()/gin c.Query()/DOM .query.
+    # Only a concatenated or interpolated argument (the injection signal) tags.
+    assert registry.match("go:*.Exec", '("ALTER DATABASE COLLATE " + c)') == "go.sql-query"
+    assert registry.match("go:*.Query", "()") is None  # url.Query()
+    assert registry.match("go:*.Query", '("offset")') is None  # gin c.Query("offset")
+    assert (
+        registry.match("go:*.Exec", '(ctx, "UPDATE t SET k = ? WHERE id = ?")') is None
+    )  # param'd
+    assert registry.match("js:*.query", "('SELECT * FROM t WHERE id = ' + id)") == "js.sql-query"
+    assert registry.match("js:*.query", "({ where: { id } })") is None  # ORM/tRPC object arg

@@ -23,7 +23,12 @@ id = "go.sql-query"
 category = "sql"
 severity = "medium"
 callee = "go:*.{Query,QueryRow,Exec,QueryContext,ExecContext,QueryRowContext}"
-description = "SQL statement execution (receiver-agnostic; database/sql)"
+# Receiver-agnostic `.Query`/`.Exec` collide with non-SQL APIs (net/url
+# `URL.Query()`, gin `c.Query("id")`, which take no arg or a constant). Require the
+# argument to show string concatenation or fmt.Sprintf — the SQL-injection signal.
+# A constant or parameterized ($1/?) query is not flagged.
+require_arg_hint = "\\+|Sprintf"
+description = "SQL statement execution (receiver-agnostic, dynamic-arg; database/sql)"
 
 [[sink]]
 id = "go.file-write"
