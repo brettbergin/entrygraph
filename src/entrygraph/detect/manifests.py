@@ -72,12 +72,23 @@ def parse_package_json(text: str) -> set[str]:
 
 
 def parse_go_mod(text: str) -> set[str]:
+    # `// indirect` requires are transitive deps the module doesn't use directly, so
+    # they aren't evidence the repo uses that framework (gitea's gorilla/mux and
+    # grpc were detected purely from indirect requires) (#38 / F-H18).
     deps: set[str] = set()
     for block in _GO_REQUIRE_BLOCK.findall(text):
-        deps.update(_GO_MODULE_LINE.findall(block))
-    for single in _GO_REQUIRE_LINE.findall(text):
-        if single != "(":
-            deps.add(single)
+        for line in block.splitlines():
+            if "// indirect" in line:
+                continue
+            m = _GO_MODULE_LINE.match(line)
+            if m:
+                deps.add(m.group(1))
+    for line in text.splitlines():
+        if "// indirect" in line:
+            continue
+        m = _GO_REQUIRE_LINE.match(line)
+        if m and m.group(1) != "(":
+            deps.add(m.group(1))
     return deps
 
 
