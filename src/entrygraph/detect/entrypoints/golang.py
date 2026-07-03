@@ -236,6 +236,51 @@ def _cobra_commands(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
+# gRPC service registration: `pb.RegisterFooServer(grpcServer, impl)`. The `Server`
+# suffix anchor keeps grpc-gateway's `RegisterFooHandler` / `...HandlerFromEndpoint`
+# out. Definitions (`func RegisterFooServer(...)`) are not call references, so only
+# real registration call sites match.
+_GRPC_REGISTER = re.compile(r"^Register(?P<service>[A-Za-z0-9]+)Server$")
+
+
+def _grpc_services(x: FileExtraction) -> list[EntrypointHint]:
+    """Mark each registered gRPC service as an RPC entrypoint (one per service).
+
+    This is a service-level marker: the implementation (arg 2) is almost always a
+    field/local var (`t.Ingester`, `frontendV1`) whose concrete type the IR can't
+    infer, so the entrypoint anchors on the registration file's module rather than
+    expanding to the impl's individual RPC methods. The service name rides in
+    `route` — the Entrypoint row has no name column, and it keeps distinct services
+    from collapsing in dedup (they all share `handler_qualified_name=None`).
+    """
+    if x.path.endswith("_test.go"):
+        return []  # test harnesses spin up real services; not production surface (#33)
+    hints = []
+    seen: set[str] = set()
+    for ref in x.references:
+        if ref.kind != "call":
+            continue
+        m = _GRPC_REGISTER.match(ref.callee_name)
+        if m is None:
+            continue
+        service = m.group("service")
+        if service in seen:
+            continue
+        seen.add(service)
+        hints.append(
+            EntrypointHint(
+                rule_id="go.grpc.service",
+                kind=EntrypointKind.RPC_HANDLER,
+                handler_qualified_name=None,
+                route=f"/{service}",
+                name=service,
+                framework="grpc-go",
+                span=ref.span,
+            )
+        )
+    return hints
+
+
 register(EntrypointRule("go.core.main", "go", None, EntrypointKind.MAIN, _go_main))
 register(
     EntrypointRule("go.nethttp.route", "go", "net/http", EntrypointKind.HTTP_ROUTE, _nethttp_routes)
@@ -252,4 +297,7 @@ register(
 )
 register(
     EntrypointRule("go.cobra.command", "go", "cobra", EntrypointKind.CLI_COMMAND, _cobra_commands)
+)
+register(
+    EntrypointRule("go.grpc.service", "go", "grpc-go", EntrypointKind.RPC_HANDLER, _grpc_services)
 )

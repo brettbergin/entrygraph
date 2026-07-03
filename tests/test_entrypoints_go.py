@@ -71,3 +71,50 @@ def test_chi_mount_prefix_not_composed_across_functions():
     ]
     got = {(h.http_methods[0], h.route) for h in _chi_rule().match(_go_ext(refs))}
     assert got == {("GET", "/health")}  # no phantom /api prefix
+
+
+def _grpc_rule():
+    return {r.id: r for r in rules_for("go", {"grpc-go"})}["go.grpc.service"]
+
+
+def test_grpc_service_registration_detected():
+    # pb.RegisterPusherServer(grpcServer, t.Ingester) -> one RPC entrypoint whose
+    # service name rides in `route` (no name column; keeps services distinct in
+    # dedup since they all share handler=None). Impl type is unresolvable, so the
+    # handler is left unbound (scanner anchors it on the module) (#37).
+    refs = [
+        _call("RegisterPusherServer", "logproto", "(t.Server.GRPC, t.Ingester)"),
+        _call("RegisterQuerierServer", "logproto", "(t.Server.GRPC, t.Ingester)", start=2),
+    ]
+    hints = _grpc_rule().match(_go_ext(refs, path="pkg/loki/modules.go"))
+    got = {(h.route, h.name, h.framework, h.handler_qualified_name) for h in hints}
+    assert got == {
+        ("/Pusher", "Pusher", "grpc-go", None),
+        ("/Querier", "Querier", "grpc-go", None),
+    }
+
+
+def test_grpc_same_service_deduped_within_file():
+    refs = [
+        _call("RegisterPusherServer", "logproto", "(s, t.distributor)"),
+        _call("RegisterPusherServer", "logproto", "(s, t.Ingester)", start=2),
+    ]
+    hints = _grpc_rule().match(_go_ext(refs, path="pkg/loki/modules.go"))
+    assert [h.route for h in hints] == ["/Pusher"]
+
+
+def test_grpc_gateway_and_non_server_calls_ignored():
+    # grpc-gateway registrars end in `Handler`/`HandlerFromEndpoint`, not `Server`,
+    # and must not be treated as service registrations.
+    refs = [
+        _call("RegisterPusherHandler", "gw", "(ctx, mux, conn)"),
+        _call("RegisterPusherHandlerFromEndpoint", "gw", "(ctx, mux, addr, opts)", start=2),
+        _call("Serve", "grpcServer", "(lis)", start=3),
+    ]
+    assert _grpc_rule().match(_go_ext(refs, path="pkg/loki/modules.go")) == []
+
+
+def test_grpc_test_harness_registrations_excluded():
+    # A real service registered inside a *_test.go harness is not production surface.
+    refs = [_call("RegisterFrontendServer", "frontendv1pb", "(grpcServer, v1)")]
+    assert _grpc_rule().match(_go_ext(refs, path="pkg/frontend/frontend_test.go")) == []
