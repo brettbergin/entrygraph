@@ -20,6 +20,17 @@ def test_new_language_extensions():
     assert {"csharp", "php", "rust"} <= EXTRACTABLE
 
 
+def test_not_extracted_group_is_not_in_extractable():
+    # The "recognized but not extracted" extensions must genuinely lack extractors;
+    # cs/rs/php were mis-grouped under that comment despite having extractors (#48).
+    from entrygraph.fs.lang import _EXTENSION_MAP
+
+    not_extracted = {"c", "cpp", "kotlin", "swift", "scala"}
+    assert not (not_extracted & EXTRACTABLE)
+    for ext in (".cs", ".rs", ".php", ".phtml"):
+        assert _EXTENSION_MAP[ext] in EXTRACTABLE
+
+
 def test_filename_detection():
     assert detect_language("Gemfile") == "ruby"
     assert detect_language("subdir/Rakefile") == "ruby"
