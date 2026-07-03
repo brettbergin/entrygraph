@@ -21,6 +21,15 @@ _SINATRA_VERBS = frozenset({"get", "post", "put", "delete", "patch"})
 _RAILS_VERBS = frozenset({"get", "post", "put", "patch", "delete", "resources", "resource", "root"})
 
 
+def _is_ruby_test(path: str) -> bool:
+    """RSpec / Test::Unit files. Rack::Test reuses the bare `get '/x'` verb DSL
+    inside specs, indistinguishable from a Sinatra/Grape route declaration, so those
+    files must not contribute to the route surface (#33)."""
+    return (
+        path.endswith(("_spec.rb", "_test.rb")) or "/spec/" in f"/{path}" or "/test/" in f"/{path}"
+    )
+
+
 def _is_rails_routes_file(path: str) -> bool:
     """The main `config/routes.rb` plus split route files loaded via `draw(:x)`
     (`config/routes/api.rb`, `config/routes/admin.rb`, ...). Missing the split
@@ -29,6 +38,8 @@ def _is_rails_routes_file(path: str) -> bool:
 
 
 def _sinatra_routes(x: FileExtraction) -> list[EntrypointHint]:
+    if _is_ruby_test(x.path):
+        return []
     hints = []
     for ref in x.references:
         if (
@@ -106,6 +117,8 @@ def _rake_tasks(x: FileExtraction) -> list[EntrypointHint]:
 
 def _grape_routes(x: FileExtraction) -> list[EntrypointHint]:
     """Grape API classes: class-body `get '/x'` / `post '/y'` declarations."""
+    if _is_ruby_test(x.path):
+        return []
     hints = []
     for ref in x.references:
         if (

@@ -22,6 +22,12 @@ _GIN_METHODS = (
 _NETHTTP_REGISTER = frozenset({"HandleFunc", "Handle"})
 
 
+def _is_go_test(path: str) -> bool:
+    """Go test files (`*_test.go`) register routes only to exercise handlers; those
+    are test-harness calls, not the production route surface (#33)."""
+    return path.endswith("_test.go")
+
+
 def _go_main(x: FileExtraction) -> list[EntrypointHint]:
     hints = []
     for symbol in x.symbols:
@@ -43,6 +49,8 @@ def _go_main(x: FileExtraction) -> list[EntrypointHint]:
 
 
 def _nethttp_routes(x: FileExtraction) -> list[EntrypointHint]:
+    if _is_go_test(x.path):
+        return []
     hints = []
     for ref in x.references:
         if (
@@ -101,6 +109,8 @@ def _group_prefixes(x: FileExtraction) -> dict[str, str]:
 
 
 def _gin_routes(x: FileExtraction) -> list[EntrypointHint]:
+    if _is_go_test(x.path):
+        return []
     prefixes = _group_prefixes(x)
     hints = []
     for ref in x.references:
@@ -172,6 +182,8 @@ def _chi_routes(x: FileExtraction) -> list[EntrypointHint]:
     falls inside a Route call's span gets that prefix (nested Routes stack). Mount
     (`r.Mount("/api", subRouter())`) points at a router built in another function,
     which is out of static reach, so its prefix isn't composed."""
+    if _is_go_test(x.path):
+        return []
     scopes: list[tuple[int, int, str]] = []
     for ref in x.references:
         if (
@@ -229,6 +241,8 @@ def _gorilla_routes(x: FileExtraction) -> list[EntrypointHint]:
     per line. Previously only bare HandleFunc was matched — the `.Path().Methods()`
     form and any `.Methods()` verb were dropped (loki: ~0% of gorilla routes).
     """
+    if _is_go_test(x.path):
+        return []
     routes: dict[int, str] = {}
     methods: dict[int, list[str]] = {}
     handlers: dict[int, str | None] = {}
@@ -297,7 +311,7 @@ def _grpc_services(x: FileExtraction) -> list[EntrypointHint]:
     `route` — the Entrypoint row has no name column, and it keeps distinct services
     from collapsing in dedup (they all share `handler_qualified_name=None`).
     """
-    if x.path.endswith("_test.go"):
+    if _is_go_test(x.path):
         return []  # test harnesses spin up real services; not production surface (#33)
     hints = []
     seen: set[str] = set()
