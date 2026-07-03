@@ -113,17 +113,15 @@ def _aspnet_controller_routes(x: FileExtraction) -> list[EntrypointHint]:
         if parent not in controllers:
             continue
         prefix = prefixes.get(parent, "")
-        verb_dec = next((d for d in method.decorators if _HTTP_ATTR.match(d)), None)
-        if verb_dec is not None:
-            m = _HTTP_ATTR.match(verb_dec)
-            assert m is not None
+        verb_match = next((m for d in method.decorators if (m := _HTTP_ATTR.match(d))), None)
+        if verb_match is not None:
             hints.append(
                 EntrypointHint(
                     rule_id="csharp.aspnet.controller-route",
                     kind=EntrypointKind.HTTP_ROUTE,
                     handler_qualified_name=method.qualified_name,
-                    route=compose_route(prefix, first_string_arg(verb_dec)),
-                    http_methods=[m.group(1).upper()],
+                    route=compose_route(prefix, first_string_arg(verb_match.string)),
+                    http_methods=[verb_match.group(1).upper()],
                     framework="aspnetcore",
                 )
             )
