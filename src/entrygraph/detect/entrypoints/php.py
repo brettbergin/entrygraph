@@ -14,6 +14,7 @@ import re
 
 from entrygraph.detect.entrypoints.base import (
     EntrypointRule,
+    compose_route,
     first_string_arg,
     register,
 )
@@ -23,6 +24,12 @@ from entrygraph.kinds import EntrypointKind, SymbolKind
 _LARAVEL_VERBS = frozenset({"get", "post", "put", "delete", "patch", "any", "match"})
 _LARAVEL_RESOURCE = frozenset({"resource", "apiResource"})
 _SYMFONY_ROUTE = re.compile(r"#\[\s*Route\s*\(")
+# Symfony route paths can be positional (`#[Route('/x')]`) or the `path:` named arg
+# (`#[Route(path: '/x')]`); methods live in `methods: ['GET', 'POST']` (or a bare
+# string). `first_string_arg` covers the positional case.
+_SYMFONY_PATH_KW = re.compile(r"""path\s*:\s*['"]([^'"]+)['"]""")
+_SYMFONY_METHODS = re.compile(r"""methods\s*:\s*(?:\[([^\]]*)\]|['"]([^'"]+)['"])""")
+_QUOTED_RE = re.compile(r"""['"]([^'"]+)['"]""")
 _WORDPRESS_HOOKS = frozenset({"add_action", "add_filter"})
 # register_rest_route($namespace, $route, ...). Anchor to the first two positional
 # args: arg 1 is the namespace (a literal like 'wp/v2' or a variable such as
@@ -160,20 +167,50 @@ def _laravel_routes(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
+def _symfony_path(decorator: str) -> str | None:
+    """The route path from a `#[Route(...)]` attribute: the `path:` named arg if
+    present, else the first positional string."""
+    m = _SYMFONY_PATH_KW.search(decorator)
+    return m.group(1) if m else first_string_arg(decorator)
+
+
+def _symfony_methods(decorator: str) -> list[str]:
+    """HTTP verbs from `methods: ['GET', 'POST']` / `methods: 'GET'`; empty if the
+    attribute omits `methods` (Symfony then allows all verbs)."""
+    m = _SYMFONY_METHODS.search(decorator)
+    if not m:
+        return []
+    body = m.group(1) if m.group(1) is not None else m.group(2)
+    verbs = [q.upper() for q in _QUOTED_RE.findall(body)]
+    if not verbs and body.strip():  # unquoted single value
+        verbs = [body.strip().upper()]
+    return verbs
+
+
 def _symfony_routes(x: FileExtraction) -> list[EntrypointHint]:
+    # class qname -> class-level #[Route(...)] path prefix (composed onto each
+    # method route, mirroring @Controller in NestJS and @RequestMapping in Spring).
+    prefixes: dict[str, str] = {}
+    for symbol in x.symbols:
+        if symbol.kind is SymbolKind.CLASS:
+            for decorator in symbol.decorators:
+                if _SYMFONY_ROUTE.search(decorator):
+                    prefixes[symbol.qualified_name] = _symfony_path(decorator) or ""
+                    break
     hints = []
     for symbol in x.symbols:
         if symbol.kind not in (SymbolKind.METHOD, SymbolKind.FUNCTION):
             continue
         for decorator in symbol.decorators:
             if _SYMFONY_ROUTE.search(decorator):
+                prefix = prefixes.get(symbol.parent_qualified_name or "", "")
                 hints.append(
                     EntrypointHint(
                         rule_id="php.symfony.route",
                         kind=EntrypointKind.HTTP_ROUTE,
                         handler_qualified_name=symbol.qualified_name,
-                        route=first_string_arg(decorator) or "",
-                        http_methods=["*"],
+                        route=compose_route(prefix, _symfony_path(decorator)),
+                        http_methods=_symfony_methods(decorator) or ["*"],
                         framework="symfony",
                     )
                 )
