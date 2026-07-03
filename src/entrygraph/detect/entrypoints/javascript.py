@@ -199,25 +199,42 @@ def _nest_routes(x: FileExtraction) -> list[EntrypointHint]:
 
 
 def _next_handlers(x: FileExtraction) -> list[EntrypointHint]:
-    """Next.js app-router route handlers: exported GET/POST in app/**/route.{ts,js}."""
-    if not (x.path.endswith(("route.ts", "route.js")) and "/app/" in f"/{x.path}"):
+    """Next.js App Router route handlers in app/**/route.{ts,js}.
+
+    Matches both the plain `export async function GET() {}` form and the
+    wrapper-const form `export const GET = withAuth(getHandler)` — calcom's
+    dominant idiom, where nearly every method export wraps the real handler in
+    a responder. In the wrapper form the exported symbol is a VARIABLE whose own
+    qname is not the handler body, so we leave the handler unbound and set
+    `span` to the declaration line: the scanner then binds the route to the
+    handler passed by reference into the wrapper (the callback edge emitted at
+    that same line), falling back to the module when nothing was passed inline.
+    """
+    normalized = f"/{x.path}"  # leading slash so a top-level `app/` dir also matches
+    if not (x.path.endswith(("route.ts", "route.js")) and "/app/" in normalized):
         return []
+    route = "/" + normalized.split("/app/", 1)[1].rsplit("/", 1)[0]
     hints = []
     for symbol in x.symbols:
-        if (
-            symbol.kind in (SymbolKind.FUNCTION, SymbolKind.METHOD)
-            and symbol.name in _HTTP_METHODS_UPPER
-        ):
-            hints.append(
-                EntrypointHint(
-                    rule_id="javascript.next.route",
-                    kind=EntrypointKind.HTTP_ROUTE,
-                    handler_qualified_name=symbol.qualified_name,
-                    route="/" + x.path.split("/app/", 1)[1].rsplit("/", 1)[0],
-                    http_methods=[symbol.name],
-                    framework="next",
-                )
+        if symbol.name not in _HTTP_METHODS_UPPER:
+            continue
+        if symbol.kind in (SymbolKind.FUNCTION, SymbolKind.METHOD):
+            handler, span = symbol.qualified_name, None
+        elif symbol.kind is SymbolKind.VARIABLE:
+            handler, span = None, symbol.span
+        else:
+            continue
+        hints.append(
+            EntrypointHint(
+                rule_id="javascript.next.route",
+                kind=EntrypointKind.HTTP_ROUTE,
+                handler_qualified_name=handler,
+                route=route,
+                http_methods=[symbol.name],
+                framework="next",
+                span=span,
             )
+        )
     return hints
 
 
