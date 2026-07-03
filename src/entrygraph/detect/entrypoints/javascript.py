@@ -14,6 +14,19 @@ _NEST_DECORATOR = re.compile(r"^@(Get|Post|Put|Delete|Patch|All)\b")
 
 
 _TRAILING_IDENT = re.compile(r",\s*([A-Za-z_$][\w$]*)\s*\)?\s*$")
+_RECEIVER_ROOT = re.compile(r"^\s*([A-Za-z_$][\w$]*)")
+# HTTP-client and test-harness roots whose .get()/.post() are *requests*, not
+# route registrations: supertest/nock/chai/superagent and Node/browser clients.
+# Excludes them so test suites don't flood the route table (ghost 72%, strapi 99%).
+_CLIENT_ROOTS = frozenset(
+    {"nock", "supertest", "request", "superagent", "agent", "chai", "axios", "got",
+     "fetch", "http", "https", "fastify"}  # fastify.inject(...).get is a test call
+)
+
+
+def _receiver_root(receiver_text: str) -> str | None:
+    m = _RECEIVER_ROOT.match(receiver_text)
+    return m.group(1) if m else None
 
 
 def _router_routes(framework: str):
@@ -29,6 +42,7 @@ def _router_routes(framework: str):
             if (
                 ref.kind == "call"
                 and ref.receiver_text is not None
+                and _receiver_root(ref.receiver_text) not in _CLIENT_ROOTS
                 and ref.callee_name in _HTTP_METHODS
                 and ref.arg_preview
             ):

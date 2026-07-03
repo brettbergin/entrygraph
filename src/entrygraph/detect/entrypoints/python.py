@@ -53,8 +53,14 @@ def _flask_routes(x: FileExtraction) -> list[EntrypointHint]:
         else:
             verb = _HTTP_VERB.match(decorator)
             if verb:
-                route = first_string_arg(decorator)
-                methods = [verb.group(2).upper()]
+                candidate = first_string_arg(decorator)
+                # The @app.get/@router.post shorthand shares its shape with
+                # @mock.patch("dotted.target"), which the verb `patch` matches.
+                # A real Flask/FastAPI route is a URL path ("/..."); a mock target
+                # is a dotted import path. Require the URL shape to exclude mocks.
+                if candidate is not None and candidate.startswith("/"):
+                    route = candidate
+                    methods = [verb.group(2).upper()]
         if route is not None:
             hints.append(
                 EntrypointHint(

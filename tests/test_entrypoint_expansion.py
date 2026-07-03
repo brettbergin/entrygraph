@@ -241,6 +241,37 @@ def test_aspnet_controller_route_token_composed():
     assert hints and hints[0].route == "/api/Users/{id}" and hints[0].http_methods == ["GET"]
 
 
+def test_mock_patch_decorator_is_not_a_route():
+    # @mock.patch("dotted.target") shares the @app.patch shorthand shape but its
+    # arg is a dotted import path, not a URL — it must not become a PATCH route.
+    mocked = _sym("test_thing", "tests.test_x.test_thing")
+    mocked.decorators = ['@mock.patch("app.services.core.Database")']
+    real = _sym("get_user", "app.routes.get_user")
+    real.decorators = ['@app.get("/users/<id>")']
+    hints = _run("python.flask.route", _extraction([mocked, real]))
+    routes = {h.route for h in hints}
+    assert routes == {"/users/<id>"}  # the mock decorator produced no route
+
+
+def test_supertest_client_calls_are_not_routes():
+    # request(app).get('/users') is a test *request*, not a route registration.
+    client = RawReference(
+        kind="call", callee_text="request(app).get", callee_name="get",
+        receiver_text="request(app)", span=SPAN, caller_qualified_name="tests.t",
+        arg_preview="('/users')",
+    )
+    real = RawReference(
+        kind="call", callee_text="router.get", callee_name="get",
+        receiver_text="router", span=SPAN, caller_qualified_name="app.h",
+        arg_preview="('/ping', handler)",
+    )
+    from entrygraph.detect.entrypoints import rules_for
+
+    rules = {r.id: r for r in rules_for("javascript", {"express"})}
+    hints = rules["javascript.express.route"].match(_js_ext([client, real]))
+    assert {h.route for h in hints} == {"/ping"}
+
+
 def test_koa_route_rule():
     from entrygraph.detect.entrypoints import rules_for
 
