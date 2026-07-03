@@ -47,6 +47,19 @@ def test_go_mod():
     assert "github.com/spf13/cobra" in deps
 
 
+def test_go_mod_excludes_indirect_deps():
+    # `// indirect` requires are transitive, not direct usage — they produced
+    # spurious framework detections (gitea gorilla-mux, grpc-go) (#38 / F-H18).
+    deps = parse_go_mod(
+        "module example.com/app\n\nrequire (\n"
+        "\tgithub.com/gin-gonic/gin v1.9.1\n"
+        "\tgithub.com/gorilla/mux v1.8.1 // indirect\n"
+        ")\n"
+        "require github.com/spf13/cobra v1.8.0 // indirect\n"
+    )
+    assert deps == {"github.com/gin-gonic/gin"}  # both indirect requires dropped
+
+
 def test_pom_xml():
     deps = parse_pom_xml(
         '<project xmlns="http://maven.apache.org/POM/4.0.0"><dependencies>'
