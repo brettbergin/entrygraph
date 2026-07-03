@@ -146,9 +146,12 @@ def _fastapi_routes(x: FileExtraction) -> list[EntrypointHint]:
 def _django_urls(x: FileExtraction) -> list[EntrypointHint]:
     if not x.path.endswith("urls.py"):
         return []
+    # native registrars plus project wrappers that forward to them (Zulip's
+    # rest_path carries the whole authenticated REST API through path()) — #50.
+    registrars = _DJANGO_PATH_CALL | x.route_wrappers
     hints = []
     for ref in x.references:
-        if ref.kind == "call" and ref.callee_name in _DJANGO_PATH_CALL and ref.arg_preview:
+        if ref.kind == "call" and ref.callee_name in registrars and ref.arg_preview:
             route = first_string_arg("(" + ref.arg_preview.lstrip("("))
             hints.append(
                 EntrypointHint(

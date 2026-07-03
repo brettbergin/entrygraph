@@ -107,3 +107,8 @@ class FileExtraction:
     reexports: list[RawReexport] = field(default_factory=list)
     entrypoint_hints: list[EntrypointHint] = field(default_factory=list)
     framework_signals: list[tuple[str, str]] = field(default_factory=list)  # (kind, value)
+    # Repo-wide names of project functions that forward to a native route registrar
+    # (Django path/re_path/url), e.g. Zulip's rest_path. Populated by the scanner
+    # across all files before rules run, so a per-file rule can follow one level of
+    # wrapper indirection (#50).
+    route_wrappers: set[str] = field(default_factory=set)
