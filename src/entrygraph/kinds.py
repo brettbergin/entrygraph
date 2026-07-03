@@ -40,6 +40,7 @@ class EntrypointKind(enum.Enum):
     LAMBDA_HANDLER = "lambda_handler"
     EVENT_HANDLER = "event_handler"
     MIDDLEWARE = "middleware"  # request/response interceptor (before_request, app.use, ...)
+    RPC_HANDLER = "rpc_handler"  # gRPC / RPC service registration (RegisterXxxServer)
 
 
 class Confidence(enum.IntEnum):
