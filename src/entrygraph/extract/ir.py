@@ -58,6 +58,10 @@ class RawReference:
     caller_qualified_name: str | None  # FQN of enclosing def; None = module level
     arg_count: int = 0
     arg_preview: str | None = None  # truncated literal args, for sink triage
+    # LHS variable when this call is the sole RHS of a single-var `:=`/`=`
+    # (`api := app.Group("/api")`). Lets router-group rules link routes registered
+    # on the group var back to its path prefix. Populated by the Go extractor.
+    assign_target: str | None = None
 
 
 @dataclass(slots=True)

@@ -263,6 +263,7 @@ class GoExtractor:
                     caller_qualified_name=caller,
                     arg_count=len(args.named_children) if args is not None else 0,
                     arg_preview=truncate(node_text(args)) if args is not None else None,
+                    assign_target=self._assign_target(node),
                 )
             )
             self._emit_callbacks(args, caller, out)
@@ -279,6 +280,25 @@ class GoExtractor:
                     caller_qualified_name=self._caller(node, ctx),
                 )
             )
+
+    def _assign_target(self, call: Node) -> str | None:
+        """LHS variable when `call` is the sole RHS of a single-var `:=`/`=`.
+
+        `api := app.Group("/api")` -> "api". Multi-assignment (`a, b := f()`) and
+        calls nested in a larger expression (`h(app.Group("/x"))`) return None —
+        the group there isn't bound to a reachable variable.
+        """
+        right = call.parent
+        if right is None or right.type != "expression_list":
+            return None
+        stmt = right.parent
+        if stmt is None or stmt.type not in ("short_var_declaration", "assignment_statement"):
+            return None
+        left = stmt.child_by_field_name("left")
+        if left is None or len(left.named_children) != 1 or len(right.named_children) != 1:
+            return None
+        ident = left.named_children[0]
+        return node_text(ident) if ident.type == "identifier" else None
 
     def _emit_callbacks(self, args: Node | None, caller: str | None, out: FileExtraction) -> None:
         """Bare-identifier arguments passed to a call — a function value that may be

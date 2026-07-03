@@ -67,7 +67,41 @@ def _nethttp_routes(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
+def _group_prefixes(x: FileExtraction) -> dict[str, str]:
+    """Map each gin/fiber router-group variable to its composed path prefix.
+
+    `api := app.Group("/api"); v1 := api.Group("/v1")` -> {api: /api, v1: /api/v1}.
+    A nested group inherits its parent group's prefix; Go requires a variable to be
+    declared before use, so ascending line order resolves the chain in one pass. A
+    group with no assign target (`h(app.Group("/x"))`, passed straight into another
+    function) is out of static reach and contributes no prefix.
+    """
+    prefixes: dict[str, str] = {}
+    groups = sorted(
+        (
+            ref
+            for ref in x.references
+            if ref.kind == "call"
+            and ref.callee_name == "Group"
+            and ref.assign_target
+            and ref.receiver_text is not None
+            and ref.arg_preview
+        ),
+        key=lambda r: r.span.start_line,
+    )
+    for ref in groups:
+        if ref.arg_preview is None:  # already filtered above; narrows for the type-checker
+            continue
+        local = first_string_arg("(" + ref.arg_preview.lstrip("("))
+        if local is None:
+            continue  # closure-only group (chi-style middleware group) — no prefix
+        parent = prefixes.get(ref.receiver_text or "", "")
+        prefixes[ref.assign_target or ""] = _compose_prefixes([parent, local])
+    return prefixes
+
+
 def _gin_routes(x: FileExtraction) -> list[EntrypointHint]:
+    prefixes = _group_prefixes(x)
     hints = []
     for ref in x.references:
         if (
@@ -77,20 +111,30 @@ def _gin_routes(x: FileExtraction) -> list[EntrypointHint]:
             and ref.arg_preview
         ):
             route = first_string_arg("(" + ref.arg_preview.lstrip("("))
-            if route is not None and route.startswith("/"):
-                verb = ref.callee_name.upper()
-                method = verb if verb in _HTTP_VERBS else "*"
-                hints.append(
-                    EntrypointHint(
-                        rule_id="go.gin.route",
-                        kind=EntrypointKind.HTTP_ROUTE,
-                        handler_qualified_name=ref.caller_qualified_name,
-                        route=route,
-                        http_methods=[method],
-                        framework="gin",
-                        metadata={"registration": ref.arg_preview},
-                    )
+            if route is None:
+                continue
+            verb = ref.callee_name.upper()
+            is_verb = verb in _HTTP_VERBS
+            group_prefix = prefixes.get(ref.receiver_text)
+            # A grouped route often drops the leading slash (`v1.GET("users")`) since
+            # the group carries the prefix; accept that only for a concrete verb on a
+            # known group var. Otherwise keep the conservative leading-slash check
+            # (guards against Handle/Any's method-first arg and stray string args).
+            if not route.startswith("/") and not (is_verb and group_prefix is not None):
+                continue
+            method = verb if is_verb else "*"
+            full = _compose_prefixes([group_prefix or "", route])
+            hints.append(
+                EntrypointHint(
+                    rule_id="go.gin.route",
+                    kind=EntrypointKind.HTTP_ROUTE,
+                    handler_qualified_name=ref.caller_qualified_name,
+                    route=full,
+                    http_methods=[method],
+                    framework="gin",
+                    metadata={"registration": ref.arg_preview},
                 )
+            )
     return hints
 
 

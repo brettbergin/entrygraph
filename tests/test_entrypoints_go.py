@@ -19,7 +19,7 @@ def _go_ext(references, path="main.go"):
     )
 
 
-def _call(callee, receiver, arg, start=1, end=None):
+def _call(callee, receiver, arg, start=1, end=None, assign=None):
     return RawReference(
         kind="call",
         callee_text=f"{receiver}.{callee}" if receiver else callee,
@@ -28,6 +28,7 @@ def _call(callee, receiver, arg, start=1, end=None):
         span=Span(start, 0, end if end is not None else start, 40),
         caller_qualified_name="app.routes",
         arg_preview=arg,
+        assign_target=assign,
     )
 
 
@@ -118,3 +119,90 @@ def test_grpc_test_harness_registrations_excluded():
     # A real service registered inside a *_test.go harness is not production surface.
     refs = [_call("RegisterFrontendServer", "frontendv1pb", "(grpcServer, v1)")]
     assert _grpc_rule().match(_go_ext(refs, path="pkg/frontend/frontend_test.go")) == []
+
+
+def _gin_rule():
+    return {r.id: r for r in rules_for("go", {"gin"})}["go.gin.route"]
+
+
+def _fiber_rule():
+    return {r.id: r for r in rules_for("go", {"fiber"})}["go.fiber.route"]
+
+
+def test_gin_group_prefix_composed():
+    # api := router.Group("/api"); api.GET("/users", h) -> /api/users (#36). The
+    # group var is bound via the call's assign_target.
+    refs = [
+        _call("Group", "router", '("/api")', start=1, assign="api"),
+        _call("GET", "api", '("/users", listUsers)', start=2),
+        _call("GET", "router", '("/health", health)', start=3),  # ungrouped
+    ]
+    got = {(h.http_methods[0], h.route) for h in _gin_rule().match(_go_ext(refs))}
+    assert got == {("GET", "/api/users"), ("GET", "/health")}
+
+
+def test_gin_nested_groups_stack():
+    # api := app.Group("/api"); v1 := api.Group("/v1"); v1.GET("/users", h)
+    refs = [
+        _call("Group", "app", '("/api")', start=1, assign="api"),
+        _call("Group", "api", '("/v1")', start=2, assign="v1"),
+        _call("GET", "v1", '("/users", h)', start=3),
+    ]
+    got = {(h.http_methods[0], h.route) for h in _gin_rule().match(_go_ext(refs))}
+    assert got == {("GET", "/api/v1/users")}
+
+
+def test_gin_grouped_route_without_leading_slash():
+    # Grouped routes commonly drop the leading slash (gin versioning example);
+    # accept it for a concrete verb on a known group var and still prefix it.
+    refs = [
+        _call("Group", "router", '("/v1")', start=1, assign="apiV1"),
+        _call("GET", "apiV1", '("users", h)', start=2),
+    ]
+    got = {(h.http_methods[0], h.route) for h in _gin_rule().match(_go_ext(refs))}
+    assert got == {("GET", "/v1/users")}
+
+
+def test_gin_ungrouped_route_still_requires_leading_slash():
+    # A slash-less path on a non-group receiver stays filtered (guards against
+    # Handle/Any's method-first arg and stray string args).
+    refs = [_call("GET", "router", '("users", h)', start=1)]
+    assert _gin_rule().match(_go_ext(refs)) == []
+
+
+def test_gin_group_passed_to_function_has_no_prefix():
+    # h(app.Group("/api")) has no assign target — out of static reach, so a later
+    # same-named receiver must not pick up a phantom prefix.
+    refs = [
+        _call("Group", "app", '("/api")', start=1, assign=None),
+        _call("GET", "app", '("/health", h)', start=2),
+    ]
+    got = {(h.http_methods[0], h.route) for h in _gin_rule().match(_go_ext(refs))}
+    assert got == {("GET", "/health")}
+
+
+def test_fiber_group_prefix_end_to_end():
+    # Exercises the real Go extractor (assign_target capture) + fiber rule together.
+    from entrygraph.extract.base import FileContext
+    from entrygraph.extract.golang import GoExtractor
+    from entrygraph.parsing.parsers import parse
+
+    src = (
+        b"package router\n"
+        b"func SetupRoutes(app *fiber.App) {\n"
+        b'	api := app.Group("/api")\n'
+        b'	api.Get("/", handler.Hello)\n'
+        b'	auth := api.Group("/auth")\n'
+        b'	auth.Post("/login", handler.Login)\n'
+        b"}\n"
+    )
+    ctx = FileContext(
+        path="router/router.go",
+        language="go",
+        module_path="router",
+        source=src,
+        is_package=False,
+    )
+    x = GoExtractor().extract(parse("go", src), ctx)
+    got = {(h.http_methods[0], h.route) for h in _fiber_rule().match(x)}
+    assert got == {("GET", "/api"), ("POST", "/api/auth/login")}
