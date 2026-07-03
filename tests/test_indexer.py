@@ -119,6 +119,17 @@ def test_module_symbols_satisfy_span_invariant(indexed):
         assert any(m.end_line > 1 for m in modules)
 
 
+def test_no_duplicate_edge_rows(indexed):
+    # Literal duplicate edges (same kind/src/dst/line/sink/via) used to recur and
+    # inflate counts / double-count sinks (#45); the flask fixture had 5 such groups.
+    engine, _ = indexed
+    with Session(engine) as s:
+        edges = s.execute(
+            select(Edge.kind, Edge.src_symbol_id, Edge.dst_qname, Edge.line, Edge.sink_id, Edge.via)
+        ).all()
+        assert len(edges) == len(set(edges))  # no identical rows
+
+
 def test_reindex_is_idempotent(indexed):
     engine, first = indexed
     second = index_repository(FLASK_APP, engine)
