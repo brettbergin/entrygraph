@@ -44,9 +44,11 @@ class CteEngine:
     ) -> PathList:
         results: list[list[tuple[int, Hop | None]]] = []
         cap = _candidate_cap(max_paths)
-        # a source that is itself a sink is a length-1 path (matches memory engine)
-        for src in sorted(sources & sinks):
-            results.append([(src, None)])
+        # A source that is itself a sink used to be emitted as a length-1 path, but
+        # with `--source '*'` (matches every sink) those degenerate single-node rows
+        # flood the output and out-rank real chains (#47). A taint path needs a
+        # distinct source and sink (>= 2 nodes), so we no longer seed them; the
+        # recursive walk below already starts from real edges (src NOT IN sinks).
 
         rows = self.session.execute(
             text(

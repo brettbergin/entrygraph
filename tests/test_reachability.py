@@ -30,6 +30,20 @@ def test_route_reaches_sink(graph, engine):
 
 
 @pytest.mark.parametrize("engine", ENGINES)
+def test_wildcard_source_emits_no_degenerate_self_paths(graph, engine):
+    # `--source '*'` matches the sink symbol itself; that used to yield a length-1
+    # path (just the sink), which out-ranked real chains (#47). Every emitted path
+    # must have >= 2 nodes, and a real multi-hop chain must still appear.
+    paths = graph.paths(source="*", sink="py:subprocess.run", engine=engine)
+    assert paths
+    assert all(len(p.symbols) >= 2 for p in paths)
+    assert all(p.symbols[0].qname != p.symbols[-1].qname or len(p.symbols) > 1 for p in paths)
+    # an internal sink that '*' also matches as a source: no [(self)] length-1 path
+    self_paths = graph.paths(source="*", sink="app.services.run_report", engine=engine)
+    assert all(len(p.symbols) >= 2 for p in self_paths)
+
+
+@pytest.mark.parametrize("engine", ENGINES)
 def test_unreachable(graph, engine):
     assert graph.paths(source="app.routes.health", sink="py:subprocess.run", engine=engine) == []
     assert not graph.reachable(source="app.routes.health", sink="py:subprocess.run", engine=engine)

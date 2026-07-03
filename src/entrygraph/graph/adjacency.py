@@ -209,7 +209,11 @@ class AdjacencyCache:
                     return
                 budget -= 1
                 if node in sinks:
-                    results.append(list(stack))
+                    # a distinct source and sink only (>= 2 nodes); a source that is
+                    # itself a sink is not a degenerate length-1 path (#47), matching
+                    # the CTE engine which never seeds src-in-sinks walks.
+                    if len(stack) > 1:
+                        results.append(list(stack))
                     return
                 if depth >= max_depth:
                     return
