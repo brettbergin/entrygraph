@@ -21,8 +21,39 @@ from entrygraph.extract.ir import EntrypointHint, FileExtraction
 from entrygraph.kinds import EntrypointKind, SymbolKind
 
 _LARAVEL_VERBS = frozenset({"get", "post", "put", "delete", "patch", "any", "match"})
+_LARAVEL_RESOURCE = frozenset({"resource", "apiResource"})
 _SYMFONY_ROUTE = re.compile(r"#\[\s*Route\s*\(")
 _WORDPRESS_HOOKS = frozenset({"add_action", "add_filter"})
+
+
+def _resource_param(name: str) -> str:
+    """The Laravel resource param: singular of the last (dot-nested) segment —
+    `photos` -> `{photo}`, `blog.comments` -> `{comment}`."""
+    seg = name.strip("/").split(".")[-1]
+    singular = seg[:-1] if seg.endswith("s") and not seg.endswith("ss") else seg
+    return "{" + (singular or "id") + "}"
+
+
+def _resource_routes(name: str, is_api: bool) -> list[tuple[str, str]]:
+    """Expand Route::resource/apiResource into its REST (method, path) routes.
+
+    apiResource omits the HTML create/edit forms that resource adds.
+    """
+    base = "/" + name.strip("/").replace(".", "/")
+    param = _resource_param(name)
+    routes = [
+        ("GET", base),  # index
+        ("POST", base),  # store
+        ("GET", f"{base}/{param}"),  # show
+        ("PUT", f"{base}/{param}"),  # update
+        ("DELETE", f"{base}/{param}"),  # destroy
+    ]
+    if not is_api:
+        routes += [
+            ("GET", f"{base}/create"),  # create form
+            ("GET", f"{base}/{param}/edit"),  # edit form
+        ]
+    return routes
 
 
 def _laravel_routes(x: FileExtraction) -> list[EntrypointHint]:
@@ -30,12 +61,9 @@ def _laravel_routes(x: FileExtraction) -> list[EntrypointHint]:
         return []
     hints = []
     for ref in x.references:
-        if (
-            ref.kind == "call"
-            and ref.receiver_text == "Route"
-            and ref.callee_name in _LARAVEL_VERBS
-            and ref.arg_preview
-        ):
+        if ref.kind != "call" or ref.receiver_text != "Route" or not ref.arg_preview:
+            continue
+        if ref.callee_name in _LARAVEL_VERBS:
             route = first_string_arg("(" + ref.arg_preview.lstrip("("))
             hints.append(
                 EntrypointHint(
@@ -50,6 +78,24 @@ def _laravel_routes(x: FileExtraction) -> list[EntrypointHint]:
                     metadata={"registration": ref.arg_preview},
                 )
             )
+        elif ref.callee_name in _LARAVEL_RESOURCE:
+            # Route::resource('photos', Ctrl) / apiResource(...) registers a fixed
+            # set of REST routes at once; expand them so they aren't all missed.
+            name = first_string_arg("(" + ref.arg_preview.lstrip("("))
+            if not name:
+                continue
+            for method, route in _resource_routes(name, ref.callee_name == "apiResource"):
+                hints.append(
+                    EntrypointHint(
+                        rule_id="php.laravel.resource",
+                        kind=EntrypointKind.HTTP_ROUTE,
+                        handler_qualified_name=None,
+                        route=route,
+                        http_methods=[method],
+                        framework="laravel",
+                        metadata={"registration": ref.arg_preview},
+                    )
+                )
     return hints
 
 

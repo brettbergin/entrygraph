@@ -440,3 +440,51 @@ def test_rails_routes_read_from_split_route_files():
     assert [h.route for h in main] == ["/health"]
     assert [h.route for h in split] == ["/users"]  # the split file is now read
     assert unrelated == []  # a non-routes file is still ignored
+
+
+def test_laravel_resource_expansion():
+    from entrygraph.detect.entrypoints.php import _resource_routes
+
+    api = _resource_routes("articles", is_api=True)
+    assert set(api) == {
+        ("GET", "/articles"),
+        ("POST", "/articles"),
+        ("GET", "/articles/{article}"),
+        ("PUT", "/articles/{article}"),
+        ("DELETE", "/articles/{article}"),
+    }
+    # resource() adds the HTML create/edit forms that apiResource omits
+    full = dict.fromkeys(r for r in _resource_routes("photos", is_api=False))
+    assert ("GET", "/photos/create") in full
+    assert ("GET", "/photos/{photo}/edit") in full
+    assert len(full) == 7
+    # nested resource: last segment is singularized, dots become path separators
+    nested = _resource_routes("blog.comments", is_api=True)
+    assert ("GET", "/blog/comments/{comment}") in nested
+
+
+def test_laravel_apiresource_rule_emits_rest_routes():
+    from entrygraph.detect.entrypoints import rules_for
+
+    ref = RawReference(
+        kind="call",
+        callee_text="Route::apiResource",
+        callee_name="apiResource",
+        receiver_text="Route",
+        span=SPAN,
+        caller_qualified_name=None,
+        arg_preview="('articles', ArticleController::class)",
+    )
+    x = FileExtraction(
+        path="routes/api.php",
+        language="php",
+        module_path="routes.api",
+        parse_ok=True,
+        error_count=0,
+        symbols=[],
+        references=[ref],
+    )
+    rule = {r.id: r for r in rules_for("php", {"laravel"})}["php.laravel.route"]
+    got = {(h.http_methods[0], h.route) for h in rule.match(x)}
+    assert ("GET", "/articles") in got and ("DELETE", "/articles/{article}") in got
+    assert ("GET", "/articles/create") not in got  # apiResource omits forms
