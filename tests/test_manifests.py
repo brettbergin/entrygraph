@@ -89,6 +89,31 @@ def test_parse_manifests_reads_js_workspace_packages(tmp_path: Path):
     assert "packages/api/package.json" in deps.sources
 
 
+def test_parse_manifests_skips_benchmark_and_example_manifests(tmp_path: Path):
+    # Non-app subprojects carry their own deps that aren't the repo's framework —
+    # they produced spurious express/react detections (hono/strapi) (#38 / F-H18).
+    for sub in ("benchmarks/webapp", "examples/demo", "docs"):
+        d = tmp_path / sub
+        d.mkdir(parents=True)
+        (d / "package.json").write_text('{"dependencies": {"express": "^4", "react": "^18"}}')
+    deps = parse_manifests(tmp_path)
+    assert "express" not in deps.javascript
+    assert "react" not in deps.javascript
+
+
+def test_parse_manifests_finds_deep_monorepo_manifests(tmp_path: Path):
+    # nopcommerce nests .csproj at src/Libraries/<Proj>/<Proj>.csproj (depth 3);
+    # a shallow search read 0 C# deps and left detection empty (#38 / F-H30).
+    proj = tmp_path / "src" / "Libraries" / "Nop.Core"
+    proj.mkdir(parents=True)
+    (proj / "Nop.Core.csproj").write_text(
+        '<Project><ItemGroup><PackageReference Include="AutoMapper" Version="1" />'
+        "</ItemGroup></Project>"
+    )
+    deps = parse_manifests(tmp_path)
+    assert "automapper" in deps.csharp
+
+
 # ---------------- C1: C#, PHP, Rust manifests ----------------
 from entrygraph.detect.manifests import (  # noqa: E402
     parse_cargo_toml,

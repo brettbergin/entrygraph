@@ -210,7 +210,36 @@ _MANIFEST_SPECS: list[tuple[str, str, Callable[[str], set[str]]]] = [  # (glob, 
     ("Cargo.toml", "rust", parse_cargo_toml),
 ]
 
-_MANIFEST_SEARCH_DEPTH = 3  # root plus a couple of levels for monorepos
+# root plus several levels: real monorepos nest project manifests deep, e.g.
+# nopcommerce's src/Libraries/Nop.Core/Nop.Core.csproj (depth 3) — a shallower
+# search read 0 C# deps and left framework detection empty (#38 / F-H30).
+_MANIFEST_SEARCH_DEPTH = 5
+# Dependency trees, build output, and non-app subprojects (benchmarks, examples,
+# docs sites) carry their own manifests whose deps are not the repo's framework —
+# they produced spurious detections (hono/strapi/superset saw express+react from
+# benchmark package.json) (#38 / F-H18). "packages"/"apps" are kept: standard
+# monorepo/workspace layouts hold real projects.
+_MANIFEST_SKIP_DIRS = frozenset(
+    {
+        "node_modules",
+        "vendor",
+        ".venv",
+        "venv",
+        "target",
+        "benchmark",
+        "benchmarks",
+        "bench",
+        "example",
+        "examples",
+        "sample",
+        "samples",
+        "e2e",
+        "fixtures",
+        "testdata",
+        "__tests__",
+        "docs",
+    }
+)
 
 
 def parse_manifests(root: str | Path) -> ManifestDeps:
@@ -222,12 +251,9 @@ def parse_manifests(root: str | Path) -> ManifestDeps:
             for manifest in root.glob(glob):
                 if not manifest.is_file():
                     continue
-                if any(
-                    part in ("node_modules", "vendor", ".venv", "venv", "target")
-                    for part in manifest.parts
-                ):
-                    # note: "packages" is intentionally NOT excluded — it is the
-                    # standard JS workspace layout (packages/<name>/package.json).
+                # Check only the path *within* the repo — the absolute path to the
+                # repo may itself contain a skip-dir name (e.g. tests/fixtures/...).
+                if any(part in _MANIFEST_SKIP_DIRS for part in manifest.relative_to(root).parts):
                     continue
                 try:
                     text = manifest.read_text(encoding="utf-8", errors="replace")
