@@ -568,12 +568,29 @@ def _write_edges_and_entrypoints(
         # at the same line, and the entrypoint below binds to it instead of falling
         # back to the module symbol.
         callback_handler_by_line: dict[int, int] = {}
+        # A file's resolve() can surface the same edge more than once (e.g. two calls
+        # to the same target on one line, or a decorator counted as both decorator
+        # and call), producing literal duplicate rows that inflate edge/sink counts
+        # (#45). Collapse them on the identity tuple; the set is per file, and
+        # src_symbol_id is file-local, so this catches every duplicate group.
+        seen_edges: set[tuple] = set()
         for edge in resolver.resolve():
             is_call = edge.kind is EdgeKind.CALLS
             sink_id = sink_registry.match(edge.dst_qname, edge.arg_preview) if is_call else None
             source_id = sink_registry.match_source(edge.dst_qname) if is_call else None
             if edge.kind is EdgeKind.PASSED_AS_CALLBACK and edge.dst_symbol_id is not None:
                 callback_handler_by_line.setdefault(edge.line, edge.dst_symbol_id)
+            dedup_key = (
+                edge.kind,
+                edge.src_symbol_id,
+                edge.dst_qname,
+                edge.line,
+                sink_id,
+                edge.via,
+            )
+            if dedup_key in seen_edges:
+                continue
+            seen_edges.add(dedup_key)
             edge_writer.add(
                 {
                     "id": alloc.take(Edge),
