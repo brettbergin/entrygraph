@@ -114,9 +114,16 @@ def index_repository(
 
         # ---- framework detection + entrypoint rules ----
         frameworks, detected_names = _detect_frameworks(manifests, extractions, walked, profile)
+        fw_confidence = {fw.name: fw.confidence for fw in frameworks}
         for _path, x, _pkg in extractions:
             for rule in entrypoint_rules.rules_for(x.language, detected_names):
                 x.entrypoint_hints.extend(rule.match(x))
+            # express/fastify/koa/hono (and gin/chi/fiber) share a registration
+            # shape, so when several are detected the same route is emitted once
+            # per framework. Collapse hints identical in kind/handler/route/method,
+            # keeping the highest-confidence framework's label — kills the ~2x
+            # inflation and prefers the real framework over a spuriously-detected one.
+            x.entrypoint_hints = _dedup_entrypoint_hints(x.entrypoint_hints, fw_confidence)
 
         # ---- symbols ----
         symbol_id_by_qname, module_ids = _write_symbols(
@@ -298,6 +305,28 @@ def _wipe_files(session: Session, repo_id: int, paths: list[str]) -> int:
     session.execute(delete(Symbol).where(Symbol.file_id.in_(file_ids)))
     session.execute(delete(File).where(File.id.in_(file_ids)))
     return len(file_ids)
+
+
+def _dedup_entrypoint_hints(hints: list, fw_confidence: dict[str, float] | None = None) -> list:
+    """Collapse hints that duplicate another in (kind, handler, route, methods).
+
+    Shared-shape router rules (express/fastify/koa/hono; gin/chi/fiber) each fire
+    when their framework is detected, emitting the same registration once per
+    framework. Hints identical in those fields are the same physical route; keep
+    the one whose framework has the highest detection confidence (so a real
+    framework wins over a spuriously-detected one), preserving first-seen order.
+    """
+    conf = fw_confidence or {}
+    best: dict[tuple, object] = {}
+    order: list[tuple] = []
+    for h in hints:
+        key = (h.kind, h.handler_qualified_name, h.route, tuple(h.http_methods))
+        if key not in best:
+            best[key] = h
+            order.append(key)
+        elif conf.get(h.framework, 0.0) > conf.get(best[key].framework, 0.0):
+            best[key] = h
+    return [best[k] for k in order]
 
 
 def _load_existing_symbols(session: Session, repo_id: int, table: SymbolTable) -> None:

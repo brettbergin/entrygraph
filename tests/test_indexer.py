@@ -113,3 +113,30 @@ def test_reindex_is_idempotent(indexed):
     with Session(engine) as s:
         # each full index run bumps the generation (drives cache invalidation)
         assert s.execute(select(Repository)).scalars().one().index_generation == 2
+
+
+def test_dedup_entrypoint_hints_collapses_cross_framework_duplicates():
+    # Several JS frameworks share a registration shape, so the same route is
+    # emitted once per detected framework. Dedup collapses them, keeping the
+    # highest-confidence framework's label regardless of rule order.
+    from entrygraph.extract.ir import EntrypointHint
+    from entrygraph.kinds import EntrypointKind
+    from entrygraph.pipeline.scanner import _dedup_entrypoint_hints
+
+    def h(fw, route="/ping", method="GET", handler="app.ping"):
+        return EntrypointHint(
+            rule_id=f"javascript.{fw}.route",
+            kind=EntrypointKind.HTTP_ROUTE,
+            handler_qualified_name=handler,
+            route=route,
+            http_methods=[method],
+            framework=fw,
+        )
+
+    # hono is the real framework (higher confidence); express is spurious.
+    out = _dedup_entrypoint_hints(
+        [h("express"), h("hono"), h("express", route="/other")],
+        {"hono": 0.94, "express": 0.2},
+    )
+    routes = sorted((e.route, e.framework) for e in out)
+    assert routes == [("/other", "express"), ("/ping", "hono")]
