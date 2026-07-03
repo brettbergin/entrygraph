@@ -15,6 +15,7 @@ import re
 
 from entrygraph.detect.entrypoints.base import (
     EntrypointRule,
+    compose_route,
     first_string_arg,
     register,
 )
@@ -58,10 +59,36 @@ def _rust_main(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
+_AXUM_NEST_FN = re.compile(r",\s*([A-Za-z_]\w*)\s*\(")  # 2nd arg of nest: funcName(
+
+
+def _axum_nest_prefixes(x: FileExtraction) -> dict[str, str]:
+    """Map a router-builder function to the prefix it's nested under:
+    `.nest("/admin", admin_routes())` -> {admin_routes: "/admin"} (#36).
+
+    axum's other nest form, `.nest("/x", router_var)`, mounts a router built inline
+    in the same function as everything else, so its routes can't be told apart by
+    caller — that variable form stays out of static reach.
+    """
+    prefixes: dict[str, str] = {}
+    for ref in x.references:
+        if ref.kind != "call" or ref.callee_name != "nest" or not ref.arg_preview:
+            continue
+        prefix = first_string_arg("(" + ref.arg_preview.lstrip("("))
+        if prefix is None or not prefix.startswith("/"):
+            continue
+        m = _AXUM_NEST_FN.search(ref.arg_preview)
+        if m:
+            prefixes[m.group(1)] = prefix
+    return prefixes
+
+
 def _axum_routes(x: FileExtraction) -> list[EntrypointHint]:
     """`Router::new().route("/x", post(handler))` — the handler is buried in the
     second argument, so we regex it out of the preview but can't statically bind
-    it (the Express-rule fidelity tradeoff)."""
+    it (the Express-rule fidelity tradeoff). Routes declared inside a function that
+    is `.nest("/prefix", fn())`-mounted are composed with that prefix."""
+    nest_prefixes = _axum_nest_prefixes(x)
     hints = []
     for ref in x.references:
         if ref.kind != "call" or ref.callee_name != "route" or not ref.arg_preview:
@@ -70,12 +97,15 @@ def _axum_routes(x: FileExtraction) -> list[EntrypointHint]:
         if route is None or not route.startswith("/"):
             continue
         method, handler = _axum_method_and_handler(ref.arg_preview)
+        # the enclosing router-builder function, if it's mounted under a nest prefix
+        builder = (ref.caller_qualified_name or "").rsplit(".", 1)[-1]
+        full = compose_route(nest_prefixes.get(builder, ""), route)
         hints.append(
             EntrypointHint(
                 rule_id="rust.axum.route",
                 kind=EntrypointKind.HTTP_ROUTE,
                 handler_qualified_name=None,
-                route=route,
+                route=full,
                 http_methods=[method],
                 framework="axum",
                 metadata={"handler_text": handler, "registration": ref.arg_preview},
