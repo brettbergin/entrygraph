@@ -142,3 +142,26 @@ def test_merged_with_preserves_sanitizers_and_honors_disable():
     merged = base.merged_with([], [], disable=["py.sanitize.shlex"], sanitizers=[extra_san])
     assert "extra" in merged.sanitizers
     assert "py.sanitize.shlex" not in merged.sanitizers
+
+
+def test_ruby_service_execute_not_tagged_sql(tmp_engine, fixture_repo):
+    # End-to-end #91: Service.new(params).execute must not be a sql sink edge;
+    # interpolated connection.execute and find_by_sql must be.
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from entrygraph.db.models import Edge
+    from entrygraph.pipeline.scanner import index_repository
+
+    repo = fixture_repo("ruby/rails_sql")
+    index_repository(repo, tmp_engine)
+    with Session(tmp_engine) as s:
+        rows = s.execute(
+            select(Edge.dst_qname, Edge.sink_id, Edge.arg_preview).where(Edge.sink_id.is_not(None))
+        ).all()
+        tagged = {(r.dst_qname, r.sink_id) for r in rows}
+        assert ("rb:*.find_by_sql", "rb.sql-query") in tagged
+        sql_execute_previews = [r.arg_preview for r in rows if r.sink_id == "rb.sql-execute"]
+        # only the interpolated raw-SQL execute is tagged; the service objects are not
+        assert len(sql_execute_previews) == 1
+        assert "SELECT" in sql_execute_previews[0]

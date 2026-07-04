@@ -32,12 +32,26 @@ severity = "critical"
 callee = "rb:*.{eval,instance_eval,class_eval,module_eval}"
 description = "Dynamic code evaluation on a receiver"
 
+# Unambiguous ActiveRecord raw-SQL methods — receiver-agnostic, no arg guard.
+[[sink]]
+id = "rb.sql-query"
+category = "sql"
+severity = "medium"
+callee = "rb:*.{find_by_sql,exec_query,exec_update,exec_delete,select_all,select_one,select_value,select_rows}"
+description = "ActiveRecord raw SQL execution"
+
+# Bare .execute is the Rails service-object convention (Service.new(...).execute,
+# Interactor, GraphQL schema execution, ...) — almost never SQL. On GitLab the
+# unguarded glob produced 13,821 edges, ~99% service objects (#91). Only a sink
+# when the argument looks like SQL (keyword or string interpolation); (?i) because
+# SinkRegistry.match does not pass re.IGNORECASE.
 [[sink]]
 id = "rb.sql-execute"
 category = "sql"
 severity = "medium"
-callee = "rb:*.{execute,find_by_sql,exec_query,select_all}"
-description = "SQL statement execution (receiver-agnostic)"
+callee = "rb:*.execute"
+require_arg_hint = "(?i)\\b(select|insert|update|delete|from|where|drop|truncate|alter|union|sanitize_sql|arel)\\b|\\#\\{"
+description = "Raw SQL execute with a SQL-shaped statement"
 
 [[source]]
 id = "rb.sinatra.params"
