@@ -90,8 +90,9 @@ def test_js_unrelated_refuted():
 
 
 def test_unsupported_language_returns_none():
-    assert not language_supported("go")
-    assert extract_function_facts("go", b"func h() {}", 1, 1) is None
+    # C#/Rust are deferred; go/ruby/java/php gained tables in the breadth PR
+    assert not language_supported("csharp")
+    assert extract_function_facts("csharp", b"class A {}", 1, 1) is None
 
 
 def test_module_level_source_has_no_function():

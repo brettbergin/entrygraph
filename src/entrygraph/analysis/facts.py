@@ -59,6 +59,14 @@ class _LangTable:
     param_container_types: frozenset[str]
     # node types that could hide a flow we don't model -> mark facts incomplete
     opaque_types: frozenset[str] = frozenset()
+    # field names holding the object/receiver of a member or call, tried in order
+    # (py/js "object"/"value"; go "operand"; java/ruby "object"/"receiver")
+    object_fields: tuple[str, ...] = ("object", "value")
+    # field names holding a call's callee expression / method name, tried in order
+    callee_fields: tuple[str, ...] = ("function",)
+    # field names holding the method-name node when there is no callee expr
+    # (java method_invocation "name", ruby call "method")
+    name_fields: tuple[str, ...] = ()
 
 
 _PYTHON = _LangTable(
@@ -69,6 +77,8 @@ _PYTHON = _LangTable(
     member_types=frozenset({"attribute", "subscript"}),
     param_container_types=frozenset({"parameters"}),
     opaque_types=frozenset({"exec", "global_statement", "nonlocal_statement"}),
+    object_fields=("object", "value"),
+    callee_fields=("function",),
 )
 
 _JS = _LangTable(
@@ -85,6 +95,59 @@ _JS = _LangTable(
     member_types=frozenset({"member_expression", "subscript_expression"}),
     param_container_types=frozenset({"formal_parameters"}),
     opaque_types=frozenset({"with_statement"}),
+    object_fields=("object", "value"),
+    callee_fields=("function",),
+)
+
+_RUBY = _LangTable(
+    function_types=frozenset({"method", "singleton_method"}),
+    assignment_types=frozenset({"assignment", "operator_assignment"}),
+    call_types=frozenset({"call"}),
+    identifier_types=frozenset({"identifier", "instance_variable", "constant"}),
+    # a Ruby `a.b` method access is a `call` node handled by the call_types branch
+    # (receiver descent), so only element_reference is a "member" here
+    member_types=frozenset({"element_reference"}),
+    param_container_types=frozenset({"method_parameters"}),
+    object_fields=("receiver",),
+    callee_fields=(),
+    name_fields=("method",),
+)
+
+_GO = _LangTable(
+    function_types=frozenset({"function_declaration", "method_declaration", "func_literal"}),
+    assignment_types=frozenset({"short_var_declaration", "assignment_statement", "var_spec"}),
+    call_types=frozenset({"call_expression"}),
+    identifier_types=frozenset({"identifier", "field_identifier"}),
+    member_types=frozenset({"selector_expression", "index_expression"}),
+    param_container_types=frozenset({"parameter_list"}),
+    object_fields=("operand",),
+    callee_fields=("function",),
+)
+
+_JAVA = _LangTable(
+    function_types=frozenset(
+        {"method_declaration", "constructor_declaration", "lambda_expression"}
+    ),
+    assignment_types=frozenset({"variable_declarator", "assignment_expression"}),
+    call_types=frozenset({"method_invocation"}),
+    identifier_types=frozenset({"identifier"}),
+    member_types=frozenset({"field_access", "array_access"}),
+    param_container_types=frozenset({"formal_parameters"}),
+    object_fields=("object", "array"),
+    callee_fields=(),
+    name_fields=("name",),
+)
+
+_PHP = _LangTable(
+    function_types=frozenset({"function_definition", "method_declaration", "anonymous_function"}),
+    assignment_types=frozenset({"assignment_expression", "augmented_assignment_expression"}),
+    call_types=frozenset({"function_call_expression", "member_call_expression"}),
+    identifier_types=frozenset({"variable_name", "name"}),
+    member_types=frozenset({"member_access_expression", "subscript_expression"}),
+    param_container_types=frozenset({"formal_parameters"}),
+    object_fields=("object",),
+    callee_fields=("function",),
+    name_fields=("name",),
 )
 
 _LANG_TABLES: dict[str, _LangTable] = {
@@ -92,6 +155,10 @@ _LANG_TABLES: dict[str, _LangTable] = {
     "javascript": _JS,
     "typescript": _JS,
     "tsx": _JS,
+    "ruby": _RUBY,
+    "go": _GO,
+    "java": _JAVA,
+    "php": _PHP,
 }
 
 
@@ -101,6 +168,14 @@ def language_supported(language: str | None) -> bool:
 
 def _node_text(node: Node) -> str:
     return (node.text or b"").decode("utf-8", errors="replace")
+
+
+def _field(node: Node, fields: tuple[str, ...]) -> Node | None:
+    for f in fields:
+        child = node.child_by_field_name(f)
+        if child is not None:
+            return child
+    return None
 
 
 def _root_ident(node: Node, table: _LangTable) -> str | None:
@@ -113,10 +188,10 @@ def _root_ident(node: Node, table: _LangTable) -> str | None:
         if t in table.identifier_types:
             return _node_text(cur)
         if t in table.member_types:
-            cur = cur.child_by_field_name("object") or cur.child_by_field_name("value")
+            cur = _field(cur, table.object_fields)
             continue
         if t in table.call_types:
-            cur = cur.child_by_field_name("function")
+            cur = _field(cur, table.callee_fields) or _field(cur, table.object_fields)
             continue
         if t == "parenthesized_expression" and cur.named_child_count:
             cur = cur.named_children[0]
@@ -147,7 +222,7 @@ def _expr_roots(node: Node | None, table: _LangTable) -> set[str]:
             continue
         if t in table.call_types:
             # a call's value depends on its receiver root and its arguments
-            fn = n.child_by_field_name("function")
+            fn = _field(n, table.callee_fields) or _field(n, table.object_fields)
             if fn is not None:
                 r = _root_ident(fn, table)
                 if r is not None:
@@ -169,24 +244,34 @@ def _call_names(node: Node, table: _LangTable) -> set[str]:
         seen += 1
         n = stack.pop()
         if n.type in table.call_types:
-            fn = n.child_by_field_name("function")
-            if fn is not None:
-                text = _node_text(fn)
-                names.add(text.rsplit(".", 1)[-1])
+            name, _ = _callee_parts(n, table)
+            if name:
+                names.add(name)
         stack.extend(n.named_children)
     return names
 
 
-def _callee_parts(fn: Node | None, table: _LangTable) -> tuple[str, str]:
-    if fn is None:
-        return "", ""
-    text = _node_text(fn)
-    if fn.type in table.member_types:
-        prop = fn.child_by_field_name("property") or fn.child_by_field_name("attribute")
-        name = _node_text(prop) if prop is not None else text.rsplit(".", 1)[-1]
-    else:
-        name = text.rsplit(".", 1)[-1]
-    return name, text
+def _callee_parts(call: Node, table: _LangTable) -> tuple[str, str]:
+    """(method name, full callee text) for a call node across language shapes:
+    function-field (py/js/go/php), or name+object (java), or method+receiver
+    (ruby)."""
+    fn = _field(call, table.callee_fields)
+    if fn is not None:
+        text = _node_text(fn)
+        if fn.type in table.member_types:
+            prop = _field(fn, ("property", "attribute", "field"))
+            name = _node_text(prop) if prop is not None else text.rsplit(".", 1)[-1]
+        else:
+            name = text.rsplit(".", 1)[-1]
+        return name, text
+    # java method_invocation / ruby call: name + receiver via separate fields
+    name_node = _field(call, table.name_fields)
+    if name_node is not None:
+        name = _node_text(name_node)
+        obj = _field(call, table.object_fields)
+        text = f"{_node_text(obj)}.{name}" if obj is not None else name
+        return name, text
+    return "", ""
 
 
 def _params(func: Node, table: _LangTable) -> tuple[str, ...]:
@@ -268,9 +353,8 @@ def _emit_assignment(node: Node, table: _LangTable, out: FunctionFacts) -> None:
 
 
 def _emit_call(node: Node, table: _LangTable, out: FunctionFacts) -> None:
-    fn = node.child_by_field_name("function")
     args = node.child_by_field_name("arguments")
-    name, text = _callee_parts(fn, table)
+    name, text = _callee_parts(node, table)
     arg_roots: set[str] = set()
     nested: set[str] = set()
     if args is not None:
