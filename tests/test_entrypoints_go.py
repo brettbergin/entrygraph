@@ -115,10 +115,13 @@ def test_grpc_gateway_and_non_server_calls_ignored():
     assert _grpc_rule().match(_go_ext(refs, path="pkg/loki/modules.go")) == []
 
 
-def test_grpc_test_harness_registrations_excluded():
-    # A real service registered inside a *_test.go harness is not production surface.
-    refs = [_call("RegisterFrontendServer", "frontendv1pb", "(grpcServer, v1)")]
-    assert _grpc_rule().match(_go_ext(refs, path="pkg/frontend/frontend_test.go")) == []
+def test_grpc_test_harness_registrations_excluded_centrally():
+    # A real service registered inside a *_test.go harness is not production
+    # surface. Test files are excluded at walk time (fs/testfiles, #94), so the
+    # rule itself no longer guards; pin the classifier on the corpus path instead.
+    from entrygraph.fs.testfiles import is_test_path
+
+    assert is_test_path("pkg/frontend/frontend_test.go")
 
 
 def _gin_rule():
@@ -208,20 +211,15 @@ def test_fiber_group_prefix_end_to_end():
     assert got == {("GET", "/api"), ("POST", "/api/auth/login")}
 
 
-def test_go_route_rules_skip_test_files():
+def test_go_test_route_paths_classified_centrally():
     # *_test.go registers routes only to exercise handlers (chi corpus: 152/204
-    # routes came from _test.go). All Go HTTP-route rules must skip them (#33).
+    # routes came from _test.go) (#33). Exclusion moved from per-rule guards to
+    # the walk-time classifier (#94); the corpus paths must stay covered there,
+    # and rules now match test paths when explicitly fed them (--include-tests).
+    from entrygraph.fs.testfiles import is_test_path
+
+    for path in ("middleware/compress_test.go", "api/routes_test.go", "server_test.go"):
+        assert is_test_path(path)
     refs = [_call("Get", "r", '("/users", h)')]
-    assert _chi_rule().match(_go_ext(refs, path="middleware/compress_test.go")) == []
-    assert _gin_rule().match(_go_ext(refs, path="api/routes_test.go")) == []
-    assert _fiber_rule().match(_go_ext(refs, path="api/routes_test.go")) == []
-    # sanity: the same refs in a non-test file still produce a route
+    assert _chi_rule().match(_go_ext(refs, path="middleware/compress_test.go"))
     assert _chi_rule().match(_go_ext(refs, path="middleware/compress.go"))
-
-
-def test_go_nethttp_and_grpc_skip_test_files():
-    nethttp = {r.id: r for r in rules_for("go", {"net/http"})}["go.nethttp.route"]
-    refs = [_call("HandleFunc", "http", '("/x", h)')]
-    assert nethttp.match(_go_ext(refs, path="server_test.go")) == []
-    grpc = [_call("RegisterPusherServer", "pb", "(s, impl)")]
-    assert _grpc_rule().match(_go_ext(grpc, path="server_test.go")) == []

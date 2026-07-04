@@ -264,8 +264,8 @@ def _next_pages_handlers(x: FileExtraction) -> list[EntrypointHint]:
     normalized = f"/{x.path}"  # leading slash so a top-level `pages/` dir also matches
     if "/pages/api/" not in normalized or not x.path.endswith(_NEXT_PAGES_EXTS):
         return []
-    if x.path.endswith(".d.ts") or ".test." in x.path or ".spec." in x.path:
-        return []  # type decls and colocated tests aren't routes (#33)
+    if x.path.endswith(".d.ts"):
+        return []  # type declarations aren't routes (#33)
     tail = normalized.split("/pages/api/", 1)[1].rsplit(".", 1)[0]  # after prefix, no ext
     if tail == "index":
         tail = ""

@@ -44,20 +44,24 @@ def test_sinatra_route_in_app_file_detected():
     assert [h.route for h in hints] == ["/health"]
 
 
-def test_sinatra_ignores_rack_test_calls_in_spec_and_test_files():
+def test_rack_test_spec_paths_classified_centrally():
     # Rack::Test uses the same bare `get '/x'` DSL inside specs; those files are not
     # the route surface (sinatra corpus: 256/274 routes came from test/spec) (#33).
+    # Exclusion moved from per-rule guards to the walk-time classifier (#94); the
+    # corpus paths must stay covered there.
+    from entrygraph.fs.testfiles import is_test_path
+
     for path in (
         "test/routing_test.rb",
         "spec/app_spec.rb",
         "rack-protection/spec/lib/rack/protection/ip_spoofing_spec.rb",
         "some/nested/test/helper_test.rb",
+        "spec/api_spec.rb",
     ):
-        assert _sinatra_rule().match(_ruby_ext([_verb("get", "/")], path)) == []
+        assert is_test_path(path)
 
 
-def test_grape_ignores_test_files():
-    assert _grape_rule().match(_ruby_ext([_verb("post", "/x")], "spec/api_spec.rb")) == []
+def test_grape_detects_routes():
     assert [h.route for h in _grape_rule().match(_ruby_ext([_verb("post", "/x")], "api.rb"))] == [
         "/x"
     ]
