@@ -359,6 +359,7 @@ class CodeGraph:
         include_callbacks: bool = False,
         prune_sanitized: bool = False,
         explicit_sources: bool = False,
+        confirmed_only: bool = False,
         engine: str = "memory",
         strict: bool = False,
     ) -> list[CallPath]:
@@ -405,6 +406,7 @@ class CodeGraph:
                 include_unresolved=unresolved,
                 include_callbacks=callbacks,
                 explicit_sources=explicit_sources,
+                confirmed_only=confirmed_only,
             )
 
         if forced:
@@ -444,6 +446,7 @@ class CodeGraph:
         include_callbacks: bool = False,
         prune_sanitized: bool = False,
         explicit_sources: bool = False,
+        confirmed_only: bool = False,
         engine: str = "memory",
     ) -> PathResults:
         """One source->sink enumeration at a fixed confidence frontier (see `paths`)."""
@@ -507,6 +510,9 @@ class CodeGraph:
                 )
                 for path in raw_paths
             ]
+            built = self._verify_same_function(session, built, raw_paths)
+        if confirmed_only:
+            built = [cp for cp in built if cp.taint_verified is True]
         results = [cp for cp in built if not (prune_sanitized and _has_sanitizer(cp))]
         results.sort(
             key=lambda p: (-(p.risk_score or 0.0), len(p.symbols), [s.id for s in p.symbols])
@@ -833,6 +839,74 @@ class CodeGraph:
                 continue  # nothing to surface; let a later edge with info win
             meta[sid] = (channel, source_key)
         return meta
+
+    def _verify_same_function(self, session: Session, built, raw_paths):
+        """Run the intraprocedural reaching check on same-function paths and demote
+        provable non-flows (#96 Phase 2). Verdict is tri-state; only ``False``
+        changes the score (x0.25). Bounded to the candidate pool (<= max_paths *
+        a small factor), one parse per distinct file, staleness-guarded."""
+        import dataclasses
+
+        from entrygraph.analysis.verify import FileFactCache, verify_same_function
+
+        heads = {path[0][0] for path in raw_paths}
+        if not heads:
+            return built
+        repo_root = session.execute(select(models.Repository.root_path)).scalar()
+        cache = FileFactCache(repo_root)
+        accessor_lines = self._source_accessor_lines(session, heads)
+        file_hashes = self._file_hashes_for_symbols(session, heads)
+        out = []
+        for cp in built:
+            head = cp.symbols[0]
+            verdict = verify_same_function(
+                cp,
+                cp.source_kind or "spec",
+                accessor_lines.get(head.id, set()),
+                file_hashes.get(head.file),
+                cache,
+            )
+            if verdict is False:
+                out.append(
+                    dataclasses.replace(
+                        cp,
+                        taint_verified=False,
+                        risk_score=round((cp.risk_score or 0.0) * 0.25, 4),
+                    )
+                )
+            else:
+                out.append(dataclasses.replace(cp, taint_verified=verdict))
+        return out
+
+    @staticmethod
+    def _source_accessor_lines(session: Session, heads: set[int]) -> dict[int, set[int]]:
+        """Per source symbol, the lines of its catalog source-accessor call edges —
+        seeds the inline-accessor case (`sink(request.args.get("q"))`)."""
+        if not heads:
+            return {}
+        rows = session.execute(
+            select(models.Edge.src_symbol_id, models.Edge.line).where(
+                models.Edge.src_symbol_id.in_(heads),
+                models.Edge.source_id.is_not(None),
+            )
+        ).all()
+        out: dict[int, set[int]] = {}
+        for sid, line in rows:
+            out.setdefault(sid, set()).add(line)
+        return out
+
+    @staticmethod
+    def _file_hashes_for_symbols(session: Session, heads: set[int]) -> dict[str, str]:
+        """Repo-relative path -> indexed content hash for the files owning ``heads``
+        (the staleness guard for query-time re-parsing)."""
+        if not heads:
+            return {}
+        rows = session.execute(
+            select(models.File.path, models.File.content_hash)
+            .join(models.Symbol, models.Symbol.file_id == models.File.id)
+            .where(models.Symbol.id.in_(heads))
+        ).all()
+        return {path: h for path, h in rows}  # noqa: C416 (Row is not a plain tuple)
 
     @staticmethod
     def _source_kinds(session: Session, sets: SourceSets) -> dict[int, str]:
