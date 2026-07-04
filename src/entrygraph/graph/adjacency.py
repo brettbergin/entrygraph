@@ -86,10 +86,12 @@ class AdjacencyCache:
         session: Session,
         generation: int,
         kinds: frozenset[str],
+        repo_id: int,
     ) -> AdjacencyCache:
         # Load every resolved edge of these kinds regardless of confidence/via;
         # traversals filter. One cache then serves all min_confidence/include_cha
-        # settings instead of a full duplicate graph per combination.
+        # settings instead of a full duplicate graph per combination. Scoped to one
+        # repo so a global multi-repo DB never leaks edges across repos (#116).
         cache = cls(generation, kinds)
         stmt = select(
             Edge.src_symbol_id,
@@ -100,6 +102,7 @@ class AdjacencyCache:
             Edge.id,
             Edge.via,
         ).where(
+            Edge.repo_id == repo_id,
             Edge.kind.in_([EdgeKind(k) for k in kinds]),
             Edge.dst_symbol_id.is_not(None),
         )

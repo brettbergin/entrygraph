@@ -19,7 +19,7 @@ from concurrent.futures.process import BrokenProcessPool
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import Engine, delete, select, text, update
+from sqlalchemy import Engine, delete, func, select, text, update
 from sqlalchemy.orm import Session, aliased
 
 from entrygraph.db.meta import ensure_schema
@@ -139,7 +139,7 @@ def index_repository(
 
         # ---- symbols ----
         symbol_id_by_qname, module_ids, handler_ids_by_path = _write_symbols(
-            session, extractions, file_id_by_path, alloc, table
+            session, extractions, file_id_by_path, alloc, table, repo.id
         )
 
         # ---- class hierarchy (parents + re-exports) before edge resolution ----
@@ -154,9 +154,9 @@ def index_repository(
         expand_grpc(extractions, table)
 
         # ---- resolve references -> edges + entrypoints ----
-        externals = ExternalRegistry(lambda: alloc.take(Symbol))
+        externals = ExternalRegistry(lambda: alloc.take(Symbol), repo.id)
         if incremental:
-            externals.preload(_existing_externals(session))
+            externals.preload(_existing_externals(session, repo.id))
         new_qnames = set(symbol_id_by_qname) | {x.module_path for _p, x, _pkg in extractions}
         edge_count, entrypoint_count = _write_edges_and_entrypoints(
             session,
@@ -169,20 +169,21 @@ def index_repository(
             externals,
             alloc,
             sink_registry,
+            repo.id,
         )
         entrypoint_count += _write_config_entrypoints(
-            session, root, symbol_id_by_qname, table, alloc, incremental
+            session, root, symbol_id_by_qname, table, alloc, incremental, repo.id
         )
 
         if incremental:
-            _heal_dangling_edges(session, table, new_qnames)
-            _gc_orphan_externals(session)
+            _heal_dangling_edges(session, table, new_qnames, repo.id)
+            _gc_orphan_externals(session, repo.id)
 
         # ---- detections ----
         _write_detections(session, repo, profile, frameworks, incremental=incremental)
 
         repo.file_count = len(walked)
-        repo.symbol_count = _count_symbols(session)
+        repo.symbol_count = _count_symbols(session, repo.id)
         session.commit()
 
         return IndexStats(
@@ -284,7 +285,9 @@ def _load_or_create_repo(session: Session, root: Path, incremental: bool) -> Rep
         .first()
     )
     if repo is None:
-        repo = Repository(id=1, root_path=str(root), index_generation=0)
+        # allocate a unique repo id (a global DB holds many repositories, #116)
+        next_id = (session.execute(select(func.max(Repository.id))).scalar() or 0) + 1
+        repo = Repository(id=next_id, root_path=str(root), index_generation=0)
         session.add(repo)
         session.flush()
     repo.indexed_at = datetime.now(UTC)
@@ -303,11 +306,11 @@ def _known_file_states(session: Session, repo_id: int) -> dict[str, FileState]:
 
 def _wipe_repo_graph(session: Session, repo_id: int) -> None:
     """Full-reindex: clear the graph for this repo, keep the repo row + meta."""
-    file_ids = select(File.id).where(File.repo_id == repo_id)
-    symbol_ids = select(Symbol.id).where(Symbol.file_id.in_(file_ids))
-    session.execute(delete(Edge).where(Edge.src_file_id.in_(file_ids)))
-    session.execute(delete(Entrypoint).where(Entrypoint.symbol_id.in_(symbol_ids)))
-    session.execute(delete(Symbol))  # includes external placeholders (file_id NULL)
+    session.execute(delete(Edge).where(Edge.repo_id == repo_id))
+    session.execute(delete(Entrypoint).where(Entrypoint.repo_id == repo_id))
+    # repo_id also covers this repo's external placeholders (file_id NULL) without
+    # touching other repos' symbols in a global DB (#116)
+    session.execute(delete(Symbol).where(Symbol.repo_id == repo_id))
     session.execute(delete(File).where(File.repo_id == repo_id))
     session.execute(delete(Detection).where(Detection.repo_id == repo_id))
 
@@ -380,6 +383,7 @@ def _load_existing_symbols(session: Session, repo_id: int, table: SymbolTable) -
         )
         .join(File, Symbol.file_id == File.id, isouter=True)
         .join(parent, Symbol.parent_id == parent.id, isouter=True)
+        .where(Symbol.repo_id == repo_id)
     )
     for sid, qname, name, kind, type_ref, language, parent_qname in rows:
         if kind is SymbolKind.MODULE:
@@ -404,7 +408,7 @@ def _load_existing_symbols(session: Session, repo_id: int, table: SymbolTable) -
     base_rows = session.execute(
         select(Symbol.qname, Edge.dst_qname)
         .join(Edge, Edge.src_symbol_id == Symbol.id)
-        .where(Edge.kind.in_((EdgeKind.INHERITS, EdgeKind.IMPLEMENTS)))
+        .where(Edge.repo_id == repo_id, Edge.kind.in_((EdgeKind.INHERITS, EdgeKind.IMPLEMENTS)))
     )
     for class_qname, base_qname in base_rows:
         table.class_bases.setdefault(class_qname, []).append(base_qname)
@@ -412,9 +416,11 @@ def _load_existing_symbols(session: Session, repo_id: int, table: SymbolTable) -
             table.class_parents.setdefault(class_qname, []).append(base_qname)
 
 
-def _existing_externals(session: Session) -> dict[str, int]:
+def _existing_externals(session: Session, repo_id: int) -> dict[str, int]:
     rows = session.execute(
-        select(Symbol.qname, Symbol.id).where(Symbol.kind == SymbolKind.EXTERNAL)
+        select(Symbol.qname, Symbol.id).where(
+            Symbol.repo_id == repo_id, Symbol.kind == SymbolKind.EXTERNAL
+        )
     )
     # NOT dict(rows): a SQLAlchemy Result exposes .keys(), so dict() would treat it
     # as a mapping and subscript it (TypeError). Unpack each Row explicitly.
@@ -515,7 +521,7 @@ def _detect_frameworks(manifests, extractions, walked, profile: RepoLanguageProf
     return frameworks, {fw.name for fw in frameworks}
 
 
-def _write_symbols(session, extractions, file_id_by_path, alloc, table):
+def _write_symbols(session, extractions, file_id_by_path, alloc, table, repo_id):
     symbol_rows: list[dict] = []
     module_ids: dict[str, int] = {}
     for path, x, _pkg in extractions:
@@ -534,6 +540,7 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
         symbol_rows.append(
             {
                 "id": module_id,
+                "repo_id": repo_id,
                 "file_id": file_id_by_path[path],
                 "kind": SymbolKind.MODULE,
                 "name": x.module_path.rsplit(".", 1)[-1],
@@ -574,6 +581,7 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
             symbol_rows.append(
                 {
                     "id": symbol_id,
+                    "repo_id": repo_id,
                     "file_id": file_id_by_path[path],
                     "kind": raw.kind,
                     "name": raw.name,
@@ -622,6 +630,7 @@ def _write_edges_and_entrypoints(
     externals,
     alloc,
     sink_registry: SinkRegistry,
+    repo_id: int,
 ):
     # Stream edge/entrypoint rows to the DB in batches instead of accumulating the
     # whole graph's rows in Python lists first — the edge list alone is the largest
@@ -687,6 +696,7 @@ def _write_edges_and_entrypoints(
             edge_writer.add(
                 {
                     "id": alloc.take(Edge),
+                    "repo_id": repo_id,
                     "kind": edge.kind,
                     "src_symbol_id": edge.src_symbol_id,
                     "dst_symbol_id": edge.dst_symbol_id,
@@ -718,6 +728,7 @@ def _write_edges_and_entrypoints(
             entrypoint_writer.add(
                 {
                     "id": alloc.take(Entrypoint),
+                    "repo_id": repo_id,
                     "kind": hint.kind,
                     "framework": hint.framework,
                     "symbol_id": symbol_id,
@@ -739,6 +750,7 @@ def _write_config_entrypoints(
     table: SymbolTable,
     alloc: IdAllocator,
     incremental: bool,
+    repo_id: int,
 ) -> int:
     """Scan serverless/SAM/Procfile/Dockerfile and bind their handlers to symbols.
 
@@ -752,7 +764,11 @@ def _write_config_entrypoints(
     )
 
     if incremental:
-        session.execute(delete(Entrypoint).where(Entrypoint.framework.in_(CONFIG_FRAMEWORKS)))
+        session.execute(
+            delete(Entrypoint).where(
+                Entrypoint.repo_id == repo_id, Entrypoint.framework.in_(CONFIG_FRAMEWORKS)
+            )
+        )
 
     rows = []
     for hint in scan_config_entrypoints(root):
@@ -762,6 +778,7 @@ def _write_config_entrypoints(
         rows.append(
             {
                 "id": alloc.take(Entrypoint),
+                "repo_id": repo_id,
                 "kind": hint.kind,
                 "framework": hint.framework,
                 "symbol_id": symbol_id,
@@ -774,12 +791,14 @@ def _write_config_entrypoints(
     return len(rows)
 
 
-def _heal_dangling_edges(session, table: SymbolTable, new_qnames: set[str]) -> None:
+def _heal_dangling_edges(session, table: SymbolTable, new_qnames: set[str], repo_id: int) -> None:
     """Re-bind edges left NULL (degraded on wipe, or targeting a not-yet-existing
     symbol) whose dst_qname now names a freshly-created symbol."""
     dangling = session.execute(
         select(Edge.id, Edge.dst_qname, Edge.confidence).where(
-            Edge.dst_symbol_id.is_(None), Edge.dst_qname.in_(new_qnames)
+            Edge.repo_id == repo_id,
+            Edge.dst_symbol_id.is_(None),
+            Edge.dst_qname.in_(new_qnames),
         )
     ).all()
     updates = []
@@ -798,15 +817,22 @@ def _heal_dangling_edges(session, table: SymbolTable, new_qnames: set[str]) -> N
         session.execute(update(Edge), updates)
 
 
-def _gc_orphan_externals(session) -> None:
-    """Drop external placeholder symbols no edge points at anymore.
+def _gc_orphan_externals(session, repo_id: int) -> None:
+    """Drop this repo's external placeholder symbols no edge points at anymore.
 
     Full re-index never creates them; deleting them keeps an incremental graph
-    byte-identical to a full one after a file's last reference disappears.
+    byte-identical to a full one after a file's last reference disappears. Scoped
+    to the repo so another repo's externals are never GC'd in a global DB (#116).
     """
-    referenced = select(Edge.dst_symbol_id).where(Edge.dst_symbol_id.is_not(None))
+    referenced = select(Edge.dst_symbol_id).where(
+        Edge.repo_id == repo_id, Edge.dst_symbol_id.is_not(None)
+    )
     session.execute(
-        delete(Symbol).where(Symbol.kind == SymbolKind.EXTERNAL, Symbol.id.not_in(referenced))
+        delete(Symbol).where(
+            Symbol.repo_id == repo_id,
+            Symbol.kind == SymbolKind.EXTERNAL,
+            Symbol.id.not_in(referenced),
+        )
     )
 
 
@@ -876,7 +902,8 @@ def _write_detections(
         bulk_insert(session, Detection, rows)
 
 
-def _count_symbols(session) -> int:
-    from sqlalchemy import func
-
-    return session.execute(select(func.count(Symbol.id))).scalar() or 0
+def _count_symbols(session, repo_id: int) -> int:
+    return (
+        session.execute(select(func.count(Symbol.id)).where(Symbol.repo_id == repo_id)).scalar()
+        or 0
+    )

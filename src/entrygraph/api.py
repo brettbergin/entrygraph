@@ -143,9 +143,40 @@ def _has_sanitizer(path: CallPath) -> bool:
     return any(e.sanitized_by for e in path.edges)
 
 
+def _lookup_repo_id(engine: Engine, root: Path | None = None) -> int:
+    """Resolve which repository in a (possibly global multi-repo) DB to bind to.
+
+    With an explicit ``root``, match its Repository row. Without one, use the sole
+    repository if the DB holds exactly one (keeps single-repo callers simple);
+    otherwise the choice is ambiguous and must be made explicit. (#116)"""
+    with Session(engine) as session:
+        if root is not None:
+            rid = session.execute(
+                select(models.Repository.id).where(models.Repository.root_path == str(root))
+            ).scalar()
+            if rid is None:
+                raise RepositoryNotIndexedError(f"no indexed repository at {root}")
+            return rid
+        ids = (
+            session.execute(select(models.Repository.id).order_by(models.Repository.id))
+            .scalars()
+            .all()
+        )
+        if len(ids) == 1:
+            return ids[0]
+        if not ids:
+            raise RepositoryNotIndexedError("database has no indexed repository")
+        raise RepositoryNotIndexedError(
+            "database holds multiple repositories; select one with a repo root"
+        )
+
+
 class CodeGraph:
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, engine: Engine, repo_id: int | None = None) -> None:
         self._engine = engine
+        # every read is scoped to this repo; omit repo_id to bind the sole repo of a
+        # single-repo DB (the common case), else pass one explicitly (#116)
+        self._repo_id = repo_id if repo_id is not None else _lookup_repo_id(engine)
         self._session_factory = make_session_factory(engine)
         self._adjacency: dict[tuple[frozenset[str], int], AdjacencyCache] = {}
         self._last_index_stats: IndexStats | None = None
@@ -156,7 +187,9 @@ class CodeGraph:
         """The indexed repository's root path on disk, or None if unavailable — lets
         callers read original source lines for a symbol/edge location."""
         with self._session_factory() as session:
-            return session.execute(select(models.Repository.root_path)).scalar()
+            return session.execute(
+                select(models.Repository.root_path).where(models.Repository.id == self._repo_id)
+            ).scalar()
 
     # ---------------- construction ----------------
 
@@ -178,18 +211,21 @@ class CodeGraph:
         root = Path(root).resolve()
         db_path = Path(db) if db else root / DEFAULT_DB_NAME
         engine = make_engine(db_path)
-        graph = cls(engine)
-        graph._last_index_stats = index_repository(root, engine, include_tests=include_tests)
+        stats = index_repository(root, engine, include_tests=include_tests)
+        graph = cls(engine, _lookup_repo_id(engine, root))
+        graph._last_index_stats = stats
         return graph
 
     @classmethod
-    def open(cls, db: str | Path) -> CodeGraph:
+    def open(cls, db: str | Path, *, root: str | Path | None = None) -> CodeGraph:
+        """Open an index. In a global multi-repo DB, ``root`` selects which repo to
+        query; it may be omitted only when the DB holds a single repository."""
         db_path = Path(db)
         if not db_path.exists():
             raise DatabaseNotFoundError(f"no index database at {db_path}")
         engine = make_engine(db_path)
         check_schema(engine)
-        return cls(engine)
+        return cls(engine, _lookup_repo_id(engine, Path(root).resolve() if root else None))
 
     def close(self) -> None:
         self._engine.dispose()
@@ -217,6 +253,7 @@ class CodeGraph:
         with self._session_factory() as session:
             return q.select_symbols(
                 session,
+                self._repo_id,
                 kind=kind,
                 name=name,
                 qname=qname,
@@ -248,7 +285,7 @@ class CodeGraph:
 
     def files(self, *, language: str | None = None, path: str | None = None) -> list[FileInfo]:
         with self._session_factory() as session:
-            return q.select_files(session, language=language, path=path)
+            return q.select_files(session, self._repo_id, language=language, path=path)
 
     # ---------------- detection ----------------
 
@@ -256,7 +293,9 @@ class CodeGraph:
         with self._session_factory() as session:
             rows = (
                 session.execute(
-                    select(models.Detection).order_by(models.Detection.confidence.desc())
+                    select(models.Detection)
+                    .where(models.Detection.repo_id == self._repo_id)
+                    .order_by(models.Detection.confidence.desc())
                 )
                 .scalars()
                 .all()
@@ -298,7 +337,7 @@ class CodeGraph:
     ) -> list[Entrypoint]:
         with self._session_factory() as session:
             return q.select_entrypoints(
-                session, kind=kind, framework=framework, route=route, limit=limit
+                session, self._repo_id, kind=kind, framework=framework, route=route, limit=limit
             )
 
     # ---------------- traversal ----------------
@@ -320,11 +359,15 @@ class CodeGraph:
             if not ids:
                 return []
             rows = (
-                session.execute(select(models.Edge).where(models.Edge.dst_symbol_id.in_(ids)))
+                session.execute(
+                    select(models.Edge).where(
+                        models.Edge.repo_id == self._repo_id, models.Edge.dst_symbol_id.in_(ids)
+                    )
+                )
                 .scalars()
                 .all()
             )
-            src_map = q.symbols_by_ids(session, {r.src_symbol_id for r in rows})
+            src_map = q.symbols_by_ids(session, self._repo_id, {r.src_symbol_id for r in rows})
             return [
                 Edge(
                     id=r.id,
@@ -489,7 +532,7 @@ class CodeGraph:
                 empty.truncated = truncated
                 return empty
             all_ids = {node for path in raw_paths for node, _ in path}
-            symbol_map = q.symbols_by_ids(session, all_ids)
+            symbol_map = q.symbols_by_ids(session, self._repo_id, all_ids)
             registry = self._registry(session)
             edge_map = self._edge_rows(session, raw_paths)
             source_kinds = self._source_kinds(session, source_sets)
@@ -564,7 +607,13 @@ class CodeGraph:
         from entrygraph.pipeline.scanner import index_repository
 
         with self._session_factory() as session:
-            repo = session.execute(select(models.Repository)).scalars().first()
+            repo = (
+                session.execute(
+                    select(models.Repository).where(models.Repository.id == self._repo_id)
+                )
+                .scalars()
+                .first()
+            )
         if repo is None:
             raise RepositoryNotIndexedError("database has no indexed repository")
         stats = index_repository(
@@ -578,8 +627,13 @@ class CodeGraph:
         return stats
 
     def stats(self) -> GraphStats:
+        rid = self._repo_id
         with self._session_factory() as session:
-            repo = session.execute(select(models.Repository)).scalars().first()
+            repo = (
+                session.execute(select(models.Repository).where(models.Repository.id == rid))
+                .scalars()
+                .first()
+            )
             if repo is None:
                 raise RepositoryNotIndexedError("database has no indexed repository")
 
@@ -589,18 +643,28 @@ class CodeGraph:
             return GraphStats(
                 repo_root=repo.root_path,
                 index_generation=repo.index_generation,
-                files=count(select(func.count(models.File.id))),
-                symbols=count(select(func.count(models.Symbol.id))),
-                edges=count(select(func.count(models.Edge.id))),
-                resolved_edges=count(
-                    select(func.count(models.Edge.id)).where(models.Edge.dst_symbol_id.is_not(None))
+                files=count(select(func.count(models.File.id)).where(models.File.repo_id == rid)),
+                symbols=count(
+                    select(func.count(models.Symbol.id)).where(models.Symbol.repo_id == rid)
                 ),
-                entrypoints=count(select(func.count(models.Entrypoint.id))),
+                edges=count(select(func.count(models.Edge.id)).where(models.Edge.repo_id == rid)),
+                resolved_edges=count(
+                    select(func.count(models.Edge.id)).where(
+                        models.Edge.repo_id == rid, models.Edge.dst_symbol_id.is_not(None)
+                    )
+                ),
+                entrypoints=count(
+                    select(func.count(models.Entrypoint.id)).where(models.Entrypoint.repo_id == rid)
+                ),
                 sink_edges=count(
-                    select(func.count(models.Edge.id)).where(models.Edge.sink_id.is_not(None))
+                    select(func.count(models.Edge.id)).where(
+                        models.Edge.repo_id == rid, models.Edge.sink_id.is_not(None)
+                    )
                 ),
                 source_edges=count(
-                    select(func.count(models.Edge.id)).where(models.Edge.source_id.is_not(None))
+                    select(func.count(models.Edge.id)).where(
+                        models.Edge.repo_id == rid, models.Edge.source_id.is_not(None)
+                    )
                 ),
             )
 
@@ -616,7 +680,9 @@ class CodeGraph:
     # ---------------- internals ----------------
 
     def _generation(self, session: Session) -> int:
-        gen = session.execute(select(models.Repository.index_generation)).scalar()
+        gen = session.execute(
+            select(models.Repository.index_generation).where(models.Repository.id == self._repo_id)
+        ).scalar()
         return gen or 0
 
     def _traverser(
@@ -630,7 +696,9 @@ class CodeGraph:
         if engine == "sql":
             from entrygraph.graph.cte import CteEngine
 
-            return CteEngine(session, frozenset(edge_kinds), min_confidence, include_cha)
+            return CteEngine(
+                session, frozenset(edge_kinds), min_confidence, include_cha, self._repo_id
+            )
         if engine != "memory":
             raise ValueError(f"unknown reachability engine {engine!r} (use 'memory' or 'sql')")
         # one shared cache per (kinds, generation); confidence/CHA filtering is
@@ -643,7 +711,7 @@ class CodeGraph:
         key = (kinds, generation)
         cache = self._adjacency.get(key)
         if cache is None:
-            cache = AdjacencyCache.build(session, generation, kinds)
+            cache = AdjacencyCache.build(session, generation, kinds, self._repo_id)
             self._adjacency = {k: v for k, v in self._adjacency.items() if k[1] == generation}
             self._adjacency[key] = cache
         return cache
@@ -660,7 +728,7 @@ class CodeGraph:
             return {spec.id}
         if isinstance(spec, Entrypoint):
             return {spec.symbol.id}
-        return q.symbol_ids_matching(session, str(spec))
+        return q.symbol_ids_matching(session, self._repo_id, str(spec))
 
     def _resolve_sources(
         self,
@@ -688,7 +756,8 @@ class CodeGraph:
             if source_pattern_ids:
                 rows = session.execute(
                     select(models.Edge.src_symbol_id).where(
-                        models.Edge.source_id.in_(source_pattern_ids)
+                        models.Edge.repo_id == self._repo_id,
+                        models.Edge.source_id.in_(source_pattern_ids),
                     )
                 ).scalars()
                 explicit |= set(rows)
@@ -705,7 +774,8 @@ class CodeGraph:
                     if source_category in (category, "all"):
                         ep_rows = session.execute(
                             select(models.Entrypoint.symbol_id).where(
-                                models.Entrypoint.kind.in_(kinds)
+                                models.Entrypoint.repo_id == self._repo_id,
+                                models.Entrypoint.kind.in_(kinds),
                             )
                         ).scalars()
                         implicit |= set(ep_rows)
@@ -728,7 +798,9 @@ class CodeGraph:
         if not sink_ids:
             return set()
         rows = session.execute(
-            select(models.Edge.id).where(models.Edge.sink_id.in_(sink_ids))
+            select(models.Edge.id).where(
+                models.Edge.repo_id == self._repo_id, models.Edge.sink_id.in_(sink_ids)
+            )
         ).scalars()
         return set(rows)
 
@@ -740,6 +812,7 @@ class CodeGraph:
             if sink_ids:
                 rows = session.execute(
                     select(models.Edge.dst_symbol_id).where(
+                        models.Edge.repo_id == self._repo_id,
                         models.Edge.sink_id.in_(sink_ids),
                         models.Edge.dst_symbol_id.is_not(None),
                     )
@@ -756,7 +829,7 @@ class CodeGraph:
                 raise SymbolNotFoundError(f"no symbol matching {target!r}")
             cache = self._cache(session, edge_kinds)
             found = cache.neighborhood(ids, depth, direction)
-            symbol_map = q.symbols_by_ids(session, found)
+            symbol_map = q.symbols_by_ids(session, self._repo_id, found)
         return sorted(symbol_map.values(), key=lambda s: s.qname)
 
     def _registry(self, session: Session):
@@ -769,7 +842,11 @@ class CodeGraph:
         registered patterns (so `register_sink()` invalidates it)."""
         from entrygraph.detect import taint
 
-        repo = session.execute(select(models.Repository)).scalars().first()
+        repo = (
+            session.execute(select(models.Repository).where(models.Repository.id == self._repo_id))
+            .scalars()
+            .first()
+        )
         root = repo.root_path if repo else None
         config_mtime = None
         if root is not None:
@@ -855,7 +932,9 @@ class CodeGraph:
         heads = {path[0][0] for path in raw_paths}
         if not heads:
             return built
-        repo_root = session.execute(select(models.Repository.root_path)).scalar()
+        repo_root = session.execute(
+            select(models.Repository.root_path).where(models.Repository.id == self._repo_id)
+        ).scalar()
         cache = FileFactCache(repo_root)
         accessor_lines = self._source_accessor_lines(session, heads)
         # hashes for every function file on any candidate path (not just heads)

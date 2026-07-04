@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from entrygraph.db.models import Base, Meta
 from entrygraph.errors import SchemaMismatchError
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6  # #116: repo_id on Symbol/Edge/Entrypoint for a global multi-repo DB
 
 
 def create_schema(engine: Engine) -> None:

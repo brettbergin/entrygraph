@@ -200,10 +200,10 @@ def test_partial_tree_still_extracts():
 
 
 def test_index_gin_app_reachability(tmp_engine):
-    graph = CodeGraph(tmp_engine)
     from entrygraph.pipeline.scanner import index_repository
 
     index_repository(GIN_APP, tmp_engine)
+    graph = CodeGraph(tmp_engine)
 
     # gin framework detected from the manifest + import
     report = graph.detect()

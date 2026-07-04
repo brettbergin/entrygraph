@@ -28,11 +28,13 @@ class CteEngine:
         kinds: frozenset[str],
         min_confidence: int = 0,
         include_cha: bool = True,
+        repo_id: int = 0,
     ) -> None:
         self.session = session
         self.kind_values = [EdgeKind(k).value for k in kinds]
         self.min_confidence = min_confidence
         self.include_cha = include_cha
+        self.repo_id = repo_id  # scope the walk to one repo in a global DB (#116)
 
     def reachable(self, sources: set[int], sinks: set[int], max_depth: int) -> bool:
         if sources & sinks:
@@ -63,6 +65,7 @@ class CteEngine:
                            1
                     FROM edges e
                     WHERE e.src_symbol_id IN :sources
+                      AND e.repo_id = :repo_id
                       AND e.src_symbol_id NOT IN :sinks
                       AND e.dst_symbol_id IS NOT NULL
                       AND e.kind IN :kinds
@@ -79,6 +82,7 @@ class CteEngine:
                     FROM walk w
                     JOIN edges e ON e.src_symbol_id = w.node
                     WHERE w.depth < :max_depth
+                      AND e.repo_id = :repo_id
                       AND w.node NOT IN :sinks
                       AND e.dst_symbol_id IS NOT NULL
                       AND e.kind IN :kinds
@@ -105,6 +109,7 @@ class CteEngine:
                 "max_depth": max_depth,
                 "cap": cap,
                 "sep": _SEP,
+                "repo_id": self.repo_id,
             },
         ).all()
 
