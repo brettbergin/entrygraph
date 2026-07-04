@@ -354,7 +354,7 @@ def _path_card(index: int, path, source_label: str | None, read_line=None) -> Gr
             # it); the left pad keeps it and its wrapped continuation aligned under
             # the name column, and the italic styling sets it apart from metadata.
             snip = Text(snip_text, style="italic red" if role == "sink" else "dim italic")
-            lines.append(Padding(snip, (0, 0, 0, 10)))
+            lines.append(Padding(snip, (0, 0, 0, 10), expand=False))
     if path.may_continue:
         lines.append(
             Text("       (path may continue via dynamic/excluded edges)", style="dim yellow")
@@ -528,11 +528,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--source-category",
         dest="source_category",
-        help="named taint-source category (e.g. http_input, env)",
+        help="named taint-source category (e.g. http_input, env_input) or 'all'",
     )
     p.add_argument("--sink", help="qname or glob (e.g. py:subprocess.run)")
     p.add_argument(
-        "--sink-category", dest="sink_category", help="named sink category (e.g. command_exec, sql)"
+        "--sink-category",
+        dest="sink_category",
+        help="named sink category (e.g. command_exec, sql) or 'all' for any tagged sink",
     )
     p.add_argument("--max-depth", dest="max_depth", type=int, default=25)
     p.add_argument("--max-paths", dest="max_paths", type=int, default=10)

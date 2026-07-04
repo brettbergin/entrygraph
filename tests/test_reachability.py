@@ -246,3 +246,18 @@ def test_route_handler_passed_by_reference_binds_to_the_handler(tmp_path):
     graph.close()
     chains = [[s.qname for s in p.symbols] for p in paths]
     assert ["controller.getUser", "js:child_process.exec"] in chains
+
+
+def test_sink_category_all_unions_every_tagged_sink(graph):
+    # `all` is a meta-category: any tagged sink of any category. It must include the
+    # command_exec path that `--sink-category command_exec` finds, and be a superset.
+    cmd = {
+        tuple(s.qname for s in p.symbols)
+        for p in graph.paths(source_category="http_input", sink_category="command_exec")
+    }
+    allp = {
+        tuple(s.qname for s in p.symbols)
+        for p in graph.paths(source_category="http_input", sink_category="all")
+    }
+    assert cmd and cmd <= allp
+    assert any(p and p[-1] == "py:subprocess.run" for p in allp)

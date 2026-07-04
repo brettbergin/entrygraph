@@ -604,7 +604,7 @@ class CodeGraph:
                     )
                 ).scalars()
                 ids |= set(rows)
-            if source_category == "http_input":
+            if source_category in ("http_input", "all"):
                 # Every HTTP route handler receives attacker-controlled request
                 # data, so the handler itself is an http_input source. This covers
                 # frameworks whose request access is a property read (Express

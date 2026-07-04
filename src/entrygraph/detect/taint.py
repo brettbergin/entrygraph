@@ -153,9 +153,14 @@ class SinkRegistry:
         return [s for s in self.sanitizers.values() if s.category == category]
 
     def ids_for_category(self, category: str) -> set[str]:
+        # "all" -> every tagged sink, regardless of category (any-sink queries)
+        if category == "all":
+            return set(self.sinks)
         return {s.id for s in self.sinks.values() if s.category == category}
 
     def source_ids_for_category(self, category: str) -> set[str]:
+        if category == "all":
+            return set(self.sources)
         return {s.id for s in self.sources.values() if s.category == category}
 
     def severity_of(self, sink_id: str | None) -> str | None:
