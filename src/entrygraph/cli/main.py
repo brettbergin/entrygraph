@@ -13,6 +13,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from rich.console import Group
+from rich.padding import Padding
 from rich.panel import Panel
 from rich.text import Text
 
@@ -277,18 +278,14 @@ def _line_reader(repo_root: str | None):
         if not lines or line > len(lines):
             return None
         text = lines[line - 1].strip()
-        return (text[:157] + "…") if len(text) > 158 else text
+        # generous cap so real code lines pass through whole (they word-wrap in the
+        # card); only bounds pathological minified lines.
+        return (text[:399] + "…") if len(text) > 400 else text
 
     return read
 
 
-def _crop(text: str, width: int) -> str:
-    return text if len(text) <= width else text[: max(1, width - 1)] + "…"
-
-
-def _path_card(
-    index: int, path, source_label: str | None, read_line=None, width: int = 100
-) -> Group:
+def _path_card(index: int, path, source_label: str | None, read_line=None) -> Group:
     """A finding card: SOURCE and SINK on labeled lines with clickable file:line, the
     call chain between them, and per-edge confidence — the shape a reviewer reads.
     When `read_line` is given, the literal source and sink lines are shown too."""
@@ -331,16 +328,16 @@ def _path_card(
 
     name_w = max(len(r[1]) for r in rows)
     labels = {"source": "source ", "hop": "  ↓    ", "sink": "sink   "}
-    snip_w = max(40, width - 12)  # snippet indent (10) + gutter (2)
 
     head = Text()
     head.append(f"[{index}] ", style="dim")
     head.append("risk ", style="dim")
     head.append_text(risk_text(path.risk_score))
     head.append(f" ({_risk_word(path.risk_score)})", style=risk_style(path.risk_score))
-    lines: list[Text] = [head]
+    lines: list = [head]
     for role, name, loc, ann in rows:
-        # crop rather than wrap: long file paths + tags otherwise wrap ugly on narrow terminals
+        # metadata rows crop rather than wrap: long file paths + tags otherwise leave
+        # the confidence word dangling on its own line on a narrow terminal.
         line = Text("  ", no_wrap=True, overflow="ellipsis")
         line.append(labels[role], style="bold" if role != "hop" else "dim")
         line.append(" ")
@@ -353,13 +350,11 @@ def _path_card(
         lines.append(line)
         snip_text = snippet.get(role)
         if snip_text:
-            snip = Text("          ", no_wrap=True, overflow="ellipsis")
-            snip.append("│ ", style="dim")
-            snip.append(
-                _crop(snip_text, snip_w),
-                style="italic red" if role == "sink" else "dim italic",
-            )
-            lines.append(snip)
+            # the literal code line word-wraps in full (this is the point of showing
+            # it); the left pad keeps it and its wrapped continuation aligned under
+            # the name column, and the italic styling sets it apart from metadata.
+            snip = Text(snip_text, style="italic red" if role == "sink" else "dim italic")
+            lines.append(Padding(snip, (0, 0, 0, 10)))
     if path.may_continue:
         lines.append(
             Text("       (path may continue via dynamic/excluded edges)", style="dim yellow")
@@ -450,7 +445,7 @@ def cmd_paths(args) -> int:
     con.print(f"[bold]{len(paths)}[/] path(s)  [dim]{origin} → {target}[/]\n")
     source_label = args.source_category or (args.source and "source")
     for i, path in enumerate(paths, 1):
-        con.print(_path_card(i, path, source_label, read_line, con.width))
+        con.print(_path_card(i, path, source_label, read_line))
         con.print()
     con.print(
         "[dim]confidence: exact/import = resolved · fuzzy/unresolved = speculative"
