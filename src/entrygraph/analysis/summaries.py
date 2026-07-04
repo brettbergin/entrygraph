@@ -70,18 +70,16 @@ def verify_interprocedural(
         return None
     if any(f is None for f in facts_list):
         return None
+    facts = [f for f in facts_list if f is not None]  # narrows the type; None-free by the guard
 
     visited: set[tuple[int, frozenset[int]]] = set()
     # Function 0: seed and propagate.
-    facts0 = facts_list[0]
-    assert facts0 is not None
-    tainted = propagate(facts0, seed_roots, source_lines)
+    tainted = propagate(facts[0], seed_roots, source_lines)
 
     # Walk each interior hop, carrying tainted argument positions forward.
     positions: set[int] | None = None
     for i in range(interior_hops):
-        facts_i = facts_list[i]
-        assert facts_i is not None
+        facts_i = facts[i]
         if i > 0:
             # seed function i from the positions tainted by the previous hop
             if positions is None:
@@ -100,8 +98,7 @@ def verify_interprocedural(
 
     # Terminal function: seed from the last hop's positions (unless single-function),
     # then test the sink call.
-    terminal = facts_list[-1]
-    assert terminal is not None
+    terminal = facts[-1]
     if interior_hops > 0:
         if positions is None:
             return None
