@@ -6,3 +6,4 @@
 (include_once_expression) @include
 (require_expression) @include
 (require_once_expression) @include
+(subscript_expression) @subscript

@@ -118,6 +118,35 @@ severity = "low"
 callee = "php:{md5,sha1,mt_rand,rand}"
 description = "Weak hashing / insecure randomness"
 
+# PHP superglobals — subscript reads ($_GET["x"]) synthesized by the extractor (#87C)
+[[source]]
+id = "php.superglobal.get"
+category = "http_input"
+channel = "query"
+callee = "php:$_GET"
+description = "$_GET query input"
+
+[[source]]
+id = "php.superglobal.post"
+category = "http_input"
+channel = "form"
+callee = "php:$_POST"
+description = "$_POST form input"
+
+[[source]]
+id = "php.superglobal.request"
+category = "http_input"
+channel = "body"
+callee = "php:$_REQUEST"
+description = "$_REQUEST input"
+
+[[source]]
+id = "php.superglobal.cookie"
+category = "http_input"
+channel = "cookie"
+callee = "php:$_COOKIE"
+description = "$_COOKIE input"
+
 [[source]]
 id = "php.console.input"
 category = "cli_arg"

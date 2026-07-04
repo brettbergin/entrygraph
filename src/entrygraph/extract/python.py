@@ -7,7 +7,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
 
-from entrygraph.extract.base import FileContext, node_text, span_of, truncate
+from entrygraph.extract.base import (
+    ACCESSOR_ROOTS,
+    FileContext,
+    node_text,
+    span_of,
+    subscript_key,
+    truncate,
+)
 from entrygraph.extract.ir import FileExtraction, RawImport, RawReference, RawSymbol
 from entrygraph.kinds import SymbolKind
 from entrygraph.parsing.queries import captures, load_query
@@ -260,6 +267,9 @@ class PythonExtractor:
             )
             self._emit_callbacks(args, caller, out)
 
+        for node in caps.get("subscript", []):
+            self._emit_subscript_source(node, ctx, out)
+
         for node in caps.get("decorator", []):
             expr = node.named_children[0] if node.named_children else None
             if expr is None:
@@ -284,6 +294,32 @@ class PythonExtractor:
                     caller_qualified_name=self._caller(node, ctx),
                 )
             )
+
+    def _emit_subscript_source(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
+        """`request.args["q"]` reads an input but is not a call, so it produces no
+        source edge. Synthesize an accessor-read reference (matching the call form
+        `request.args.get`) carrying the key, when rooted at a request accessor (#87C)."""
+        value = node.child_by_field_name("value")
+        index = node.child_by_field_name("subscript")
+        if value is None or index is None or value.type != "attribute":
+            return
+        accessor = node_text(value)  # "request.args"
+        root = accessor.split(".", 1)[0].split("[", 1)[0]
+        if root not in ACCESSOR_ROOTS:
+            return
+        key = subscript_key(node_text(index))
+        out.references.append(
+            RawReference(
+                kind="call",
+                callee_text=accessor,
+                callee_name=accessor.rsplit(".", 1)[-1],
+                receiver_text=accessor.rsplit(".", 1)[0] if "." in accessor else None,
+                span=span_of(node),
+                caller_qualified_name=self._caller(node, ctx),
+                arg_count=1,
+                arg_preview=f'("{key}")' if key else None,
+            )
+        )
 
     def _emit_dynamic_call(
         self, node: Node, fn: Node, caller: str | None, out: FileExtraction
