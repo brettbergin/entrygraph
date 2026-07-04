@@ -294,12 +294,16 @@ def _path_card(
     When `read_line` is given, the literal source and sink lines are shown too."""
     syms, edges = path.symbols, path.edges
     read_line = read_line or (lambda _f, _l: None)
+    # A module-level route source (whole Grape/Rails file) has no meaningful line —
+    # show just the file, not the arbitrary `:1`. Real handler symbols keep file:line.
+    src_file = getattr(syms[0], "file", None)
+    src_loc = src_file if syms[0].kind == "module" else _loc(src_file, syms[0].start_line)
     # rows: (role, name, location, annotation) — role in {source, hop, sink}
     rows: list[tuple[str, str, str | None, Text]] = [
         (
             "source",
             _display_name(syms[0]),
-            _loc(getattr(syms[0], "file", None), syms[0].start_line),
+            src_loc,
             Text(f"({source_label})", style="cyan") if source_label else Text(""),
         )
     ]
@@ -416,7 +420,9 @@ def cmd_paths(args) -> int:
                         "may_continue": p.may_continue,
                         "symbols": [s.qname for s in p.symbols],
                         "lines": [e.line for e in p.edges],
-                        "source_line": read_line(
+                        "source_line": None
+                        if p.symbols[0].kind == "module"
+                        else read_line(
                             getattr(p.symbols[0], "file", None), p.symbols[0].start_line
                         ),
                         "sink_line": read_line(
