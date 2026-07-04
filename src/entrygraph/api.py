@@ -93,10 +93,13 @@ class PathResults(list):
 
     It is a plain list for every existing use (iteration, len, indexing); the
     `truncated` flag lets the CLI warn when 0 paths may mean "budget spent", not
-    "no reachable sink".
+    "no reachable sink". `mode` records how the adaptive search produced the result
+    ("precise" | "widened" | "strict" | "explicit"), so the CLI can say when it
+    fell back to the lower-confidence frontier.
     """
 
     truncated: bool = False
+    mode: str | None = None
 
 
 def _has_sanitizer(path: CallPath) -> bool:
@@ -307,21 +310,91 @@ class CodeGraph:
         include_callbacks: bool = False,
         prune_sanitized: bool = False,
         engine: str = "memory",
+        strict: bool = False,
     ) -> list[CallPath]:
-        """Enumerate source->sink call paths, risk-ranked (highest first).
+        """Enumerate source->sink call paths, risk-ranked (highest first), adaptively.
 
-        Sources are an explicit `source` spec (qname/glob/Symbol/Entrypoint) and/or
-        a `source_category` resolved from the taint-source catalog (e.g. every call
-        site of an `http_input`/`env` source). Sinks work the same via `sink` /
-        `sink_category`.
+        Sources are an explicit `source` spec (qname/glob/Symbol/Entrypoint) and/or a
+        `source_category` from the taint-source catalog; sinks work the same. Each
+        path carries a heuristic `risk_score` and `may_continue`; `prune_sanitized`
+        drops paths neutralized by a registered sanitizer.
 
-        By default only EXACT/IMPORT edges are traversed; `include_fuzzy` /
-        `include_unresolved` lower the confidence floor (an explicit
-        `min_confidence` int overrides the flags). `include_callbacks` also
-        follows PASSED_AS_CALLBACK edges. Each returned path carries a heuristic
-        `risk_score` and a `may_continue` flag; `prune_sanitized` drops paths
-        neutralized by a registered sanitizer.
+        By default the search is **adaptive**: it first tries the high-confidence
+        frontier (resolved EXACT/IMPORT/unique-name edges), and only if that finds
+        nothing (or is budget-truncated) does it widen to the speculative frontier
+        (class-hierarchy, unresolved wildcard sinks, and callback edges). This keeps
+        small, well-resolved repos precise while still surfacing leads on large,
+        dynamic ones — no flags to remember. The result's `mode` records which pass
+        produced it ("precise" | "widened").
+
+        `strict=True` forces the precise pass only (never widens). Passing any of
+        `include_fuzzy` / `include_unresolved` / `include_callbacks` / an explicit
+        `min_confidence` runs exactly that frontier once (mode "explicit").
         """
+        forced = (
+            strict
+            or include_fuzzy
+            or include_unresolved
+            or include_callbacks
+            or min_confidence is not None
+        )
+
+        def run(min_conf, fuzzy, unresolved, callbacks) -> PathResults:
+            return self._paths_search(
+                source=source,
+                source_category=source_category,
+                sink=sink,
+                sink_category=sink_category,
+                max_depth=max_depth,
+                max_paths=max_paths,
+                edge_kinds=edge_kinds,
+                prune_sanitized=prune_sanitized,
+                engine=engine,
+                min_confidence=min_conf,
+                include_fuzzy=fuzzy,
+                include_unresolved=unresolved,
+                include_callbacks=callbacks,
+            )
+
+        if forced:
+            out = run(min_confidence, include_fuzzy, include_unresolved, include_callbacks)
+            out.mode = "strict" if strict else "explicit"
+            return out
+        # Adaptive escalation, cheapest frontier first. Lowering the confidence floor
+        # and adding class-hierarchy edges reuse the same cached adjacency (only the
+        # traversal filter changes), so tier 2 is free after tier 1; adding callback
+        # edges changes the edge set and rebuilds, so it's the last resort — most
+        # widened hits (wildcard sinks) are found at tier 2 without paying for it.
+        precise = run(None, False, False, False)  # tier 1: resolved edges only
+        if precise and not precise.truncated:
+            precise.mode = "precise"
+            return precise
+        widened = run(None, True, True, False)  # tier 2: + CHA + unresolved (same adjacency)
+        if widened and not widened.truncated:
+            widened.mode = "widened"
+            return widened
+        deep = run(None, True, True, True)  # tier 3: + callback edges (rebuilds adjacency)
+        deep.mode = "widened"
+        return deep
+
+    def _paths_search(
+        self,
+        *,
+        source: SourceSpec | None = None,
+        source_category: str | None = None,
+        sink: SourceSpec | None = None,
+        sink_category: str | None = None,
+        max_depth: int = 25,
+        max_paths: int = 10,
+        edge_kinds: tuple[str, ...] = ("calls",),
+        min_confidence: int | None = None,
+        include_fuzzy: bool = False,
+        include_unresolved: bool = False,
+        include_callbacks: bool = False,
+        prune_sanitized: bool = False,
+        engine: str = "memory",
+    ) -> PathResults:
+        """One source->sink enumeration at a fixed confidence frontier (see `paths`)."""
         floor, include_cha = _traversal_params(min_confidence, include_fuzzy, include_unresolved)
         kinds = (*edge_kinds, "callback") if include_callbacks else edge_kinds
         with self._session_factory() as session:

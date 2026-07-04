@@ -282,6 +282,16 @@ def cmd_paths(args) -> int:
             include_unresolved=args.include_unresolved,
             include_callbacks=args.include_callbacks,
             prune_sanitized=args.prune_sanitized,
+            strict=args.strict,
+        )
+    if getattr(paths, "mode", None) == "widened":
+        # The adaptive search found no high-confidence paths and fell back to the
+        # speculative frontier (class-hierarchy, unresolved wildcard sinks, callbacks)
+        # — common on large/dynamic codebases. Say so, since these are lower-confidence.
+        print(
+            "note: no high-confidence paths; widened to the speculative frontier "
+            "(fuzzy/unresolved/callback edges — lower confidence). Use --strict to disable.",
+            file=sys.stderr,
         )
     truncated = bool(getattr(paths, "truncated", False))
     if truncated:
@@ -416,22 +426,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="explicit confidence floor (overrides --include-* flags)",
     )
     p.add_argument(
+        "--strict",
+        action="store_true",
+        help="only report high-confidence (resolved) paths; disable the adaptive "
+        "fallback that widens to the speculative frontier when none are found",
+    )
+    # The search is adaptive by default (precise first, widen automatically if empty),
+    # so these are rarely needed; each forces exactly that frontier for one run.
+    p.add_argument(
         "--include-fuzzy",
         dest="include_fuzzy",
         action="store_true",
-        help="also traverse speculative class-hierarchy (CHA) edges",
+        help="force traversal of speculative class-hierarchy (CHA) edges",
     )
     p.add_argument(
         "--include-unresolved",
         dest="include_unresolved",
         action="store_true",
-        help="also traverse unresolved wildcard-sink and dynamic-call edges",
+        help="force traversal of unresolved wildcard-sink and dynamic-call edges",
     )
     p.add_argument(
         "--include-callbacks",
         dest="include_callbacks",
         action="store_true",
-        help="also follow function/method values passed as arguments "
+        help="force following function/method values passed as arguments "
         "(handler registrations, callbacks)",
     )
     p.add_argument(
