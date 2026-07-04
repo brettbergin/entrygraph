@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar
 
 from entrygraph.extract.base import FileContext, node_text, span_of, truncate
-from entrygraph.extract.ir import FileExtraction, RawImport, RawReference, RawSymbol
+from entrygraph.extract.ir import FileExtraction, RawBinding, RawImport, RawReference, RawSymbol
 from entrygraph.kinds import SymbolKind
 from entrygraph.parsing.queries import captures, load_query
 
@@ -56,6 +56,7 @@ class GoExtractor:
         self._extract_definitions(root, ctx, out)
         self._extract_imports(root, ctx, out)
         self._extract_calls(root, ctx, out)
+        self._extract_bindings(root, ctx, out)
         return out
 
     # ---------------- definitions ----------------
@@ -280,6 +281,127 @@ class GoExtractor:
                     caller_qualified_name=self._caller(node, ctx),
                 )
             )
+
+    def _extract_bindings(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
+        """Syntactic name->type bindings (#98): struct field types, method
+        receivers, and constructor short-var declarations."""
+        # struct field types: field FQN -> its written type
+        for node in captures(load_query("go", "definitions"), root).get("def.field", []):
+            name_node = node.child_by_field_name("name")
+            type_node = node.child_by_field_name("type")
+            owner = self._enclosing_type_name(node)
+            if name_node is None or type_node is None or owner is None:
+                continue
+            type_text = self._full_type_text(type_node)
+            if not type_text:
+                continue
+            field_fqn = f"{ctx.module_path}.{owner}.{node_text(name_node)}"
+            out.bindings.append(
+                RawBinding(name=field_fqn, type_text=type_text, span=span_of(node), kind="field")
+            )
+        # receiver + constructor bindings via a full walk (queries don't cover these)
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "method_declaration":
+                self._emit_receiver_binding(n, ctx, out)
+            elif n.type == "short_var_declaration":
+                self._emit_short_var_binding(n, ctx, out)
+            stack.extend(n.children)
+
+    def _emit_receiver_binding(self, method: Node, ctx: FileContext, out: FileExtraction) -> None:
+        recv = method.child_by_field_name("receiver") or next(
+            (c for c in method.named_children if c.type == "parameter_list"), None
+        )
+        if recv is None:
+            return
+        decl = next((c for c in recv.named_children if c.type == "parameter_declaration"), None)
+        if decl is None:
+            return
+        name_node = decl.child_by_field_name("name") or next(
+            (c for c in decl.named_children if c.type == "identifier"), None
+        )
+        rtype = self._receiver_type(method)
+        if name_node is None or rtype is None:
+            return
+        scope = self._caller(method.child_by_field_name("body") or method, ctx) or self._caller(
+            method, ctx
+        )
+        out.bindings.append(
+            RawBinding(
+                name=node_text(name_node),
+                type_text=rtype,
+                span=span_of(decl),
+                scope=scope,
+                kind="receiver",
+            )
+        )
+
+    def _emit_short_var_binding(self, stmt: Node, ctx: FileContext, out: FileExtraction) -> None:
+        left = stmt.child_by_field_name("left")
+        right = stmt.child_by_field_name("right")
+        if left is None or right is None:
+            return
+        if len(left.named_children) != 1 or len(right.named_children) != 1:
+            return
+        ident = left.named_children[0]
+        rhs = right.named_children[0]
+        if ident.type != "identifier":
+            return
+        type_text = self._construction_type(rhs)
+        if not type_text:
+            return
+        out.bindings.append(
+            RawBinding(
+                name=node_text(ident),
+                type_text=type_text,
+                span=span_of(stmt),
+                scope=self._caller(stmt, ctx),
+                kind="constructor",
+            )
+        )
+
+    def _construction_type(self, rhs: Node) -> str | None:
+        """Type of a construction expr: `&Foo{}` / `Foo{}` / `NewFoo()`."""
+        n = rhs
+        if n.type == "unary_expression":  # &Foo{}
+            operand = n.child_by_field_name("operand") or (
+                n.named_children[0] if n.named_children else None
+            )
+            if operand is not None:
+                n = operand
+        if n.type == "composite_literal":
+            type_node = n.child_by_field_name("type")
+            return self._type_name(type_node)
+        if n.type == "call_expression":
+            fn = n.child_by_field_name("function")
+            if fn is not None and fn.type == "identifier":
+                fname = node_text(fn)
+                if fname.startswith("New") and len(fname) > 3:
+                    return fname[3:]  # NewFoo -> Foo (project-local constructor)
+        return None
+
+    def _full_type_text(self, type_node: Node) -> str | None:
+        """Written type incl. package qualifier, pointers stripped (`*pkg.T` -> `pkg.T`)."""
+        n = type_node
+        if n.type == "pointer_type":
+            inner = next(
+                (
+                    c
+                    for c in n.named_children
+                    if c.type in ("type_identifier", "qualified_type", "generic_type")
+                ),
+                None,
+            )
+            if inner is None:
+                return None
+            n = inner
+        if n.type in ("type_identifier", "qualified_type"):
+            return node_text(n)
+        if n.type == "generic_type":
+            base = n.child_by_field_name("type")
+            return node_text(base) if base is not None else None
+        return None
 
     def _assign_target(self, call: Node) -> str | None:
         """LHS variable when `call` is the sole RHS of a single-var `:=`/`=`.

@@ -30,7 +30,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar
 
 from entrygraph.extract.base import FileContext, node_text, span_of, truncate
-from entrygraph.extract.ir import FileExtraction, RawImport, RawReference, RawSymbol
+from entrygraph.extract.ir import (
+    FileExtraction,
+    RawBinding,
+    RawImport,
+    RawReference,
+    RawSymbol,
+)
 from entrygraph.kinds import SymbolKind
 from entrygraph.parsing.queries import captures, load_query
 
@@ -92,7 +98,92 @@ class CSharpExtractor:
         self._definitions(root, ctx, out)
         self._imports(root, ctx, out)
         self._calls(root, ctx, out)
+        self._bindings(root, ctx, out)
         return out
+
+    # ---------------- bindings (#98) ----------------
+
+    def _bindings(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
+        """Declared field/property types (`{TypeFQN}.member`) and local
+        `Foo x = new Foo()` constructor declarations."""
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "field_declaration":
+                self._emit_field_binding(n, ctx, out)
+            elif n.type == "property_declaration":
+                self._emit_property_binding(n, ctx, out)
+            elif n.type == "local_declaration_statement":
+                self._emit_local_binding(n, ctx, out)
+            stack.extend(n.children)
+
+    def _emit_field_binding(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
+        if self._nearest_type_scope(node) is None:
+            return
+        declaration = next(
+            (c for c in node.named_children if c.type == "variable_declaration"), None
+        )
+        if declaration is None:
+            return
+        type_node = declaration.child_by_field_name("type")
+        declarator = next(
+            (c for c in declaration.named_children if c.type == "variable_declarator"), None
+        )
+        if type_node is None or declarator is None:
+            return
+        name_node = declarator.child_by_field_name("name")
+        if name_node is None:
+            return
+        type_text = node_text(type_node).split("<", 1)[0].strip()
+        if not type_text or type_text == "var":
+            return
+        qname, _ = self._qualify(node, node_text(name_node), ctx)
+        out.bindings.append(
+            RawBinding(name=qname, type_text=type_text, span=span_of(node), kind="field")
+        )
+
+    def _emit_property_binding(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
+        if self._nearest_type_scope(node) is None:
+            return
+        type_node = node.child_by_field_name("type")
+        name_node = node.child_by_field_name("name")
+        if type_node is None or name_node is None:
+            return
+        type_text = node_text(type_node).split("<", 1)[0].strip()
+        if not type_text or type_text == "var":
+            return
+        qname, _ = self._qualify(node, node_text(name_node), ctx)
+        out.bindings.append(
+            RawBinding(name=qname, type_text=type_text, span=span_of(node), kind="field")
+        )
+
+    def _emit_local_binding(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
+        declaration = next(
+            (c for c in node.named_children if c.type == "variable_declaration"), None
+        )
+        if declaration is None:
+            return
+        type_node = declaration.child_by_field_name("type")
+        declarator = next(
+            (c for c in declaration.named_children if c.type == "variable_declarator"), None
+        )
+        if type_node is None or declarator is None:
+            return
+        name_node = declarator.child_by_field_name("name")
+        if name_node is None:
+            return
+        type_text = node_text(type_node).split("<", 1)[0].strip()
+        if not type_text or type_text in ("var", ""):
+            return
+        out.bindings.append(
+            RawBinding(
+                name=node_text(name_node),
+                type_text=type_text,
+                span=span_of(node),
+                scope=self._caller(node, ctx),
+                kind="constructor",
+            )
+        )
 
     # ---------------- definitions ----------------
 

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from entrygraph.db.models import Base, Meta
 from entrygraph.errors import SchemaMismatchError
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def create_schema(engine: Engine) -> None:

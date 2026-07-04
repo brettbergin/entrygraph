@@ -100,6 +100,10 @@ class Symbol(Base):
     signature: Mapped[str | None] = mapped_column(Text)
     docstring: Mapped[str | None] = mapped_column(Text)
     is_exported: Mapped[bool] = mapped_column(default=True)
+    # Resolved type reference for this symbol, kind-dependent (#98): FIELD/PROPERTY
+    # = declared field type qname; VARIABLE/CONSTANT = module-level binding type;
+    # FUNCTION = declared return type. NULL when no binding was resolved.
+    type_ref: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         Index("ix_symbols_file", "file_id"),

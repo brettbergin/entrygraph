@@ -35,6 +35,7 @@ from entrygraph.fs.walker import RepoLanguageProfile, WalkedFile, walk_repo
 from entrygraph.kinds import Confidence, EdgeKind, SymbolKind
 from entrygraph.pipeline.worker import extract_batch, extract_one
 from entrygraph.pipeline.writer import BatchedWriter, IdAllocator, bulk_insert
+from entrygraph.resolve.bindings import resolve_bindings
 from entrygraph.resolve.externals import ExternalRegistry
 from entrygraph.resolve.hierarchy import resolve_hierarchy
 from entrygraph.resolve.resolver import FileResolver
@@ -141,6 +142,11 @@ def index_repository(
 
         # ---- class hierarchy (parents + re-exports) before edge resolution ----
         resolve_hierarchy(extractions, table)
+
+        # ---- syntactic name->type bindings (#98): fills the table's binding maps
+        # and persists resolved type_ref on field/variable symbols ----
+        type_refs = resolve_bindings(extractions, table)
+        _write_type_refs(session, type_refs)
 
         # ---- resolve references -> edges + entrypoints ----
         externals = ExternalRegistry(lambda: alloc.take(Symbol))
@@ -341,18 +347,36 @@ def _dedup_entrypoint_hints(
     return [best[k] for k in order]
 
 
+def _write_type_refs(session: Session, type_refs: dict[int, str]) -> None:
+    """Persist resolved binding types onto their symbols (#98). Bulk UPDATE keyed
+    by symbol id; a no-op when nothing resolved."""
+    if not type_refs:
+        return
+    session.execute(
+        update(Symbol),
+        [{"id": sid, "type_ref": ref} for sid, ref in type_refs.items()],
+    )
+
+
 def _load_existing_symbols(session: Session, repo_id: int, table: SymbolTable) -> None:
     # File.language feeds same-language fuzzy scoping; external symbols have no file.
     rows = session.execute(
-        select(Symbol.id, Symbol.qname, Symbol.name, Symbol.kind, File.language).join(
-            File, Symbol.file_id == File.id, isouter=True
-        )
+        select(
+            Symbol.id, Symbol.qname, Symbol.name, Symbol.kind, Symbol.type_ref, File.language
+        ).join(File, Symbol.file_id == File.id, isouter=True)
     )
-    for sid, qname, name, kind, language in rows:
+    for sid, qname, name, kind, type_ref, language in rows:
         if kind is SymbolKind.MODULE:
             table.add_module(qname, sid, language)
         elif kind is not SymbolKind.EXTERNAL:
             table.add_symbol(sid, qname, name, kind, language)
+        # rebuild the binding maps from persisted type_ref (#98)
+        if type_ref:
+            if kind in (SymbolKind.FIELD, SymbolKind.PROPERTY):
+                table.field_types[qname] = type_ref
+            elif kind in (SymbolKind.VARIABLE, SymbolKind.CONSTANT) and "." in qname:
+                module, var = qname.rsplit(".", 1)
+                table.module_bindings.setdefault(module, {})[var] = type_ref
     # class bases/parents of surviving classes, from inherit + implement edges.
     # dst_qname is the already-resolved parent FQN, so it feeds both class_bases
     # (raw text, legacy) and class_parents (the transitive ancestor walk).
