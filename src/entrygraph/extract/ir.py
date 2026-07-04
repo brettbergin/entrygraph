@@ -33,6 +33,10 @@ class RawSymbol:
     modifiers: list[str] = field(default_factory=list)  # static/async/exported...
     docstring: str | None = None
     is_exported: bool = True
+    # Written return type of a function/method (`func New() *Ingester` -> "Ingester";
+    # Rust `fn make() -> Foo` -> "Foo"). Resolved to a qname in resolve_bindings and
+    # keyed into SymbolTable.return_types so `x := pkg.New(..)` types x (#113).
+    return_type_text: str | None = None
 
 
 @dataclass(slots=True)

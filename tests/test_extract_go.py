@@ -269,3 +269,64 @@ def test_per_file_main_collisions_bind_to_distinct_symbols(tmp_path):
     assert main_syms == 2
     assert len(rows) == 2  # two distinct main entrypoints
     assert len(set(rows)) == 2  # bound to two distinct symbols, not collapsed
+
+
+# ---------------- return types + call_result bindings (#113) ----------------
+
+
+def test_function_return_type_text():
+    x = extract(
+        "package ingester\n"
+        "type Ingester struct{}\n"
+        "func New(cfg int) *Ingester { return &Ingester{} }\n"
+        "func NewWithErr() (*Ingester, error) { return nil, nil }\n"
+        "func Nada() {}\n",
+        path="ingester/ingester.go",
+    )
+    ret = {s.qualified_name: s.return_type_text for s in x.symbols if s.kind is SymbolKind.FUNCTION}
+    assert ret["ingester.New"] == "Ingester"  # pointer stripped
+    assert ret["ingester.NewWithErr"] == "Ingester"  # first element of (T, error)
+    assert ret["ingester.Nada"] is None
+
+
+def test_method_return_type_text():
+    x = extract(
+        "package db\n"
+        "type Conn struct{}\n"
+        "type Pool struct{}\n"
+        "func (p *Pool) Get() *Conn { return &Conn{} }\n",
+        path="db/db.go",
+    )
+    m = next(s for s in x.symbols if s.kind is SymbolKind.METHOD)
+    assert m.qualified_name == "db.Pool.Get"
+    assert m.return_type_text == "Conn"
+
+
+def test_cross_package_call_emits_call_result_binding():
+    x = extract(
+        "package main\n"
+        'import "ex/ingester"\n'
+        "func Setup(s int) {\n"
+        "\timpl := ingester.New(0)\n"
+        "\t_ = impl\n"
+        "}\n",
+        path="main.go",
+    )
+    b = next(b for b in x.bindings if b.name == "impl")
+    assert b.type_text == "ingester.New"
+    assert b.kind == "call_result"
+    assert b.scope == "_root.Setup"
+
+
+def test_local_composite_literal_stays_constructor():
+    # &Foo{} / NewFoo() keep the direct-type "constructor" kind (no return-type hop)
+    x = extract(
+        "package p\n"
+        "type Foo struct{}\n"
+        "func mk() { a := &Foo{}; b := NewFoo(); _, _ = a, b }\n"
+        "func NewFoo() *Foo { return &Foo{} }\n",
+        path="p/p.go",
+    )
+    kinds = {b.name: (b.type_text, b.kind) for b in x.bindings}
+    assert kinds["a"] == ("Foo", "constructor")
+    assert kinds["b"] == ("Foo", "constructor")  # NewFoo -> Foo name heuristic

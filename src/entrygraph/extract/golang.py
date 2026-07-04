@@ -78,6 +78,7 @@ class GoExtractor:
                     parent_qualified_name=None,
                     signature=self._signature(node),
                     is_exported=_exported(name),
+                    return_type_text=self._return_type_text(node),
                 )
             )
 
@@ -102,6 +103,7 @@ class GoExtractor:
                     parent_qualified_name=parent_q,
                     signature=self._signature(node),
                     is_exported=_exported(name),
+                    return_type_text=self._return_type_text(node),
                 )
             )
 
@@ -349,21 +351,27 @@ class GoExtractor:
         rhs = right.named_children[0]
         if ident.type != "identifier":
             return
-        type_text = self._construction_type(rhs)
-        if not type_text:
+        built = self._construction_type(rhs)
+        if built is None:
             return
+        type_text, kind = built
         out.bindings.append(
             RawBinding(
                 name=node_text(ident),
                 type_text=type_text,
                 span=span_of(stmt),
                 scope=self._caller(stmt, ctx),
-                kind="constructor",
+                kind=kind,
             )
         )
 
-    def _construction_type(self, rhs: Node) -> str | None:
-        """Type of a construction expr: `&Foo{}` / `Foo{}` / `NewFoo()`."""
+    def _construction_type(self, rhs: Node) -> tuple[str, str] | None:
+        """(type_text, binding_kind) for a construction/call RHS.
+
+        `&Foo{}` / `Foo{}` -> ("Foo", "constructor"); `NewFoo()` -> ("Foo",
+        "constructor") via the local-factory name heuristic. Any other call —
+        crucially a cross-package `pkg.New(cfg)` — yields (callee_path,
+        "call_result"), typed later through the callee's return type (#113)."""
         n = rhs
         if n.type == "unary_expression":  # &Foo{}
             operand = n.child_by_field_name("operand") or (
@@ -373,14 +381,37 @@ class GoExtractor:
                 n = operand
         if n.type == "composite_literal":
             type_node = n.child_by_field_name("type")
-            return self._type_name(type_node)
+            type_text = self._type_name(type_node)
+            return (type_text, "constructor") if type_text else None
         if n.type == "call_expression":
             fn = n.child_by_field_name("function")
-            if fn is not None and fn.type == "identifier":
+            if fn is None:
+                return None
+            if fn.type == "identifier":
                 fname = node_text(fn)
                 if fname.startswith("New") and len(fname) > 3:
-                    return fname[3:]  # NewFoo -> Foo (project-local constructor)
+                    return (fname[3:], "constructor")  # NewFoo -> Foo (name heuristic)
+                return (fname, "call_result")  # foo() -> resolve via return type
+            if fn.type == "selector_expression":
+                return (node_text(fn), "call_result")  # pkg.New -> resolve via return type
         return None
+
+    def _return_type_text(self, node: Node) -> str | None:
+        """Written return type of a func/method decl, single type only. A tuple
+        result (`(*Ingester, error)`) uses the first element; multiple bare returns
+        can't be named to one type, so this stays best-effort for the factory case."""
+        result = node.child_by_field_name("result")
+        if result is None:
+            return None
+        if result.type == "parameter_list":
+            first = next(
+                (c for c in result.named_children if c.type == "parameter_declaration"), None
+            )
+            if first is None:
+                return None
+            type_node = first.child_by_field_name("type")
+            return self._full_type_text(type_node) if type_node is not None else None
+        return self._full_type_text(result)
 
     def _full_type_text(self, type_node: Node) -> str | None:
         """Written type incl. package qualifier, pointers stripped (`*pkg.T` -> `pkg.T`)."""

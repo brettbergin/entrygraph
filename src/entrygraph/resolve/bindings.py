@@ -6,8 +6,10 @@ file's import map — the same two-phase split the class hierarchy already uses 
 and fills the :class:`SymbolTable` binding maps plus a per-symbol ``type_ref``
 for persistence.
 
-Nothing consumes the maps yet in Phase 1 (no behavior change); the generic
-idiom resolvers in Phase 2 query them.
+Function/method return types are resolved the same way and keyed into
+``SymbolTable.return_types`` so a ``call_result`` binding (`impl := pkg.New(cfg)`)
+can be typed through its callee's return type (#113). Consumers query these maps
+via :class:`FileBindingView` (gRPC impl typing, router vars, sink receivers).
 """
 
 from __future__ import annotations
@@ -83,6 +85,38 @@ def _resolve_type(
     return f"{_LANG_PREFIX.get(language, language)}:{dotted}"
 
 
+def _resolve_binding(
+    b,
+    import_map: dict[str, str],
+    module_path: str,
+    language: str,
+    table: SymbolTable,
+    wildcards: list[str] | None,
+) -> str | None:
+    """Resolve one binding to a type qname.
+
+    A ``call_result`` binding's ``type_text`` is the *callee* path, not a type
+    (`impl := ingester.New(cfg)` records ``"ingester.New"``): resolve the callee to
+    a function fqn, then map through its return type via ``table.return_types``
+    (#113). Every other kind resolves ``type_text`` as a written type."""
+    if b.kind != "call_result":
+        return _resolve_type(b.type_text, import_map, module_path, language, table, wildcards)
+    # 1. callee resolved (same-module, or import target that is a project symbol —
+    #    Rust `use` paths, Go same-package) straight to a function with a return type
+    callee = _resolve_type(b.type_text, import_map, module_path, language, table, wildcards)
+    if callee is not None and callee in table.return_types:
+        return table.return_types[callee]
+    # 2. the callee didn't land on a project symbol — e.g. a Go cross-package import
+    #    path (`ex/ingester`) that doesn't match its directory module (`ingester`).
+    #    Fall back to a unique project function by bare name, the same fuzzy step the
+    #    call-edge resolver uses, then map through its return type. #113
+    name = b.type_text.replace("::", ".").rsplit(".", 1)[-1]
+    sid = table.unique_by_name(name, (SymbolKind.FUNCTION, SymbolKind.METHOD), language)
+    if sid is not None:
+        return table.return_types.get(table.qname_of.get(sid, ""))
+    return None
+
+
 class FileBindingView:
     """Per-file query surface over the resolved binding table.
 
@@ -101,8 +135,8 @@ class FileBindingView:
         # scope -> {name -> type qname}; None scope = module/class level
         self._scoped: dict[str | None, dict[str, str]] = {}
         for b in extraction.bindings:
-            resolved = _resolve_type(
-                b.type_text, self._import_map, self._module, self._lang, table, wildcards
+            resolved = _resolve_binding(
+                b, self._import_map, self._module, self._lang, table, wildcards
             )
             if resolved is None:
                 continue
@@ -158,6 +192,9 @@ def resolve_bindings(
 
     Runs after ``resolve_hierarchy`` (symbols + class parents present)."""
     type_refs: dict[int, str] = {}
+    # import maps are reused across both passes, so build them once
+    prepared = [(x, *build_import_map(x, is_package)) for _path, x, is_package in extractions]
+
     # index declared field/property + module-level variable symbols by fqn/module
     field_symbol_ids: dict[str, int] = {}
     for _path, x, _pkg in extractions:
@@ -167,13 +204,30 @@ def resolve_bindings(
                 if sid is not None:
                     field_symbol_ids[raw.qualified_name] = sid
 
-    for _path, x, is_package in extractions:
-        import_map, wildcards = build_import_map(x, is_package)
+    # Pass 1: resolve function/method return types first so a `call_result` binding
+    # in any file can look one up in pass 2, independent of file processing order
+    # (`impl := ingester.New(cfg)` may be indexed before ingester's package). #113
+    for x, import_map, wildcards in prepared:
+        for raw in x.symbols:
+            if raw.kind not in (SymbolKind.FUNCTION, SymbolKind.METHOD):
+                continue
+            if not raw.return_type_text:
+                continue
+            resolved = _resolve_type(
+                raw.return_type_text, import_map, x.module_path, x.language, table, wildcards
+            )
+            if resolved is None:
+                continue
+            table.return_types[raw.qualified_name] = resolved
+            sid = table.by_fqn.get(raw.qualified_name)
+            if sid is not None:
+                type_refs[sid] = resolved
+
+    # Pass 2: resolve every binding against the (now complete) type maps
+    for x, import_map, wildcards in prepared:
         module_map = table.module_bindings.setdefault(x.module_path, {})
         for b in x.bindings:
-            resolved = _resolve_type(
-                b.type_text, import_map, x.module_path, x.language, table, wildcards
-            )
+            resolved = _resolve_binding(b, import_map, x.module_path, x.language, table, wildcards)
             if resolved is None:
                 continue
             if b.kind == "field":

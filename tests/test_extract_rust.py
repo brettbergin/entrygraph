@@ -365,3 +365,55 @@ impl S {
     qnames = {s.qualified_name for s in x.symbols}
     assert "_root.S.real" in qnames
     assert "_root.S.only_for_tests" not in qnames
+
+
+# ---------------- return types + call_result bindings (#113) ----------------
+
+
+def test_rust_function_return_type_text():
+    x = extract(
+        """
+pub struct Ingester;
+pub fn make() -> Ingester { Ingester }
+pub fn nothing() {}
+""",
+        path="src/lib.rs",
+    )
+    ret = {s.qualified_name: s.return_type_text for s in x.symbols if s.kind is SymbolKind.FUNCTION}
+    assert ret["_root.make"] == "Ingester"
+    assert ret["_root.nothing"] is None
+
+
+def test_rust_free_call_emits_call_result_binding():
+    x = extract(
+        """
+pub fn make() -> u32 { 3 }
+pub fn run() {
+    let v = make();
+    let _ = v;
+}
+""",
+        path="src/lib.rs",
+    )
+    b = next(b for b in x.bindings if b.name == "v")
+    assert b.type_text == "make"
+    assert b.kind == "call_result"
+    assert b.scope == "_root.run"
+
+
+def test_rust_type_new_stays_constructor():
+    # Foo::new() / Foo::default() keep the direct-type "constructor" kind
+    x = extract(
+        """
+pub struct Foo;
+pub fn mk() {
+    let a = Foo::new();
+    let b = Foo::default();
+    let _ = (a, b);
+}
+""",
+        path="src/lib.rs",
+    )
+    kinds = {b.name: (b.type_text, b.kind) for b in x.bindings}
+    assert kinds["a"] == ("Foo", "constructor")
+    assert kinds["b"] == ("Foo", "constructor")

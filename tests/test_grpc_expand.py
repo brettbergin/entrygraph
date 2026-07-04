@@ -77,3 +77,64 @@ def test_local_constructor_impl_expands(tmp_path):
         assert routes == {"/Ingester/Push", "/Ingester/Query"}
     finally:
         g.close()
+
+
+def _write_cross_package_grpc(root):
+    (root / "go.mod").write_text("module ex\n")
+    (root / "ingester").mkdir()
+    (root / "ingester" / "ingester.go").write_text(
+        "package ingester\n"
+        "type Ingester struct{}\n"
+        "func (i *Ingester) Push(r int) {}\n"
+        "func (i *Ingester) Query(r int) {}\n"
+        "func (i *Ingester) helper() {}\n"
+        "func New(cfg int) *Ingester { return &Ingester{} }\n"
+    )
+    (root / "server.go").write_text(
+        "package main\n"
+        'import "ex/ingester"\n'
+        "func Setup(s int) {\n"
+        "\timpl := ingester.New(0)\n"
+        "\tRegisterIngesterServer(s, impl)\n"
+        "}\n"
+    )
+
+
+def test_cross_package_constructor_impl_expands(tmp_path):
+    # `impl := ingester.New(cfg)` where New lives in another package and returns
+    # *ingester.Ingester — typed via the callee's return type (#113)
+    _write_cross_package_grpc(tmp_path)
+    g = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    try:
+        rpc = {e.route: e for e in g.entrypoints() if e.kind == "rpc_handler"}
+        assert set(rpc) == {
+            "/Ingester/Push",
+            "/Ingester/Query",
+        }  # helper unexported; /Ingester gone
+        assert rpc["/Ingester/Push"].symbol.qname == "ingester.Ingester.Push"
+    finally:
+        g.close()
+
+
+def test_cross_package_impl_survives_incremental_reindex(tmp_path):
+    # the ingester package is unchanged on the second pass, so its return type must
+    # be rebuilt from the persisted type_ref for the impl to still type (#113)
+    from entrygraph.db.engine import make_engine
+    from entrygraph.db.meta import create_schema
+    from entrygraph.pipeline.scanner import index_repository
+
+    _write_cross_package_grpc(tmp_path)
+    engine = make_engine(tmp_path / "g.db")
+    create_schema(engine)
+    index_repository(tmp_path, engine)
+    # touch only server.go, then re-index incrementally
+    server = tmp_path / "server.go"
+    server.write_text(server.read_text() + "\n// touched\n")
+    index_repository(tmp_path, engine, incremental=True)
+    g = CodeGraph.open(tmp_path / "g.db")
+    try:
+        routes = {e.route for e in g.entrypoints() if e.kind == "rpc_handler"}
+        assert routes == {"/Ingester/Push", "/Ingester/Query"}
+    finally:
+        g.close()
+    engine.dispose()

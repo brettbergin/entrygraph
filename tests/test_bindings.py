@@ -271,3 +271,117 @@ def test_cross_file_import_followed_receiver_typing():
             }
         assert ("app.handler", "db.Pool.run_query", "binding") in rows
         engine.dispose()
+
+
+# ---------------- call_result return-type resolution (#113) ----------------
+
+
+def test_call_result_binding_resolves_via_return_type():
+    from entrygraph.kinds import SymbolKind
+
+    table = SymbolTable()
+    table.by_fqn["pkg.New"] = 10
+    table.kinds[10] = SymbolKind.FUNCTION
+    table.return_types["pkg.New"] = "pkg.Ingester"
+    ext = FileExtraction(
+        path="pkg/a.go",
+        language="go",
+        module_path="pkg",
+        parse_ok=True,
+        error_count=0,
+        bindings=[
+            RawBinding(
+                name="impl", type_text="New", span=_span(), scope="pkg.Setup", kind="call_result"
+            )
+        ],
+    )
+    view = FileBindingView(ext, table)
+    # same-package: "New" -> pkg.New -> its return type
+    assert view.type_of("impl", "pkg.Setup") == "pkg.Ingester"
+
+
+def test_call_result_cross_package_unique_name_fallback():
+    from entrygraph.kinds import SymbolKind
+
+    table = SymbolTable()
+    # the Go import path won't match the callee's directory module, so the callee
+    # resolves external; a uniquely-named project function still resolves by name
+    table.by_fqn["ingester.New"] = 7
+    table.qname_of[7] = "ingester.New"
+    table.by_name["New"].append(7)
+    table.kinds[7] = SymbolKind.FUNCTION
+    table.lang[7] = "go"
+    table.return_types["ingester.New"] = "ingester.Ingester"
+    ext = FileExtraction(
+        path="main.go",
+        language="go",
+        module_path="_root",
+        parse_ok=True,
+        error_count=0,
+        bindings=[
+            RawBinding(
+                name="impl",
+                type_text="ingester.New",  # no import map -> external, forces name fallback
+                span=_span(),
+                scope="_root.Setup",
+                kind="call_result",
+            )
+        ],
+    )
+    view = FileBindingView(ext, table)
+    assert view.type_of("impl", "_root.Setup") == "ingester.Ingester"
+
+
+def test_call_result_ambiguous_name_does_not_resolve():
+    from entrygraph.kinds import SymbolKind
+
+    table = SymbolTable()
+    # two functions named New -> ambiguous -> no fuzzy resolution (no false type)
+    for sid, mod in ((1, "a"), (2, "b")):
+        table.by_fqn[f"{mod}.New"] = sid
+        table.qname_of[sid] = f"{mod}.New"
+        table.by_name["New"].append(sid)
+        table.kinds[sid] = SymbolKind.FUNCTION
+        table.lang[sid] = "go"
+        table.return_types[f"{mod}.New"] = f"{mod}.T"
+    ext = FileExtraction(
+        path="main.go",
+        language="go",
+        module_path="_root",
+        parse_ok=True,
+        error_count=0,
+        bindings=[
+            RawBinding(
+                # unresolvable to a project fqn -> forces the bare-name fallback,
+                # which is ambiguous (two `New`) and must yield no type
+                name="x",
+                type_text="zzz.New",
+                span=_span(),
+                scope="_root.Setup",
+                kind="call_result",
+            )
+        ],
+    )
+    view = FileBindingView(ext, table)
+    assert view.type_of("x", "_root.Setup") is None
+
+
+def test_function_return_type_persisted_as_type_ref():
+    from entrygraph.db.engine import make_engine
+    from entrygraph.db.meta import create_schema
+
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td)
+        (p / "go.mod").write_text("module ex\n")
+        # a subdirectory package so the module_path is "a" (repo-root files are _root)
+        (p / "a").mkdir()
+        (p / "a" / "a.go").write_text("package a\ntype T struct{}\nfunc New() *T { return &T{} }\n")
+        engine = make_engine(p / "g.db")
+        create_schema(engine)
+        index_repository(p, engine)
+        with Session(engine) as s:
+            tr = s.execute(
+                select(models.Symbol.type_ref).where(models.Symbol.qname == "a.New")
+            ).scalar()
+        assert tr == "a.T"  # resolved return type persisted on the function
+        engine.dispose()
