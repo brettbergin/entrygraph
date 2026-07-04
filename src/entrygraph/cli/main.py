@@ -67,6 +67,43 @@ def _confidence_bar(confidence: float, width: int = 10) -> Text:
     return bar
 
 
+def _catalog_coverage():
+    """Language-name -> CatalogCoverage for the built-in registry (#95)."""
+    from entrygraph.detect.taint import builtin_registry, catalog_coverage
+
+    return catalog_coverage(builtin_registry())
+
+
+def _coverage_cell(cov) -> Text:
+    if cov is None:
+        return Text("none", style="red")
+    style = {"full": "green", "partial": "yellow", "minimal": "red"}[cov.tier]
+    cell = Text(cov.tier, style=style)
+    cell.append(f"  {cov.sinks} sinks · {cov.sources} sources · {cov.sanitizers} san", style="dim")
+    return cell
+
+
+def _thin_coverage_note(languages, path_count: int) -> str | None:
+    """One-line caveat when a low `paths` result may reflect catalog coverage,
+    not codebase safety (#95). `languages` are DetectedLanguage rows (dominant
+    first); fires for the dominant language when its tier isn't `full`."""
+    if path_count >= 3 or not languages:
+        return None
+    dominant = max(languages, key=lambda lang: lang.percent)
+    cov = _catalog_coverage().get(dominant.name)
+    if cov is None:
+        return (
+            f"note: {dominant.name} has no taint catalog — a low result reflects "
+            "missing coverage, not safety."
+        )
+    if cov.tier == "full":
+        return None
+    return (
+        f"note: {dominant.name} has {cov.tier} taint coverage ({cov.sinks} sinks, "
+        f"{cov.sources} sources) — a low result may reflect coverage, not safety."
+    )
+
+
 # ---------------- command handlers ----------------
 
 
@@ -137,12 +174,19 @@ def cmd_detect(args) -> int:
         return 0
     con = console()
 
+    coverage = _catalog_coverage()
     langs = render.table("Languages")
     langs.add_column("LANGUAGE", style="bold")
     langs.add_column("FILES", justify="right")
     langs.add_column("SHARE")
+    langs.add_column("TAINT CATALOG", style="dim")
     for lang in report.languages:
-        langs.add_row(lang.name, str(lang.file_count), _percent_bar(lang.percent))
+        langs.add_row(
+            lang.name,
+            str(lang.file_count),
+            _percent_bar(lang.percent),
+            _coverage_cell(coverage.get(lang.name)),
+        )
     con.print(langs)
 
     if report.frameworks:
@@ -392,6 +436,9 @@ def cmd_paths(args) -> int:
             strict=args.strict,
         )
         read_line = _line_reader(graph.repo_root)  # read original lines while db is open-adjacent
+        coverage_note = _thin_coverage_note(graph.detect().languages, len(paths))
+    if coverage_note:
+        print(coverage_note, file=sys.stderr)
     if getattr(paths, "mode", None) == "widened":
         # The adaptive search found no high-confidence paths and fell back to the
         # speculative frontier (class-hierarchy, unresolved wildcard sinks, callbacks)
@@ -463,6 +510,7 @@ def cmd_paths(args) -> int:
 def cmd_stats(args) -> int:
     with _open(args) as graph:
         stats = graph.stats()
+        languages = graph.detect().languages
     if args.json:
         print(to_json(stats))
         return 0
@@ -473,6 +521,13 @@ def cmd_stats(args) -> int:
     for key, value in asdict(stats).items():
         grid.add_row(key, str(value))
     con.print(Panel(grid, title="[bold]index stats[/]", border_style="cyan", expand=False))
+    coverage = _catalog_coverage()
+    parts = []
+    for lang in languages:
+        cov = coverage.get(lang.name)
+        parts.append(f"{lang.name} {cov.tier if cov else 'none'}")
+    if parts:
+        con.print(f"[dim]taint catalog: {' · '.join(parts)}[/]")
     return 0
 
 

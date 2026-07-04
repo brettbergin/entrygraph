@@ -152,3 +152,59 @@ def test_error_on_missing_db(tmp_path, capsys):
     rc = main(["stats", "--db", str(tmp_path / "nope.db")])
     assert rc == 2
     assert "error:" in capsys.readouterr().err
+
+
+def test_detect_shows_taint_coverage(db, capsys):
+    assert main(["detect", "--db", db]) == 0
+    out = capsys.readouterr().out
+    assert "TAINT CATALOG" in out
+    assert "full" in out  # python is full-tier
+
+
+def test_stats_shows_coverage_line(db, capsys):
+    assert main(["stats", "--db", db]) == 0
+    out = capsys.readouterr().out
+    assert "taint catalog:" in out
+    assert "python full" in out
+
+
+def test_paths_thin_coverage_caveat(tmp_path, capsys):
+    # a rust repo (minimal tier) with a low path count gets the coverage note
+    repo = tmp_path / "rustapp"
+    repo.mkdir()
+    (repo / "main.rs").write_text(
+        "fn main() { let cmd = std::env::args().nth(1).unwrap(); "
+        "std::process::Command::new(cmd); }\n"
+    )
+    dbp = tmp_path / "rust.db"
+    assert main(["index", str(repo), "--db", str(dbp)]) == 0
+    main(
+        [
+            "paths",
+            "--db",
+            str(dbp),
+            "--source-category",
+            "env_input",
+            "--sink-category",
+            "command_exec",
+        ]
+    )
+    err = capsys.readouterr().err
+    assert "minimal taint coverage" in err
+    assert "may reflect coverage, not safety" in err
+
+
+def test_paths_no_caveat_on_full_coverage(db, capsys):
+    main(
+        [
+            "paths",
+            "--db",
+            db,
+            "--source",
+            "app.routes.create_report",
+            "--sink",
+            "py:subprocess.run",
+        ]
+    )
+    err = capsys.readouterr().err
+    assert "coverage" not in err
