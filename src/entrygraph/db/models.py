@@ -74,7 +74,7 @@ class File(Base):
     generation: Mapped[int] = mapped_column(Integer)  # index_generation at last (re)index
     skip_reason: Mapped[str | None] = mapped_column(
         String(32)
-    )  # too_large/binary/minified/parse_error
+    )  # test/too_large/binary/minified/parse_error
 
     __table_args__ = (
         UniqueConstraint("repo_id", "path", name="uq_files_repo_path"),

@@ -51,6 +51,7 @@ def index_repository(
     incremental: bool = False,
     paranoid: bool = False,
     max_workers: int | None = None,
+    include_tests: bool = False,
 ) -> IndexStats:
     started = time.monotonic()
     root = Path(root).resolve()
@@ -58,7 +59,7 @@ def index_repository(
     if fresh:
         incremental = False
 
-    walked, profile = walk_repo(root)
+    walked, profile = walk_repo(root, include_tests=include_tests)
     manifests = parse_manifests(root)
     sink_registry = registry_for_repo(root)
 

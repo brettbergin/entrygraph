@@ -165,3 +165,41 @@ def test_dedup_entrypoint_hints_collapses_cross_framework_duplicates():
     )
     routes = sorted((e.route, e.framework) for e in out)
     assert routes == [("/other", "express"), ("/ping", "hono")]
+
+
+def test_test_files_recorded_but_not_extracted(tmp_engine, fixture_repo):
+    from entrygraph.db.models import File
+
+    repo = fixture_repo("python/flask_app")
+    test_file = repo / "tests" / "test_routes.py"
+    test_file.parent.mkdir()
+    test_file.write_text(
+        "from app.routes import get_user\n\ndef test_get_user():\n    get_user(1)\n"
+    )
+
+    index_repository(repo, tmp_engine)
+    with Session(tmp_engine) as s:
+        row = s.execute(select(File).where(File.path == "tests/test_routes.py")).scalar_one()
+        assert row.skip_reason == "test"  # recorded for honest stats…
+        syms = s.execute(select(Symbol.id).where(Symbol.file_id == row.id)).scalars().all()
+        assert syms == []  # …but never extracted
+        edges = s.execute(select(Edge.id).where(Edge.src_file_id == row.id)).scalars().all()
+        assert edges == []
+
+
+def test_include_tests_reincludes_test_files(tmp_engine, fixture_repo):
+    from entrygraph.db.models import File
+
+    repo = fixture_repo("python/flask_app")
+    test_file = repo / "tests" / "test_routes.py"
+    test_file.parent.mkdir()
+    test_file.write_text(
+        "from app.routes import get_user\n\ndef test_get_user():\n    get_user(1)\n"
+    )
+
+    index_repository(repo, tmp_engine, include_tests=True)
+    with Session(tmp_engine) as s:
+        row = s.execute(select(File).where(File.path == "tests/test_routes.py")).scalar_one()
+        assert row.skip_reason is None
+        qnames = set(s.execute(select(Symbol.qname).where(Symbol.file_id == row.id)).scalars())
+        assert "tests.test_routes.test_get_user" in qnames
