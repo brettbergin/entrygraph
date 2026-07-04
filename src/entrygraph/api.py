@@ -459,6 +459,9 @@ class CodeGraph:
             registry = self._registry(session)
             edge_map = self._edge_rows(session, raw_paths)
             tainted_sources = self._tainted_source_ids(session, sources)
+            source_meta = self._source_edge_meta(
+                session, {path[0][0] for path in raw_paths}, registry, source_category
+            )
             excluded_nodes = self._nodes_with_open_frontier(
                 session, all_ids, kinds, floor, include_cha
             )
@@ -472,6 +475,7 @@ class CodeGraph:
                     tainted_sources,
                     excluded_nodes,
                     sibling_calls,
+                    source_meta,
                 )
                 for path in raw_paths
             ]
@@ -727,6 +731,48 @@ class CodeGraph:
         return {r.id: r for r in rows}
 
     @staticmethod
+    def _source_edge_meta(
+        session: Session, heads: set[int], registry, source_category: str | None
+    ) -> dict[int, tuple[str | None, str | None]]:
+        """Head symbol id -> (channel, key) of its first matching source edge (#87).
+
+        The source accessor edge is not on the path (it points at the accessor,
+        not the next hop), so it is looked up per path head. When a category was
+        queried, only that category's patterns qualify; the lowest-line edge wins
+        so output is deterministic. Heads with no accessor edge (handler-as-source)
+        get no entry.
+        """
+        if not heads:
+            return {}
+        wanted: set[str] | None = None
+        if source_category is not None:
+            wanted = registry.source_ids_for_category(source_category)
+        rows = session.execute(
+            select(
+                models.Edge.src_symbol_id,
+                models.Edge.source_id,
+                models.Edge.source_key,
+            )
+            .where(
+                models.Edge.src_symbol_id.in_(heads),
+                models.Edge.source_id.is_not(None),
+            )
+            .order_by(models.Edge.line)
+        ).all()
+        meta: dict[int, tuple[str | None, str | None]] = {}
+        for sid, source_id, source_key in rows:
+            if sid in meta:
+                continue
+            if wanted is not None and source_id not in wanted:
+                continue
+            pattern = registry.sources.get(source_id)
+            channel = pattern.channel if pattern else None
+            if channel is None and source_key is None:
+                continue  # nothing to surface; let a later edge with info win
+            meta[sid] = (channel, source_key)
+        return meta
+
+    @staticmethod
     def _tainted_source_ids(session: Session, sources: set[int]) -> set[int]:
         """Source symbol ids known to carry user-controlled data: entrypoints with
         tainted params, plus call sites of catalog taint-source functions."""
@@ -813,6 +859,7 @@ class CodeGraph:
         tainted_sources,
         excluded_nodes,
         sibling_calls,
+        source_meta,
     ) -> CallPath:
         symbols = tuple(symbol_map[node] for node, _ in path)
         hops = [hop for _, hop in path[1:]]
@@ -848,6 +895,7 @@ class CodeGraph:
                 )
             )
 
+        source_channel, source_key = source_meta.get(path[0][0], (None, None))
         risk = score_path(
             hop_confidences=[h.confidence for h in hops],
             hop_vias=[(row.via if row is not None else h.via) for row, h in zip(rows, hops)],
@@ -855,10 +903,17 @@ class CodeGraph:
             sanitized_effect=sanitized_effect,
             constant_args=terminal_const,
             source_tainted=path[0][0] in tainted_sources,
+            source_channel=source_channel,
+            source_key=source_key,
         )
         may_continue = any(node in excluded_nodes for node, _ in path)
         return CallPath(
-            symbols=symbols, edges=tuple(path_edges), risk_score=risk, may_continue=may_continue
+            symbols=symbols,
+            edges=tuple(path_edges),
+            risk_score=risk,
+            may_continue=may_continue,
+            source_channel=source_channel,
+            source_key=source_key,
         )
 
     @staticmethod

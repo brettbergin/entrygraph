@@ -67,11 +67,48 @@ severity = "low"
 callee = "py:{requests.{get,post,put,delete,patch,request},urllib.request.urlopen,httpx.{get,post,request}}"
 description = "Outbound network request"
 
+# channel-specific accessors first — match_source returns the first hit in
+# registration order, so the catch-all must stay last (#87).
+[[source]]
+id = "py.flask.query"
+category = "http_input"
+channel = "query"
+callee = "py:flask.request.args*"
+description = "Flask query-string input"
+
+[[source]]
+id = "py.flask.form"
+category = "http_input"
+channel = "form"
+callee = "py:flask.request.form*"
+description = "Flask form input"
+
+[[source]]
+id = "py.flask.header"
+category = "http_input"
+channel = "header"
+callee = "py:flask.request.headers*"
+description = "Flask header input"
+
+[[source]]
+id = "py.flask.cookie"
+category = "http_input"
+channel = "cookie"
+callee = "py:flask.request.cookies*"
+description = "Flask cookie input"
+
+[[source]]
+id = "py.flask.body"
+category = "http_input"
+channel = "body"
+callee = "py:flask.request.{json,get_json,data,get_data,stream,files}*"
+description = "Flask request-body input"
+
 [[source]]
 id = "py.flask.request"
 category = "http_input"
 callee = "py:flask.request*"
-description = "Flask request object"
+description = "Flask request input (unspecified channel)"
 
 [[source]]
 id = "py.stdin"

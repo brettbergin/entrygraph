@@ -130,6 +130,9 @@ class Edge(Base):
     # A call to a taint-source function (request/env/stdin/...) tags its calling
     # edge; the src symbol is then a taint origin. Pre-tagged at index time.
     source_id: Mapped[str | None] = mapped_column(String(64))
+    # The specific input identifier at a source call — query param / header /
+    # flag name — extracted from the first string-literal argument (#87).
+    source_key: Mapped[str | None] = mapped_column(String(128))
     # Edge provenance for edges not resolved by the direct import/scope pass:
     # "cha" (class-hierarchy candidate), "dynamic" (getattr/computed call),
     # "reexport" (chased through a barrel file). NULL for directly-resolved edges.

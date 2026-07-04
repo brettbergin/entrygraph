@@ -80,6 +80,8 @@ class CallPath:
     edges: tuple[PathEdge, ...]  # one per hop; len == len(symbols) - 1
     risk_score: float | None = None  # query-time heuristic, higher = riskier
     may_continue: bool = False  # a node on this path has out-edges the filter excluded
+    source_channel: str | None = None  # query|path|header|cookie|body|form (#87)
+    source_key: str | None = None  # the specific param/header/flag name (#87)
 
     @property
     def min_confidence(self) -> int:

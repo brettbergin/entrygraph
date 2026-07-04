@@ -346,13 +346,18 @@ def _path_card(index: int, path, source_label: str | None, read_line=None) -> Gr
     src_file = getattr(syms[0], "file", None)
     src_loc = src_file if syms[0].kind == "module" else _loc(src_file, syms[0].start_line)
     # rows: (role, name, location, annotation) — role in {source, hop, sink}
+    source_ann = Text("")
+    if source_label:
+        detail = ""
+        channel = getattr(path, "source_channel", None)
+        key = getattr(path, "source_key", None)
+        if channel:
+            detail += f" · {channel}"
+        if key:
+            detail += f' "{key}"'
+        source_ann = Text(f"({source_label}{detail})", style="cyan")
     rows: list[tuple[str, str, str | None, Text]] = [
-        (
-            "source",
-            _display_name(syms[0]),
-            src_loc,
-            Text(f"({source_label})", style="cyan") if source_label else Text(""),
-        )
+        ("source", _display_name(syms[0]), src_loc, source_ann)
     ]
     for i, edge in enumerate(edges):
         is_sink = i == len(edges) - 1
@@ -466,6 +471,8 @@ def cmd_paths(args) -> int:
                         "min_confidence": p.min_confidence,
                         "risk_score": p.risk_score,
                         "may_continue": p.may_continue,
+                        "source_channel": p.source_channel,
+                        "source_key": p.source_key,
                         "symbols": [s.qname for s in p.symbols],
                         "lines": [e.line for e in p.edges],
                         "source_line": None

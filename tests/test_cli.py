@@ -231,3 +231,49 @@ def test_paths_cli_arg_category(tmp_path, capsys):
     assert "cli_arg" in out
     assert "deploy" in out  # the click handler card
     assert "subprocess.run" in out
+
+
+def test_paths_render_source_channel_and_key(tmp_path, capsys):
+    channels_app = Path(__file__).parent / "fixtures" / "python" / "channels_app"
+    dbp = tmp_path / "ch.db"
+    assert main(["index", str(channels_app), "--db", str(dbp)]) == 0
+    capsys.readouterr()
+    rc = main(
+        [
+            "paths",
+            "--db",
+            str(dbp),
+            "--source-category",
+            "http_input",
+            "--sink-category",
+            "command_exec",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert 'http_input · query "q"' in out
+    assert 'http_input · header "X-Api-Key"' in out
+
+
+def test_paths_json_source_channel_and_key(tmp_path, capsys):
+    channels_app = Path(__file__).parent / "fixtures" / "python" / "channels_app"
+    dbp = tmp_path / "chj.db"
+    assert main(["index", str(channels_app), "--db", str(dbp)]) == 0
+    capsys.readouterr()
+    rc = main(
+        [
+            "paths",
+            "--db",
+            str(dbp),
+            "--json",
+            "--source-category",
+            "http_input",
+            "--sink-category",
+            "command_exec",
+        ]
+    )
+    assert rc == 0
+    rows = json.loads(capsys.readouterr().out)
+    pairs = {(r["source_channel"], r["source_key"]) for r in rows}
+    assert ("query", "q") in pairs
+    assert ("header", "X-Api-Key") in pairs
