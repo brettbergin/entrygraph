@@ -108,12 +108,25 @@ def test_paths_carry_risk_score(graph):
     assert paths[0].risk_score is not None and paths[0].risk_score > 0
 
 
-def test_default_floor_excludes_wildcard_sinks_but_flag_includes(graph):
-    # find_user -> py:*.execute is an UNRESOLVED wildcard sink (confidence 0)
+def test_adaptive_search_widens_to_wildcard_sinks_strict_excludes(graph):
+    # find_user -> py:*.execute is an UNRESOLVED wildcard sink (confidence 0). The
+    # precise pass excludes it, so --strict returns nothing; the adaptive default
+    # finds no high-confidence path and widens to reach it (mode "widened"); an
+    # explicit --include-unresolved reaches it directly.
+    strict = graph.paths(source="app.db.find_user", sink="py:*.execute", strict=True)
     default = graph.paths(source="app.db.find_user", sink="py:*.execute")
     opted_in = graph.paths(source="app.db.find_user", sink="py:*.execute", include_unresolved=True)
-    assert default == []
-    assert opted_in
+    assert strict == []
+    assert strict.mode == "strict"
+    assert default and default.mode == "widened"
+    assert opted_in and opted_in.mode == "explicit"
+
+
+def test_adaptive_search_stays_precise_when_high_confidence_path_exists(graph):
+    # create_report -> subprocess.run resolves at IMPORT confidence, so the adaptive
+    # search returns the precise result without widening.
+    out = graph.paths(source="app.routes.create_report", sink="py:subprocess.run")
+    assert out and out.mode == "precise"
 
 
 def test_sink_terminal_edge_carries_sink_id(graph):
