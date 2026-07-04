@@ -20,7 +20,13 @@ from entrygraph.extract.base import (
     subscript_key,
     truncate,
 )
-from entrygraph.extract.ir import FileExtraction, RawImport, RawReference, RawSymbol
+from entrygraph.extract.ir import (
+    FileExtraction,
+    RawBinding,
+    RawImport,
+    RawReference,
+    RawSymbol,
+)
 from entrygraph.kinds import SymbolKind
 from entrygraph.parsing.queries import captures, load_query
 
@@ -58,7 +64,40 @@ class RubyExtractor:
         self._extract_definitions(root, ctx, out)
         self._extract_imports(root, ctx, out)
         self._extract_calls(root, ctx, out)
+        self._extract_bindings(root, ctx, out)
         return out
+
+    # ---------------- bindings (#98) ----------------
+
+    def _extract_bindings(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
+        """`x = Svc.new` / `x = Svc.new(...)` -> constructor binding to `Svc`."""
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "assignment":
+                self._emit_assign_binding(n, ctx, out)
+            stack.extend(n.children)
+
+    def _emit_assign_binding(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
+        left = node.child_by_field_name("left")
+        right = node.child_by_field_name("right")
+        if left is None or left.type != "identifier" or right is None or right.type != "call":
+            return
+        method = right.child_by_field_name("method")
+        receiver = right.child_by_field_name("receiver")
+        if method is None or receiver is None or receiver.type != "constant":
+            return
+        if node_text(method) != "new":
+            return
+        out.bindings.append(
+            RawBinding(
+                name=node_text(left),
+                type_text=node_text(receiver),
+                span=span_of(node),
+                scope=self._caller(node, ctx),
+                kind="constructor",
+            )
+        )
 
     # ---------------- definitions ----------------
 

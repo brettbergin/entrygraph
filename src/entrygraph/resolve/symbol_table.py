@@ -23,9 +23,20 @@ class SymbolTable:
         # re-export chains (barrel files): module -> {exported_name: (target_module, target_name)}
         self.reexports: dict[str, dict[str, tuple[str, str]]] = {}
         self.star_reexports: dict[str, list[str]] = {}  # module -> [source modules]
+        # --- binding table (#98): syntactic name->type resolution ---
+        self.field_types: dict[str, str] = {}  # "Owner.field" fqn -> type qname
+        self.module_bindings: dict[str, dict[str, str]] = {}  # module -> {var -> type qname}
+        self.return_types: dict[str, str] = {}  # function fqn -> return type qname (#98 P3)
+        self.children_by_qname: dict[str, list[int]] = defaultdict(list)  # parent -> child ids
 
     def add_symbol(
-        self, symbol_id: int, qname: str, name: str, kind: SymbolKind, language: str | None = None
+        self,
+        symbol_id: int,
+        qname: str,
+        name: str,
+        kind: SymbolKind,
+        language: str | None = None,
+        parent_qname: str | None = None,
     ) -> None:
         self.by_fqn[qname] = symbol_id
         self.qname_of[symbol_id] = qname
@@ -33,6 +44,8 @@ class SymbolTable:
         self.kinds[symbol_id] = kind
         if language is not None:
             self.lang[symbol_id] = language
+        if parent_qname is not None:
+            self.children_by_qname[parent_qname].append(symbol_id)
 
     def add_module(self, module_path: str, symbol_id: int, language: str | None = None) -> None:
         self.project_modules.add(module_path)

@@ -62,6 +62,26 @@ class RawReference:
     # (`api := app.Group("/api")`). Lets router-group rules link routes registered
     # on the group var back to its path prefix. Populated by the Go extractor.
     assign_target: str | None = None
+    # Identifier/selector arguments in call order (`t.Ingester`, `router_var`),
+    # capped — replaces the preview-regex that mount/gRPC resolvers scraped (#98).
+    arg_idents: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class RawBinding:
+    """A syntactic name->type binding at a construction/declaration site (#98).
+
+    Not full inference: the ``type_text`` is the *written* type at the binding
+    site (constructor name, declared field type), resolved to a qname later in
+    the main process against the file's import map — the same two-phase split
+    ``RawSymbol.bases`` -> ``resolve_hierarchy`` already uses.
+    """
+
+    name: str  # bound name: "t", "router"; fields owner-qualified: "App.Ingester"
+    type_text: str  # written type: "ingester.Ingester", "Foo", "express"
+    span: Span
+    scope: str | None = None  # enclosing-function FQN; None = module/class level
+    kind: str = "constructor"  # constructor|declared|field|receiver|call_result
 
 
 @dataclass(slots=True)
@@ -105,6 +125,7 @@ class FileExtraction:
     imports: list[RawImport] = field(default_factory=list)
     references: list[RawReference] = field(default_factory=list)
     reexports: list[RawReexport] = field(default_factory=list)
+    bindings: list[RawBinding] = field(default_factory=list)  # name->type sites (#98)
     entrypoint_hints: list[EntrypointHint] = field(default_factory=list)
     framework_signals: list[tuple[str, str]] = field(default_factory=list)  # (kind, value)
     # Repo-wide names of project functions that forward to a native route registrar

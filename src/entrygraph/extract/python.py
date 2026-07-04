@@ -15,7 +15,13 @@ from entrygraph.extract.base import (
     subscript_key,
     truncate,
 )
-from entrygraph.extract.ir import FileExtraction, RawImport, RawReference, RawSymbol
+from entrygraph.extract.ir import (
+    FileExtraction,
+    RawBinding,
+    RawImport,
+    RawReference,
+    RawSymbol,
+)
 from entrygraph.kinds import SymbolKind
 from entrygraph.parsing.queries import captures, load_query
 
@@ -55,6 +61,7 @@ class PythonExtractor:
         self._extract_definitions(root, ctx, out)
         self._extract_imports(root, ctx, out)
         self._extract_calls(root, ctx, out)
+        self._extract_bindings(root, ctx, out)
         if _MAIN_GUARD.search(ctx.source):
             out.framework_signals.append(("main_guard", ctx.module_path))
         return out
@@ -294,6 +301,110 @@ class PythonExtractor:
                     caller_qualified_name=self._caller(node, ctx),
                 )
             )
+
+    # ---------------- bindings (#98) ----------------
+
+    def _extract_bindings(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
+        """Syntactic name->type bindings: constructor short-vars, annotated
+        assignments/declarations, ``self.x = Foo()`` fields, and annotated
+        class-body fields."""
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "assignment":
+                self._emit_assign_binding(n, ctx, out)
+            stack.extend(n.children)
+
+    def _emit_assign_binding(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
+        left = node.child_by_field_name("left")
+        type_node = node.child_by_field_name("type")
+        right = node.child_by_field_name("right")
+        if left is None:
+            return
+
+        # annotated form: `x: Foo` / `x: Foo = ...` (declared type wins)
+        if type_node is not None:
+            type_text = node_text(type_node).split("[", 1)[0].strip()
+            if not type_text:
+                return
+            if left.type == "identifier":
+                if self._nearest_scope(node) == "class_definition":
+                    class_q = self._enclosing_class_fqn(node, ctx)
+                    if class_q is not None:
+                        out.bindings.append(
+                            RawBinding(
+                                name=f"{class_q}.{node_text(left)}",
+                                type_text=type_text,
+                                span=span_of(node),
+                                kind="field",
+                            )
+                        )
+                    return
+                out.bindings.append(
+                    RawBinding(
+                        name=node_text(left),
+                        type_text=type_text,
+                        span=span_of(node),
+                        scope=self._caller(node, ctx),
+                        kind="declared",
+                    )
+                )
+            return
+
+        # construction form: `x = Foo()` / `self.x = Foo()`
+        if right is None or right.type != "call":
+            return
+        ctor = self._construction_type(right)
+        if ctor is None:
+            return
+        if left.type == "identifier":
+            out.bindings.append(
+                RawBinding(
+                    name=node_text(left),
+                    type_text=ctor,
+                    span=span_of(node),
+                    scope=self._caller(node, ctx),
+                    kind="constructor",
+                )
+            )
+        elif left.type == "attribute":
+            obj = left.child_by_field_name("object")
+            attr = left.child_by_field_name("attribute")
+            if obj is None or attr is None or node_text(obj) != "self":
+                return
+            class_q = self._enclosing_class_fqn(node, ctx)
+            if class_q is None:
+                return
+            out.bindings.append(
+                RawBinding(
+                    name=f"{class_q}.{node_text(attr)}",
+                    type_text=ctor,
+                    span=span_of(node),
+                    kind="field",
+                )
+            )
+
+    def _construction_type(self, call: Node) -> str | None:
+        """The class name of a `Foo()` / `pkg.Foo()` construction, if the callee
+        is a class (bare or dotted name whose rightmost segment is capitalized)."""
+        fn = call.child_by_field_name("function")
+        if fn is None or fn.type not in ("identifier", "attribute"):
+            return None
+        text = node_text(fn)
+        last = text.rsplit(".", 1)[-1]
+        if last and last[0].isupper():
+            return text
+        return None
+
+    def _enclosing_class_fqn(self, node: Node, ctx: FileContext) -> str | None:
+        current = node.parent
+        while current is not None:
+            if current.type == "class_definition":
+                name = current.child_by_field_name("name")
+                if name is not None:
+                    return self._qualify(current, node_text(name), ctx)[0]
+            current = current.parent
+        return None
 
     def _emit_subscript_source(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
         """`request.args["q"]` reads an input but is not a call, so it produces no

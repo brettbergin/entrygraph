@@ -18,7 +18,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar
 
 from entrygraph.extract.base import FileContext, node_text, span_of, truncate
-from entrygraph.extract.ir import FileExtraction, RawImport, RawReference, RawSymbol
+from entrygraph.extract.ir import (
+    FileExtraction,
+    RawBinding,
+    RawImport,
+    RawReference,
+    RawSymbol,
+)
 from entrygraph.kinds import SymbolKind
 from entrygraph.parsing.queries import captures, load_query
 
@@ -54,7 +60,60 @@ class JavaExtractor:
         self._definitions(root, ctx, out)
         self._imports(root, ctx, out)
         self._calls(root, ctx, out)
+        self._bindings(root, ctx, out)
         return out
+
+    # ---------------- bindings (#98) ----------------
+
+    def _bindings(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
+        """Declared field types (`{TypeFQN}.field`) and local `Foo x = new Foo()`."""
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "field_declaration":
+                self._emit_field_binding(n, ctx, out)
+            elif n.type == "local_variable_declaration":
+                self._emit_local_binding(n, ctx, out)
+            stack.extend(n.children)
+
+    def _emit_field_binding(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
+        if self._nearest_scope(node) is None:
+            return
+        type_node = node.child_by_field_name("type")
+        declarator = node.child_by_field_name("declarator")
+        if type_node is None or declarator is None:
+            return
+        name_node = declarator.child_by_field_name("name")
+        if name_node is None:
+            return
+        type_text = node_text(type_node).split("<", 1)[0].strip()
+        if not type_text:
+            return
+        qname, _ = self._qualify(node, node_text(name_node), ctx)
+        out.bindings.append(
+            RawBinding(name=qname, type_text=type_text, span=span_of(node), kind="field")
+        )
+
+    def _emit_local_binding(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
+        type_node = node.child_by_field_name("type")
+        declarator = node.child_by_field_name("declarator")
+        if type_node is None or declarator is None:
+            return
+        name_node = declarator.child_by_field_name("name")
+        if name_node is None:
+            return
+        type_text = node_text(type_node).split("<", 1)[0].strip()
+        if not type_text or type_text == "var":
+            return
+        out.bindings.append(
+            RawBinding(
+                name=node_text(name_node),
+                type_text=type_text,
+                span=span_of(node),
+                scope=self._caller(node, ctx),
+                kind="constructor",
+            )
+        )
 
     # ---------------- definitions ----------------
 

@@ -22,6 +22,7 @@ from entrygraph.extract.base import (
 )
 from entrygraph.extract.ir import (
     FileExtraction,
+    RawBinding,
     RawImport,
     RawReexport,
     RawReference,
@@ -87,8 +88,87 @@ class JavaScriptExtractor:
         self._definitions(root, ctx, out)
         self._imports(root, ctx, out)
         self._calls(root, ctx, out)
+        self._bindings(root, ctx, out)
         out.default_export = self._default_export_ident(root)
         return out
+
+    # ---------------- bindings (#98) ----------------
+
+    def _bindings(self, root, ctx, out) -> None:
+        """`const x = new Foo()` / `const x = express()` / TS `const x: Foo = ...`."""
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "variable_declarator":
+                self._emit_declarator_binding(n, ctx, out)
+            stack.extend(n.children)
+
+    def _emit_declarator_binding(self, node, ctx, out) -> None:
+        name_node = node.child_by_field_name("name")
+        if name_node is None or name_node.type != "identifier":
+            return
+        name = node_text(name_node)
+        scope = self._caller(node, ctx)
+        type_ann = node.child_by_field_name("type")
+        # TS `const x: Foo = ...` — the declared annotation type wins.
+        if type_ann is not None:
+            type_text = self._annotation_type(type_ann)
+            if type_text:
+                out.bindings.append(
+                    RawBinding(
+                        name=name,
+                        type_text=type_text,
+                        span=span_of(node),
+                        scope=scope,
+                        kind="declared",
+                    )
+                )
+            return
+        value = node.child_by_field_name("value")
+        if value is None:
+            return
+        if value.type == "new_expression":
+            ctor = value.child_by_field_name("constructor")
+            if ctor is not None and ctor.type in ("identifier", "member_expression"):
+                out.bindings.append(
+                    RawBinding(
+                        name=name,
+                        type_text=node_text(ctor),
+                        span=span_of(node),
+                        scope=scope,
+                        kind="constructor",
+                    )
+                )
+        elif value.type == "call_expression":
+            fn = value.child_by_field_name("function")
+            if fn is not None and fn.type == "identifier":
+                out.bindings.append(
+                    RawBinding(
+                        name=name,
+                        type_text=node_text(fn),
+                        span=span_of(node),
+                        scope=scope,
+                        kind="call_result",
+                    )
+                )
+
+    def _annotation_type(self, type_ann) -> str | None:
+        """The written type of a TS `type_annotation` (`: Foo` -> `Foo`), taking the
+        base of a generic and skipping non-nominal types (unions, literals)."""
+        inner = next(
+            (c for c in type_ann.named_children if c.type in ("type_identifier", "generic_type")),
+            None,
+        )
+        if inner is None:
+            return None
+        if inner.type == "generic_type":
+            base = (
+                inner.child_by_field_name("name")
+                or inner.child_by_field_name("type")
+                or (inner.named_children[0] if inner.named_children else None)
+            )
+            return node_text(base) if base is not None else None
+        return node_text(inner)
 
     def _default_export_ident(self, root) -> str | None:
         """`export default <identifier>` -> that identifier (an Express router that

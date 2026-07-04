@@ -26,7 +26,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar
 
 from entrygraph.extract.base import FileContext, node_text, span_of, truncate
-from entrygraph.extract.ir import FileExtraction, RawImport, RawReference, RawSymbol
+from entrygraph.extract.ir import (
+    FileExtraction,
+    RawBinding,
+    RawImport,
+    RawReference,
+    RawSymbol,
+)
 from entrygraph.kinds import SymbolKind
 from entrygraph.parsing.queries import captures, load_query
 
@@ -74,7 +80,97 @@ class RustExtractor:
         self._extract_definitions(root, ctx, out)
         self._extract_imports(root, ctx, out)
         self._extract_calls(root, ctx, out)
+        self._extract_bindings(root, ctx, out)
         return out
+
+    # ---------------- bindings (#98) ----------------
+
+    def _extract_bindings(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
+        """Struct field declared types, `let x = Foo::new()` / `Foo::default()`
+        constructors, and `let x: Foo = ..` declared types."""
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "field_declaration":
+                self._emit_field_binding(n, ctx, out)
+            elif n.type == "let_declaration":
+                self._emit_let_binding(n, ctx, out)
+            stack.extend(n.children)
+
+    def _emit_field_binding(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
+        name_node = node.child_by_field_name("name")
+        type_node = node.child_by_field_name("type")
+        owner = self._enclosing_struct_name(node)
+        if name_node is None or type_node is None or owner is None:
+            return
+        type_text = self._type_name(type_node)
+        if not type_text:
+            return
+        out.bindings.append(
+            RawBinding(
+                name=f"{ctx.module_path}.{owner}.{node_text(name_node)}",
+                type_text=type_text,
+                span=span_of(node),
+                kind="field",
+            )
+        )
+
+    def _emit_let_binding(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
+        pattern = node.child_by_field_name("pattern")
+        if pattern is None or pattern.type != "identifier":
+            return
+        name = node_text(pattern)
+        type_node = node.child_by_field_name("type")
+        if type_node is not None:  # `let x: Foo = ..` — declared type wins
+            type_text = self._type_name(type_node)
+            if type_text:
+                out.bindings.append(
+                    RawBinding(
+                        name=name,
+                        type_text=type_text,
+                        span=span_of(node),
+                        scope=self._caller(node, ctx),
+                        kind="declared",
+                    )
+                )
+            return
+        value = node.child_by_field_name("value")
+        ctor = self._construction_type(value) if value is not None else None
+        if ctor is None:
+            return
+        out.bindings.append(
+            RawBinding(
+                name=name,
+                type_text=ctor,
+                span=span_of(node),
+                scope=self._caller(node, ctx),
+                kind="constructor",
+            )
+        )
+
+    def _construction_type(self, value: Node) -> str | None:
+        """`Foo::new()` / `Foo::default()` -> `Foo` (the type path before `::new`)."""
+        if value.type != "call_expression":
+            return None
+        fn = value.child_by_field_name("function")
+        if fn is None or fn.type != "scoped_identifier":
+            return None
+        name_node = fn.child_by_field_name("name")
+        path_node = fn.child_by_field_name("path")
+        if name_node is None or path_node is None:
+            return None
+        if node_text(name_node) not in ("new", "default"):
+            return None
+        return _norm(node_text(path_node))
+
+    def _enclosing_struct_name(self, node: Node) -> str | None:
+        current = node.parent
+        while current is not None:
+            if current.type in ("struct_item", "union_item"):
+                name = current.child_by_field_name("name")
+                return node_text(name) if name is not None else None
+            current = current.parent
+        return None
 
     # ---------------- definitions ----------------
 
@@ -354,6 +450,7 @@ class RustExtractor:
                     caller_qualified_name=caller,
                     arg_count=len(args.named_children) if args is not None else 0,
                     arg_preview=truncate(node_text(args)) if args is not None else None,
+                    assign_target=self._assign_target(node),
                 )
             )
             self._emit_callbacks(args, caller, out)
@@ -387,6 +484,30 @@ class RustExtractor:
                     arg_preview=truncate(node_text(token_tree)) if token_tree else None,
                 )
             )
+
+    def _assign_target(self, call: Node) -> str | None:
+        """LHS identifier when `call` is the direct value of a `let x = <call>` or
+        `x = <call>` assignment. `let api = Router::new()` -> "api". Calls nested in
+        a larger expression return None."""
+        parent = call.parent
+        if parent is None:
+            return None
+        if parent.type == "let_declaration" and self._is_field(parent, "value", call):
+            pattern = parent.child_by_field_name("pattern")
+            if pattern is not None and pattern.type == "identifier":
+                return node_text(pattern)
+            return None
+        if parent.type == "assignment_expression" and self._is_field(parent, "right", call):
+            left = parent.child_by_field_name("left")
+            if left is not None and left.type == "identifier":
+                return node_text(left)
+            return None
+        return None
+
+    @staticmethod
+    def _is_field(parent: Node, field: str, child: Node) -> bool:
+        target = parent.child_by_field_name(field)
+        return target is not None and target.start_byte == child.start_byte
 
     def _emit_callbacks(self, args: Node | None, caller: str | None, out: FileExtraction) -> None:
         """Bare-identifier arguments passed to a call — a function value invoked

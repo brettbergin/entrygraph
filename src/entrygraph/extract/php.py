@@ -32,7 +32,13 @@ from entrygraph.extract.base import (
     subscript_key,
     truncate,
 )
-from entrygraph.extract.ir import FileExtraction, RawImport, RawReference, RawSymbol
+from entrygraph.extract.ir import (
+    FileExtraction,
+    RawBinding,
+    RawImport,
+    RawReference,
+    RawSymbol,
+)
 from entrygraph.kinds import SymbolKind
 from entrygraph.parsing.queries import captures, load_query
 
@@ -81,7 +87,87 @@ class PhpExtractor:
         self._definitions(root, ctx, out)
         self._imports(root, ctx, out)
         self._calls(root, ctx, out)
+        self._bindings(root, ctx, out)
         return out
+
+    # ---------------- bindings (#98) ----------------
+
+    def _bindings(self, root: Node, ctx: FileContext, out: FileExtraction) -> None:
+        """Typed property declarations (`{TypeFQN}.prop`) and `$x = new Foo()`."""
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "property_declaration":
+                self._emit_property_binding(n, ctx, out)
+            elif n.type == "assignment_expression":
+                self._emit_assign_binding(n, ctx, out)
+            stack.extend(n.children)
+
+    def _emit_property_binding(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
+        if self._nearest_scope(node) is None:
+            return
+        type_node = node.child_by_field_name("type")
+        if type_node is None:
+            return
+        type_text = self._type_text(type_node)
+        if not type_text:
+            return
+        for element in node.named_children:
+            if element.type != "property_element":
+                continue
+            var = next((c for c in element.named_children if c.type == "variable_name"), None)
+            if var is None:
+                continue
+            name_node = var.child_by_field_name("name") or next(
+                (c for c in var.named_children if c.type == "name"), None
+            )
+            if name_node is None:
+                continue
+            qname, _ = self._qualify(node, node_text(name_node), ctx)
+            out.bindings.append(
+                RawBinding(name=qname, type_text=type_text, span=span_of(node), kind="field")
+            )
+
+    def _emit_assign_binding(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
+        left = node.child_by_field_name("left")
+        right = node.child_by_field_name("right")
+        if left is None or left.type != "variable_name" or right is None:
+            return
+        if right.type != "object_creation_expression":
+            return
+        type_node = next((c for c in right.named_children if c.type != "arguments"), None)
+        if type_node is None:
+            return
+        type_text = _norm(node_text(type_node))
+        if not type_text:
+            return
+        name_node = left.child_by_field_name("name") or next(
+            (c for c in left.named_children if c.type == "name"), None
+        )
+        if name_node is None:
+            return
+        out.bindings.append(
+            RawBinding(
+                name=node_text(name_node),
+                type_text=type_text,
+                span=span_of(node),
+                scope=self._caller(node, ctx),
+                kind="constructor",
+            )
+        )
+
+    def _type_text(self, type_node: Node) -> str | None:
+        """The written type of a PHP type node (`named_type`), nullable/union
+        forms reduced to their first named type; None for non-nominal types."""
+        n = type_node
+        if n.type == "optional_type" and n.named_children:
+            n = n.named_children[0]
+        if n.type == "named_type":
+            name = next((c for c in n.named_children if c.type in ("name", "qualified_name")), None)
+            return _norm(node_text(name)) if name is not None else _norm(node_text(n))
+        if n.type in ("name", "qualified_name"):
+            return _norm(node_text(n))
+        return None
 
     # ---------------- namespace ----------------
 
