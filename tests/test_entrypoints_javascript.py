@@ -213,3 +213,98 @@ def test_express_mount_prefix_end_to_end(tmp_path):
     graph.close()
     assert ("POST", "/api/users") in routes
     assert ("GET", "/api/user") in routes
+
+
+# ---------------- named-import / named-export mounts (#113 part 2) ----------------
+
+
+def _named_imp(module, imported_name, alias=None):
+    from entrygraph.extract.ir import RawImport, Span
+
+    return RawImport(
+        module=module,
+        imported_name=imported_name,
+        alias=alias or imported_name,
+        span=Span(1, 0, 1, 10),
+    )
+
+
+def _reexp(module, exported_name, alias=None):
+    from entrygraph.extract.ir import RawReexport, Span
+
+    return RawReexport(
+        module=module, exported_name=exported_name, alias=alias, span=Span(1, 0, 1, 10)
+    )
+
+
+def test_mount_named_import_resolves_to_source_module():
+    # app.use('/users', userRouter) where userRouter is a NAMED import from ./users;
+    # the prefix must land on the router var in users, not the aggregator module (#113)
+    from entrygraph.detect.express_mounts import resolve_mount_prefixes
+
+    main = _mount_ext(
+        "main",
+        [_use("('/users', userRouter)", receiver="app")],
+        [_named_imp("users", "userRouter")],
+    )
+    users = _mount_ext("users")
+    prefixes = resolve_mount_prefixes([("main.ts", main, False), ("users.ts", users, False)])
+    assert prefixes.get("users", {}).get("userRouter") == "/users"
+    assert "userRouter" not in prefixes.get("main", {})  # not mis-attributed to the importer
+
+
+def test_mount_named_import_aliased():
+    # import { userRouter as u } from './users'; app.use('/u', u)
+    from entrygraph.detect.express_mounts import resolve_mount_prefixes
+
+    main = _mount_ext(
+        "main", [_use("('/u', u)", receiver="app")], [_named_imp("users", "userRouter", alias="u")]
+    )
+    prefixes = resolve_mount_prefixes(
+        [("main.ts", main, False), ("users.ts", _mount_ext("users"), False)]
+    )
+    assert prefixes.get("users", {}).get("userRouter") == "/u"
+
+
+def test_mount_named_import_through_barrel_reexport():
+    # main imports userRouter from a barrel that re-exports impl's `r` as userRouter;
+    # the prefix must chase through to (impl, r) where routes are registered (#113)
+    from entrygraph.detect.express_mounts import resolve_mount_prefixes
+
+    main = _mount_ext(
+        "main",
+        [_use("('/api', userRouter)", receiver="app")],
+        [_named_imp("barrel", "userRouter")],
+    )
+    barrel = _mount_ext("barrel")
+    barrel.reexports = [_reexp("impl", "r", alias="userRouter")]
+    impl = _mount_ext("impl")
+    prefixes = resolve_mount_prefixes(
+        [("main.ts", main, False), ("barrel.ts", barrel, False), ("impl.ts", impl, False)]
+    )
+    assert prefixes.get("impl", {}).get("r") == "/api"
+
+
+def test_express_named_export_mount_end_to_end(tmp_path):
+    from entrygraph import CodeGraph
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (tmp_path / "package.json").write_text('{"name":"app","dependencies":{"express":"^4"}}')
+    (src / "users.ts").write_text(
+        "import { Router } from 'express';\n"
+        "export const userRouter = Router();\n"
+        "userRouter.get('/list', listUsers);\n"
+        "userRouter.post('/create', createUser);\n"
+    )
+    (src / "main.ts").write_text(
+        "import express from 'express';\n"
+        "import { userRouter } from './users';\n"
+        "const app = express();\n"
+        "app.use('/users', userRouter);\n"
+    )
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    routes = {(e.http_method, e.route) for e in graph.entrypoints(framework="express")}
+    graph.close()
+    assert ("GET", "/users/list") in routes
+    assert ("POST", "/users/create") in routes
