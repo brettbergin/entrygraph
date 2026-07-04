@@ -58,8 +58,21 @@ description = "Deserialization of untrusted input"
 [[source]]
 id = "rust.env"
 category = "env_input"
-callee = "rs:{std.env.args,env.args,std.env.var,env.var}"
-description = "Process arguments / environment variable input"
+callee = "rs:{std.env.var,env.var}"
+description = "Environment variable input"
+
+# argv is operator-controlled input, distinct from env vars (#86)
+[[source]]
+id = "rust.cli-args"
+category = "cli_arg"
+callee = "rs:{std.env.args,env.args,std.env.args_os,env.args_os}"
+description = "Process argument input (std::env::args)"
+
+[[source]]
+id = "rust.clap.matches"
+category = "cli_arg"
+callee = "rs:*.{value_of,values_of,get_one,get_many}"
+description = "clap parsed-argument access"
 
 [[source]]
 id = "rust.stdin"

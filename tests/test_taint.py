@@ -182,7 +182,9 @@ def test_catalog_coverage_counts_and_tiers():
         assert "sql" in cov[lang].sink_categories or cov[lang].sink_categories
     # tier anchors (stable expectations; a shift means coverage actually moved)
     assert cov["python"].tier == "full"
-    assert cov["javascript"].tier == "partial"  # 1 source pattern — the #95 complaint
+    # javascript moved partial -> full when #86 added its cli_arg source pattern
+    assert cov["javascript"].tier == "full"
+    assert cov["go"].tier == "partial"  # 9 sinks
     assert cov["rust"].tier == "minimal"
 
 

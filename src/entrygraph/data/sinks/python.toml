@@ -154,6 +154,12 @@ callee = "py:{importlib.import_module,__import__}"
 description = "Dynamic module import"
 
 [[source]]
+id = "py.cli-args"
+category = "cli_arg"
+callee = "py:*.{parse_args,parse_known_args}"
+description = "argparse parsed-argument access"
+
+[[source]]
 id = "py.env"
 category = "env_input"
 callee = "py:{os.getenv,os.environ.get}"

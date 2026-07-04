@@ -85,6 +85,14 @@ category = "http_input"
 callee = "go:*.{Param,GetHeader,Bind,BindJSON,ShouldBind,ShouldBindJSON}"
 description = "Gin request input"
 
+# cobra/pflag typed flag getters (cmd.Flags().GetString(...)); viper config
+# reads share these names — both are operator-controlled input (#86).
+[[source]]
+id = "go.cli-flags"
+category = "cli_arg"
+callee = "go:*.{GetString,GetStringSlice,GetStringArray,GetInt,GetInt64,GetBool,GetFloat64,GetDuration}"
+description = "cobra/pflag parsed-flag access"
+
 [[source]]
 id = "go.env"
 category = "env_input"

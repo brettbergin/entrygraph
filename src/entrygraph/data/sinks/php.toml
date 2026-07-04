@@ -119,6 +119,12 @@ callee = "php:{md5,sha1,mt_rand,rand}"
 description = "Weak hashing / insecure randomness"
 
 [[source]]
+id = "php.console.input"
+category = "cli_arg"
+callee = "php:*.{getArgument,getOption}"
+description = "Symfony Console argument/option access"
+
+[[source]]
 id = "php.filter-input"
 category = "http_input"
 callee = "php:{filter_input,filter_input_array}"

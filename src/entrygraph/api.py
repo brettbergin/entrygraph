@@ -43,6 +43,16 @@ from entrygraph.results import (
 
 DEFAULT_DB_NAME = ".entrygraph.db"
 
+# Entrypoint kinds whose handler symbol is implicitly a source of a taint
+# category: the handler receives that category's attacker-controlled input as
+# parameters/properties, so no catalog accessor call is required (#86).
+# MAIN rides cli_arg because argv enters a program at main (Java
+# `main(String[] args)`, Go `os.Args` in main, ...).
+_HANDLER_SOURCE_KINDS: dict[str, tuple[EntrypointKind, ...]] = {
+    "http_input": (EntrypointKind.HTTP_ROUTE,),
+    "cli_arg": (EntrypointKind.CLI_COMMAND, EntrypointKind.MAIN),
+}
+
 type SourceSpec = str | Symbol | Entrypoint | list[str | Symbol | Entrypoint]
 
 
@@ -620,19 +630,19 @@ class CodeGraph:
                     )
                 ).scalars()
                 ids |= set(rows)
-            if source_category in ("http_input", "all"):
-                # Every HTTP route handler receives attacker-controlled request
-                # data, so the handler itself is an http_input source. This covers
-                # frameworks whose request access is a property read (Express
-                # `req.body`, Symfony `$request->get`) rather than a catalog-matched
-                # call, which otherwise yield zero source edges (F-H9) — Express/
-                # Symfony apps could never produce a taint path.
-                ep_rows = session.execute(
-                    select(models.Entrypoint.symbol_id).where(
-                        models.Entrypoint.kind == EntrypointKind.HTTP_ROUTE
-                    )
-                ).scalars()
-                ids |= set(ep_rows)
+            # Handler-as-source: an entrypoint handler receives the category's
+            # attacker-controlled input even when no catalog accessor call
+            # appears in its body. HTTP: frameworks whose request access is a
+            # property read (Express `req.body`, Symfony `$request->get`)
+            # produce zero source edges (F-H9). CLI: cobra `RunE(cmd, args)`,
+            # click-decorated functions, argparse mains receive parsed argv as
+            # parameters, which likewise never match a call pattern (#86).
+            for category, kinds in _HANDLER_SOURCE_KINDS.items():
+                if source_category in (category, "all"):
+                    ep_rows = session.execute(
+                        select(models.Entrypoint.symbol_id).where(models.Entrypoint.kind.in_(kinds))
+                    ).scalars()
+                    ids |= set(ep_rows)
         return ids
 
     def _category_sink_edge_ids(self, session: Session, sink_category: str) -> set[int]:

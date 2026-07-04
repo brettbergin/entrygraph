@@ -208,3 +208,26 @@ def test_paths_no_caveat_on_full_coverage(db, capsys):
     )
     err = capsys.readouterr().err
     assert "coverage" not in err
+
+
+def test_paths_cli_arg_category(tmp_path, capsys):
+    cli_app = Path(__file__).parent / "fixtures" / "python" / "cli_app"
+    dbp = tmp_path / "cli.db"
+    assert main(["index", str(cli_app), "--db", str(dbp)]) == 0
+    capsys.readouterr()
+    rc = main(
+        [
+            "paths",
+            "--db",
+            str(dbp),
+            "--source-category",
+            "cli_arg",
+            "--sink-category",
+            "command_exec",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "cli_arg" in out
+    assert "deploy" in out  # the click handler card
+    assert "subprocess.run" in out
