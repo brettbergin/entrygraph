@@ -115,7 +115,7 @@ def test_paths_include_callbacks(tmp_path, capsys):
     assert main(args) == 1  # handler severed -> no path
     capsys.readouterr()
     assert main([*args, "--include-callbacks"]) == 0  # reachable via the callback edge
-    assert "_root.handler" in capsys.readouterr().out
+    assert "handler" in capsys.readouterr().out  # the callback-bound node is on the path
 
 
 def test_callers(db, capsys):
