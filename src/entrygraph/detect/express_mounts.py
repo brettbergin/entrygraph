@@ -1,13 +1,18 @@
 """Cross-file Express router mount-prefix resolution (#36).
 
 Express composes routers across files: a controller registers routes on a local
-`router` and `export default`s it; an aggregator mounts that router under a path
-prefix (`app.use('/api', router)`), often through intermediate routers. The route
-rule only sees the method-level path, so the prefix is lost.
+`router` and exports it; an aggregator mounts that router under a path prefix
+(`app.use('/api', router)`), often through intermediate routers. The route rule
+only sees the method-level path, so the prefix is lost.
 
 This module builds the repo-wide mount graph — nodes are `(module, router-name)`,
 edges are `parent mounts child at prefix` — and returns, per module, the prefix at
 which each router variable's routes are reachable from an app root.
+
+Cross-file router identity is resolved through the whole import surface (#113):
+`export default router` (the default node), a **named** import/export
+(`import { userRouter } from './users'` mounting an `export const userRouter`), and
+re-export chains through barrel files (`export { r as userRouter } from './impl'`).
 """
 
 from __future__ import annotations
@@ -37,12 +42,42 @@ def resolve_mount_prefixes(extractions) -> dict[str, dict[str, str]]:
         nodes.add(child)
         nodes.add(parent)
 
+    # repo-wide named re-export map: (module, exported-as) -> (source module, source
+    # name), so a named import can be chased through barrel files to the module + var
+    # where routes are actually registered. Mirrors resolve_hierarchy's reexport map,
+    # but computed locally because this pass runs before the symbol table is filled.
+    reexports: dict[Node, Node] = {}
+    for _p, x, _pkg in extractions:
+        if x.language not in _JS_LANGS:
+            continue
+        for rx in x.reexports:
+            if rx.is_star or rx.exported_name is None:
+                continue
+            exported_as = rx.alias or rx.exported_name
+            reexports[(x.module_path, exported_as)] = (rx.module, rx.exported_name)
+
+    def follow_reexports(node: Node) -> Node:
+        """Chase a named re-export chain (barrel files) to the module + var routes
+        are registered on; a node with no re-export entry is returned unchanged."""
+        seen: set[Node] = set()
+        while node in reexports and node not in seen:
+            seen.add(node)
+            node = reexports[node]
+        return node
+
     for _p, x, _pkg in extractions:
         if x.language not in _JS_LANGS:
             continue
         m = x.module_path
         # whole-module (default/namespace) imports: local alias -> source module
-        imports = {imp.alias: imp.module for imp in x.imports if imp.imported_name is None}
+        whole_module = {imp.alias: imp.module for imp in x.imports if imp.imported_name is None}
+        # named imports: local alias -> (source module, exported name), so a router
+        # imported by name resolves to its defining module, not this one (#113)
+        named = {
+            imp.alias: (imp.module, imp.imported_name)
+            for imp in x.imports
+            if imp.imported_name is not None and imp.imported_name != "*"
+        }
         # `export default router` aliases the default export to that router var
         if x.default_export is not None:
             add_edge((m, x.default_export), (m, _DEFAULT), "")
@@ -61,7 +96,13 @@ def resolve_mount_prefixes(extractions) -> dict[str, dict[str, str]]:
             if not idents:
                 continue  # `.use('/x', serveStatic(...))` — no sub-router identifier
             target = idents[-1]  # the mounted router (last handler arg)
-            child = (imports[target], _DEFAULT) if target in imports else (m, target)
+            if target in whole_module:
+                child = (whole_module[target], _DEFAULT)  # default/namespace import
+            elif target in named:
+                source_module, exported = named[target]
+                child = follow_reexports((source_module, exported))
+            else:
+                child = (m, target)  # a router local to this module
             add_edge(child, parent, prefix)
 
     memo: dict[Node, str] = {}
