@@ -165,3 +165,35 @@ def test_ruby_service_execute_not_tagged_sql(tmp_engine, fixture_repo):
         # only the interpolated raw-SQL execute is tagged; the service objects are not
         assert len(sql_execute_previews) == 1
         assert "SELECT" in sql_execute_previews[0]
+
+
+def test_catalog_coverage_counts_and_tiers():
+    from entrygraph.detect.taint import builtin_registry, catalog_coverage
+
+    cov = catalog_coverage(builtin_registry())
+    # typescript/tsx ride the js: prefix and get their own entries
+    assert cov["typescript"] == cov["javascript"]
+    assert cov["tsx"] == cov["javascript"]
+    # spot counts: every shipped language has sinks and at least one source
+    for lang in ("python", "javascript", "go", "java", "ruby", "csharp", "php", "rust"):
+        assert cov[lang].sinks > 0, lang
+        assert cov[lang].sources > 0, lang
+        assert cov[lang].tier in ("full", "partial", "minimal")
+        assert "sql" in cov[lang].sink_categories or cov[lang].sink_categories
+    # tier anchors (stable expectations; a shift means coverage actually moved)
+    assert cov["python"].tier == "full"
+    assert cov["javascript"].tier == "partial"  # 1 source pattern — the #95 complaint
+    assert cov["rust"].tier == "minimal"
+
+
+def test_every_extractable_language_has_catalog_entries():
+    # a newly-added language can't silently ship with zero taint patterns
+    from entrygraph.detect.taint import LANGUAGE_PREFIX, builtin_registry, catalog_coverage
+    from entrygraph.fs.lang import EXTRACTABLE
+
+    cov = catalog_coverage(builtin_registry())
+    for language in EXTRACTABLE:
+        assert language in LANGUAGE_PREFIX, f"{language} has no callee prefix mapping"
+        assert cov.get(language) and cov[language].sinks > 0, (
+            f"{language} has no sink catalog entries"
+        )

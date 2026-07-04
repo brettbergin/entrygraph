@@ -277,3 +277,76 @@ def registry_for_repo(root: str | Path | None = None) -> SinkRegistry:
     if extra_sinks or extra_sources or extra_sanitizers or disable:
         return registry.merged_with(extra_sinks, extra_sources, disable, extra_sanitizers)
     return registry
+
+
+# ---------------- catalog coverage (#95) ----------------
+
+# canonical-callee language prefixes -> fs.lang language names
+_PREFIX_LANGUAGES: dict[str, tuple[str, ...]] = {
+    "py": ("python",),
+    "js": ("javascript", "typescript", "tsx"),
+    "go": ("go",),
+    "java": ("java",),
+    "rb": ("ruby",),
+    "cs": ("csharp",),
+    "php": ("php",),
+    "rs": ("rust",),
+}
+
+LANGUAGE_PREFIX: dict[str, str] = {
+    lang: prefix for prefix, langs in _PREFIX_LANGUAGES.items() for lang in langs
+}
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogCoverage:
+    """How much taint catalog backs one language — descriptive counts + a coarse
+    tier, so absence-of-findings can be read honestly (#95)."""
+
+    sinks: int
+    sources: int
+    sanitizers: int
+    sink_categories: tuple[str, ...]
+    tier: str  # "full" | "partial" | "minimal"
+
+
+def _tier(sinks: int, sources: int) -> str:
+    # Stable, deliberately coarse thresholds calibrated to the shipped catalog
+    # spread (rust 7 sinks .. python 16): a tier shift on a catalog edit should
+    # mean the coverage story actually changed.
+    if sinks < 9 or sources < 1:
+        return "minimal"
+    if sinks >= 12 and sources >= 2:
+        return "full"
+    return "partial"
+
+
+def catalog_coverage(registry: SinkRegistry) -> dict[str, CatalogCoverage]:
+    """Per-language pattern counts for this registry, keyed by language name.
+
+    Languages sharing a callee prefix (typescript/tsx ride `js:`) each get an
+    entry so callers can join on `fs.lang` names directly.
+    """
+    by_prefix: dict[str, dict[str, list]] = {}
+    for kind, patterns in (
+        ("sinks", registry.sinks.values()),
+        ("sources", registry.sources.values()),
+        ("sanitizers", registry.sanitizers.values()),
+    ):
+        for pat in patterns:
+            prefix = _prefix_of(pat.callee)
+            by_prefix.setdefault(prefix, {"sinks": [], "sources": [], "sanitizers": []})[
+                kind
+            ].append(pat)
+
+    coverage: dict[str, CatalogCoverage] = {}
+    for prefix, groups in by_prefix.items():
+        for language in _PREFIX_LANGUAGES.get(prefix, ()):
+            coverage[language] = CatalogCoverage(
+                sinks=len(groups["sinks"]),
+                sources=len(groups["sources"]),
+                sanitizers=len(groups["sanitizers"]),
+                sink_categories=tuple(sorted({s.category for s in groups["sinks"]})),
+                tier=_tier(len(groups["sinks"]), len(groups["sources"])),
+            )
+    return coverage
