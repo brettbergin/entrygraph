@@ -251,8 +251,10 @@ def test_paths_render_source_channel_and_key(tmp_path, capsys):
     )
     assert rc == 0
     out = capsys.readouterr().out
-    assert 'http_input · query "q"' in out
-    assert 'http_input · header "X-Api-Key"' in out
+    # provenance segment (· explicit / · handler) precedes the channel now (#96)
+    assert 'query "q"' in out
+    assert 'header "X-Api-Key"' in out
+    assert "http_input · explicit" in out
 
 
 def test_paths_json_source_channel_and_key(tmp_path, capsys):
@@ -277,3 +279,67 @@ def test_paths_json_source_channel_and_key(tmp_path, capsys):
     pairs = {(r["source_channel"], r["source_key"]) for r in rows}
     assert ("query", "q") in pairs
     assert ("header", "X-Api-Key") in pairs
+
+
+def test_paths_explicit_vs_handler_label_and_flag(tmp_path, capsys):
+    app = Path(__file__).parent / "fixtures" / "python" / "source_split"
+    dbp = tmp_path / "ss.db"
+    assert main(["index", str(app), "--db", str(dbp)]) == 0
+    capsys.readouterr()
+    # default: both handlers reported, labeled by provenance
+    assert (
+        main(
+            [
+                "paths",
+                "--db",
+                str(dbp),
+                "--source-category",
+                "http_input",
+                "--sink-category",
+                "command_exec",
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "http_input · explicit" in out
+    assert "http_input · handler" in out
+    # --explicit-sources drops the handler-as-source finding
+    main(
+        [
+            "paths",
+            "--db",
+            str(dbp),
+            "--explicit-sources",
+            "--source-category",
+            "http_input",
+            "--sink-category",
+            "command_exec",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "explicit_handler" in out
+    assert "implicit_handler" not in out
+
+
+def test_paths_json_source_kind(tmp_path, capsys):
+    app = Path(__file__).parent / "fixtures" / "python" / "source_split"
+    dbp = tmp_path / "ssj.db"
+    assert main(["index", str(app), "--db", str(dbp)]) == 0
+    capsys.readouterr()
+    main(
+        [
+            "paths",
+            "--db",
+            str(dbp),
+            "--json",
+            "--source-category",
+            "http_input",
+            "--sink-category",
+            "command_exec",
+        ]
+    )
+    rows = json.loads(capsys.readouterr().out)
+    kinds = {r["source_kind"] for r in rows}
+    assert "explicit" in kinds
+    assert kinds & {"handler", "handler_params"}

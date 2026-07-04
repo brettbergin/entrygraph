@@ -27,6 +27,13 @@ _CONFIDENCE_WEIGHT = {
 _SPECULATIVE_VIA = {"cha", "dynamic"}
 _LENGTH_DECAY = 0.97
 
+# Source-provenance weight (#96 Phase 1). `explicit` (a demonstrable request-
+# accessor call) and `spec` (the user named this source) preserve the pre-split
+# tainted(1.0)/untainted(0.9) scores exactly; only handler-as-source paths move
+# down, so "this handler reads request X" outranks "this handler is shaped like a
+# source and merely reaches a sink." Unknown kind falls back to 0.9.
+_SOURCE_WEIGHT = {"explicit": 1.0, "spec": 0.9, "handler_params": 0.8, "handler": 0.65}
+
 # Channel nudge (#87): body/query/path/form are attacker-controlled on any
 # request; headers and cookies are often proxy- or server-set, so a finding
 # sourced only from them is slightly lower-signal.
@@ -97,7 +104,7 @@ def score_path(
     sink_severity: str | None,
     sanitized_effect: str | None,  # "neutralizes" | "reduces" | None
     constant_args: bool,
-    source_tainted: bool,
+    source_kind: str = "spec",  # explicit | spec | handler_params | handler
     source_channel: str | None = None,
     source_key: str | None = None,
 ) -> float:
@@ -114,7 +121,7 @@ def score_path(
     else:
         sanitizer_factor = 1.0
     const_factor = 0.4 if constant_args else 1.0
-    source_factor = 1.0 if source_tainted else 0.9
+    source_factor = _SOURCE_WEIGHT.get(source_kind, 0.9)
     channel_factor = _CHANNEL_WEIGHT.get(source_channel or "", 1.0)
     key_factor = 1.05 if source_key and source_key.lower() in _RISKY_KEYS else 1.0
     risk = (

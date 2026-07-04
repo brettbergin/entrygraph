@@ -82,6 +82,7 @@ class CallPath:
     may_continue: bool = False  # a node on this path has out-edges the filter excluded
     source_channel: str | None = None  # query|path|header|cookie|body|form (#87)
     source_key: str | None = None  # the specific param/header/flag name (#87)
+    source_kind: str | None = None  # explicit|spec|handler_params|handler (#96)
 
     @property
     def min_confidence(self) -> int:

@@ -158,7 +158,20 @@ entrygraph paths --source '*' --sink-category command_exec
   path (e.g. `shlex.quote`) *discounts* its risk score — heuristically, since
   there is no dataflow, so it never zeroes the risk or hides the path.
   `--prune-sanitized` opts into dropping those paths entirely.
+- **Source provenance**: an `http_input`/`cli_arg` source is labeled `· explicit`
+  when the handler demonstrably reads request input (a catalog accessor call like
+  `request.args.get("q")`) or `· handler` when the handler is merely shaped like a
+  source and reaches the sink without a proven read. Explicit sources rank above
+  handler-as-source ones; `--explicit-sources` drops the handler-only seeds
+  entirely (at the cost of property-read frameworks like Express `req.body`).
 - Target an exact sink with `--sink py:subprocess.run` instead of a category.
+
+**What a finding means.** A path is a *reachability lead to triage*, not a
+confirmed dataflow: it says a source-bearing symbol can reach a sink-bearing
+symbol through the call graph, not that an attacker-controlled value provably
+flows into the sink. The per-hop confidence tags (`exact`/`fuzzy`/`unresolved`)
+are *edge-resolution* confidence, not taint confidence. Rank and provenance
+labels are there to help you triage the list, highest-signal first.
 
 ### `stats` & `--json`
 
