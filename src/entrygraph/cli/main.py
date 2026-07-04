@@ -108,34 +108,64 @@ def _thin_coverage_note(languages, path_count: int) -> str | None:
 
 
 def cmd_index(args) -> int:
+    from contextlib import ExitStack
+
+    from entrygraph.fs.remote import is_git_url, prepare_source, repo_name
     from entrygraph.pipeline.scanner import index_repository
 
-    root = Path(args.path).resolve()
-    db = args.db or (root / DEFAULT_DB_NAME)
     con = console()
+    is_url = is_git_url(args.path)
+    depth = 0 if getattr(args, "full_clone", False) else args.depth
 
-    def _run():
-        if getattr(args, "full", False) or not Path(db).exists():
-            graph = CodeGraph.index(root, db=db, include_tests=args.include_tests)
-            stats = graph._last_index_stats
-            graph.close()
-            return stats
-        with CodeGraph.open(db) as graph:
-            return index_repository(
-                root,
-                graph._engine,
-                incremental=True,
-                paranoid=args.paranoid,
-                include_tests=args.include_tests,
-            )
+    stack = ExitStack()
+    prepare = prepare_source(
+        args.path,
+        ref=args.ref,
+        depth=depth,
+        clone_dir=args.clone_dir,
+        ephemeral=args.ephemeral,
+        timeout=args.timeout,
+    )
+    if is_url and not args.json:
+        with con.status(f"[bold]Cloning[/] [cyan]{args.path}[/]…", spinner="dots"):
+            src = stack.enter_context(prepare)
+    else:
+        src = stack.enter_context(prepare)
 
-    if args.json:
-        print(to_json(_run()))
-        return 0
+    with stack:
+        root = src.root
+        # A URL clone is ephemeral or lives under ./.entrygraph/clones, so the DB
+        # must land somewhere persistent (cwd), keyed by repo name; a local path
+        # keeps the historical <root>/.entrygraph.db default.
+        if args.db:
+            db = Path(args.db)
+        elif src.url is not None:
+            db = Path.cwd() / f"{repo_name(src.url)}{DEFAULT_DB_NAME}"
+        else:
+            db = root / DEFAULT_DB_NAME
 
-    mode = "full re-index" if getattr(args, "full", False) else "index"
-    with con.status(f"[bold]Running {mode}[/] on [cyan]{root}[/]…", spinner="dots"):
-        stats = _run()
+        def _run():
+            if getattr(args, "full", False) or not Path(db).exists():
+                graph = CodeGraph.index(root, db=db, include_tests=args.include_tests)
+                stats = graph._last_index_stats
+                graph.close()
+                return stats
+            with CodeGraph.open(db) as graph:
+                return index_repository(
+                    root,
+                    graph._engine,
+                    incremental=True,
+                    paranoid=args.paranoid,
+                    include_tests=args.include_tests,
+                )
+
+        if args.json:
+            print(to_json(_run()))
+            return 0
+
+        mode = "full re-index" if getattr(args, "full", False) else "index"
+        with con.status(f"[bold]Running {mode}[/] on [cyan]{root}[/]…", spinner="dots"):
+            stats = _run()
 
     body = Text()
     body.append("files    ", style="bold")
@@ -573,8 +603,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--db", help=f"index database path (default: discover {DEFAULT_DB_NAME})")
         p.add_argument("--json", action="store_true", help="emit JSON")
 
-    p = sub.add_parser("index", help="index or re-index a repository")
-    p.add_argument("path")
+    p = sub.add_parser("index", help="index or re-index a repository (local path or git URL)")
+    p.add_argument("path", help="local directory, or a git URL to clone and index")
     p.add_argument("--db", help=f"database path (default: <path>/{DEFAULT_DB_NAME})")
     p.add_argument("--full", action="store_true", help="force full re-index (default: incremental)")
     p.add_argument("--paranoid", action="store_true", help="hash every file (skip mtime fast path)")
@@ -582,6 +612,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-tests",
         action="store_true",
         help="index test files too (default: recorded but excluded; flipping this needs --full)",
+    )
+    # git-URL options (ignored when `path` is a local directory)
+    p.add_argument("--ref", help="branch, tag, or commit to check out when path is a git URL")
+    p.add_argument(
+        "--depth",
+        type=int,
+        default=1,
+        help="git clone depth for a URL (default 1; 0 = full history)",
+    )
+    p.add_argument(
+        "--full-clone",
+        dest="full_clone",
+        action="store_true",
+        help="clone full git history (equivalent to --depth 0)",
+    )
+    p.add_argument(
+        "--clone-dir",
+        dest="clone_dir",
+        help="where to place a URL checkout (default: ./.entrygraph/clones/<host>/<org>/<repo>)",
+    )
+    p.add_argument(
+        "--ephemeral",
+        action="store_true",
+        help="clone a URL to a temp dir and delete it after indexing (no paths snippets afterward)",
+    )
+    p.add_argument(
+        "--timeout", type=int, default=600, help="max seconds for a git clone/fetch (URL only)"
     )
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_index)

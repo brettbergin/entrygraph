@@ -25,3 +25,7 @@ class RepositoryNotIndexedError(EntrygraphError):
 
 class UnsupportedLanguageError(EntrygraphError):
     """No extractor is registered for the requested language."""
+
+
+class GitCloneError(EntrygraphError):
+    """Cloning or updating a git URL failed (git missing, timeout, auth, bad ref)."""
