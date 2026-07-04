@@ -55,6 +55,12 @@ callee = "js:{fetch,axios.get,axios.post,http.get,https.get}"
 description = "Outbound network request"
 
 [[source]]
+id = "js.cli-args"
+category = "cli_arg"
+callee = "js:*.{opts,parseSync}"
+description = "commander/yargs parsed-argument access"
+
+[[source]]
 id = "js.express.req"
 category = "http_input"
 callee = "js:*.{body,query,params}"
