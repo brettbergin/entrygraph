@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from entrygraph.extract.ir import FileExtraction, RawReference
 from entrygraph.kinds import Confidence, EdgeKind, SymbolKind
+from entrygraph.resolve.bindings import FileBindingView
 from entrygraph.resolve.externals import LANG_PREFIX, ExternalRegistry
 from entrygraph.resolve.hierarchy import (
     ancestors,
@@ -91,6 +92,8 @@ class FileResolver:
         self.local_symbol_ids = local_symbol_ids or {}
         self.prefix = LANG_PREFIX.get(extraction.language, extraction.language)
         self.import_map, self.wildcard_modules = build_import_map(extraction, is_package)
+        # Per-file name->type view over the binding table, for receiver typing (#98).
+        self._bindings = FileBindingView(extraction, table, is_package)
 
     # ---------------- edges ----------------
 
@@ -302,6 +305,33 @@ class FileResolver:
                 dst_id = self.table.by_fqn.get(candidate)
                 if dst_id is not None:
                     return dst_id, candidate, Confidence.IMPORT, None
+
+        # 3c. receiver typing via the binding table (#98): a local var / field
+        # bound to a known type resolves `receiver.method` by that type. A project
+        # type binds to the concrete method (+ ancestors); an external type yields
+        # a typed external qname (`go:database/sql.DB.execute`) so a receiver-typed
+        # sink matches instead of relying on the `*.execute` arg-hint guess.
+        if ref.receiver_text is not None and "." not in ref.receiver_text:
+            rtype = self._bindings.receiver_type(ref.receiver_text, ref.caller_qualified_name)
+            if rtype is not None:
+                is_project = not rtype.startswith(f"{self.prefix}:") and rtype in self.table.by_fqn
+                # Binding to a concrete PROJECT method would erase a `*.method` sink
+                # stamp (same hazard the fuzzy step guards). An external typed qname
+                # (`go:database/sql.DB.execute`) still matches `*.execute`, so it is
+                # safe and in fact tightens receiver-agnostic sinks.
+                if is_project and not self._guess_is_sink(ref):
+                    candidate = f"{rtype}.{ref.callee_name}"
+                    dst_id = self.table.by_fqn.get(candidate)
+                    if dst_id is not None:
+                        return dst_id, candidate, Confidence.IMPORT, "binding"
+                    for base_fqn in ancestors(rtype, self.table):
+                        candidate = f"{base_fqn}.{ref.callee_name}"
+                        dst_id = self.table.by_fqn.get(candidate)
+                        if dst_id is not None:
+                            return dst_id, candidate, Confidence.IMPORT, "binding"
+                elif not is_project:
+                    typed = f"{rtype}.{ref.callee_name}"
+                    return self.externals.get_or_create(typed), typed, Confidence.IMPORT, "binding"
 
         # 4. unique-name fuzzy match (project symbols only, never ambiguous).
         # For attribute calls with an unknown receiver (e.g. `runner.execute()`

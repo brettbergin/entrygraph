@@ -17,6 +17,10 @@ from entrygraph.kinds import SymbolKind
 from entrygraph.resolve.hierarchy import build_import_map
 from entrygraph.resolve.symbol_table import SymbolTable
 
+# languages where a type in the same package/namespace is referenced without an
+# import (so a bare name may resolve one module level up)
+_SAME_PACKAGE_LANGS = frozenset({"java", "csharp", "go", "php"})
+
 # language name -> canonical callee prefix, for external (non-project) type qnames
 _LANG_PREFIX = {
     "python": "py",
@@ -38,6 +42,7 @@ def _resolve_type(
     module_path: str,
     language: str,
     table: SymbolTable,
+    wildcard_modules: list[str] | None = None,
 ) -> str | None:
     """Resolve a written type to a qname: a project FQN if known, else a
     language-prefixed external qname (``go:database/sql.DB``) so existing
@@ -58,6 +63,19 @@ def _resolve_type(
     local = f"{module_path}.{dotted}"
     if local in table.by_fqn:
         return local
+    # 2b. same-package type (Java/C#/Go/PHP have implicit same-package visibility):
+    # a class in `com.example` is referenced bare from `com.example.Other`.
+    if language in _SAME_PACKAGE_LANGS and "." in module_path:
+        package = module_path.rsplit(".", 1)[0]
+        sibling = f"{package}.{dotted}"
+        if sibling in table.by_fqn:
+            return sibling
+    # 2c. type imported via a whole-namespace/package import (`using X.Y;`,
+    # `from x import *`): try each wildcard module as a prefix.
+    for wmod in wildcard_modules or ():
+        candidate = f"{wmod}.{dotted}"
+        if candidate in table.by_fqn:
+            return candidate
     # 3. already a project FQN
     if dotted in table.by_fqn:
         return dotted
@@ -79,11 +97,13 @@ class FileBindingView:
         self._table = table
         self._module = extraction.module_path
         self._lang = extraction.language
-        self._import_map, _ = build_import_map(extraction, is_package)
+        self._import_map, wildcards = build_import_map(extraction, is_package)
         # scope -> {name -> type qname}; None scope = module/class level
         self._scoped: dict[str | None, dict[str, str]] = {}
         for b in extraction.bindings:
-            resolved = _resolve_type(b.type_text, self._import_map, self._module, self._lang, table)
+            resolved = _resolve_type(
+                b.type_text, self._import_map, self._module, self._lang, table, wildcards
+            )
             if resolved is None:
                 continue
             self._scoped.setdefault(b.scope, {})[b.name] = resolved
@@ -125,10 +145,12 @@ def resolve_bindings(
                     field_symbol_ids[raw.qualified_name] = sid
 
     for _path, x, is_package in extractions:
-        import_map, _ = build_import_map(x, is_package)
+        import_map, wildcards = build_import_map(x, is_package)
         module_map = table.module_bindings.setdefault(x.module_path, {})
         for b in x.bindings:
-            resolved = _resolve_type(b.type_text, import_map, x.module_path, x.language, table)
+            resolved = _resolve_type(
+                b.type_text, import_map, x.module_path, x.language, table, wildcards
+            )
             if resolved is None:
                 continue
             if b.kind == "field":

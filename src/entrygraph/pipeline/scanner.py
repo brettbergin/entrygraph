@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import Engine, delete, select, text, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from entrygraph.db.meta import ensure_schema
 from entrygraph.db.models import Detection, Edge, Entrypoint, File, Repository, Symbol
@@ -27,6 +27,7 @@ from entrygraph.detect import entrypoints as entrypoint_rules
 from entrygraph.detect.entrypoints.base import first_string_arg
 from entrygraph.detect.express_mounts import resolve_mount_prefixes
 from entrygraph.detect.frameworks import detect_frameworks
+from entrygraph.detect.grpc_expand import expand_grpc
 from entrygraph.detect.manifests import parse_manifests
 from entrygraph.detect.taint import SinkRegistry, registry_for_repo
 from entrygraph.extract.ir import EntrypointHint, FileExtraction
@@ -147,6 +148,9 @@ def index_repository(
         # and persists resolved type_ref on field/variable symbols ----
         type_refs = resolve_bindings(extractions, table)
         _write_type_refs(session, type_refs)
+
+        # ---- gRPC per-method expansion via the binding table (#98 P2 / #37) ----
+        expand_grpc(extractions, table)
 
         # ---- resolve references -> edges + entrypoints ----
         externals = ExternalRegistry(lambda: alloc.take(Symbol))
@@ -360,16 +364,25 @@ def _write_type_refs(session: Session, type_refs: dict[int, str]) -> None:
 
 def _load_existing_symbols(session: Session, repo_id: int, table: SymbolTable) -> None:
     # File.language feeds same-language fuzzy scoping; external symbols have no file.
+    parent = aliased(Symbol)
     rows = session.execute(
         select(
-            Symbol.id, Symbol.qname, Symbol.name, Symbol.kind, Symbol.type_ref, File.language
-        ).join(File, Symbol.file_id == File.id, isouter=True)
+            Symbol.id,
+            Symbol.qname,
+            Symbol.name,
+            Symbol.kind,
+            Symbol.type_ref,
+            File.language,
+            parent.qname,
+        )
+        .join(File, Symbol.file_id == File.id, isouter=True)
+        .join(parent, Symbol.parent_id == parent.id, isouter=True)
     )
-    for sid, qname, name, kind, type_ref, language in rows:
+    for sid, qname, name, kind, type_ref, language, parent_qname in rows:
         if kind is SymbolKind.MODULE:
             table.add_module(qname, sid, language)
         elif kind is not SymbolKind.EXTERNAL:
-            table.add_symbol(sid, qname, name, kind, language)
+            table.add_symbol(sid, qname, name, kind, language, parent_qname)
         # rebuild the binding maps from persisted type_ref (#98)
         if type_ref:
             if kind in (SymbolKind.FIELD, SymbolKind.PROPERTY):
@@ -540,7 +553,14 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table):
             symbol_id = alloc.take(Symbol)
             symbol_id_by_qname[raw.qualified_name] = symbol_id
             per_file[raw.qualified_name] = symbol_id
-            table.add_symbol(symbol_id, raw.qualified_name, raw.name, raw.kind, x.language)
+            table.add_symbol(
+                symbol_id,
+                raw.qualified_name,
+                raw.name,
+                raw.kind,
+                x.language,
+                raw.parent_qualified_name,
+            )
             if raw.kind is SymbolKind.CLASS and raw.bases:
                 table.class_bases[raw.qualified_name] = raw.bases
             symbol_rows.append(
