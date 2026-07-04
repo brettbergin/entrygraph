@@ -49,6 +49,32 @@ entrygraph index .
 ╰─────────────────────── 0.137s ────────────────────────╯
 ```
 
+The positional argument may also be a **git URL** — entrygraph clones it and
+indexes the checkout:
+
+```bash
+entrygraph index https://github.com/semgrep/semgrep     # or git@github.com:org/repo.git
+```
+
+The clone lands in a reused workspace (`./.entrygraph/clones/<host>/<org>/<repo>`)
+and the index database in the current directory (`./<repo>.entrygraph.db`), so
+follow-up queries work with `--db <repo>.entrygraph.db`. Re-running `index <url>`
+fetches and updates the existing checkout instead of re-cloning. The clone is
+hardened — shallow, repo hooks disabled, no interactive credential prompt, and a
+wall-clock timeout — and the indexed code is never executed.
+
+| URL flag                     | Meaning                                                                          |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| `--ref REF`                  | branch, tag, or commit to check out (default: remote HEAD)                       |
+| `--depth N` / `--full-clone` | clone depth (default 1; `--full-clone` = full history)                           |
+| `--clone-dir DIR`            | where to place the checkout                                                      |
+| `--ephemeral`                | clone to a temp dir and delete it after indexing (no `paths` snippets afterward) |
+| `--timeout SECONDS`          | max clone/fetch wall-time (default 600)                                          |
+
+Private repos work when the ambient git environment already authenticates (SSH
+agent, credential helper, or a token in the URL); entrygraph never prompts for or
+stores secrets.
+
 ### `detect` — languages & frameworks
 
 Byte-share per language plus framework detections scored from manifest

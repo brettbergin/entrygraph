@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -24,6 +26,81 @@ def test_index_json(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["symbols"] > 0
     assert path.exists()
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+def test_index_from_git_url(tmp_path, capsys):
+    # a local bare-ish repo cloned via file:// exercises the URL path with no network
+    origin = FLASK_APP
+    repo = tmp_path / "origin"
+    shutil.copytree(origin, repo)
+    git = [
+        "git",
+        "-C",
+        str(repo),
+        "-c",
+        "user.email=t@e.com",
+        "-c",
+        "user.name=t",
+        "-c",
+        "commit.gpgsign=false",
+    ]
+    subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "init"], check=True)
+
+    dbp = tmp_path / "g.db"
+    rc = main(
+        [
+            "index",
+            f"file://{repo.resolve()}",
+            "--db",
+            str(dbp),
+            "--clone-dir",
+            str(tmp_path / "checkout"),
+            "--json",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["symbols"] > 0
+    assert dbp.exists()
+    assert (tmp_path / "checkout" / "app").exists()  # persistent checkout
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+def test_index_git_url_bad_ref_errors(tmp_path, capsys):
+    repo = tmp_path / "origin"
+    shutil.copytree(FLASK_APP, repo)
+    git = [
+        "git",
+        "-C",
+        str(repo),
+        "-c",
+        "user.email=t@e.com",
+        "-c",
+        "user.name=t",
+        "-c",
+        "commit.gpgsign=false",
+    ]
+    subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "init"], check=True)
+
+    rc = main(
+        [
+            "index",
+            f"file://{repo.resolve()}",
+            "--ref",
+            "nonexistent-ref-xyz",
+            "--clone-dir",
+            str(tmp_path / "checkout"),
+            "--timeout",
+            "60",
+        ]
+    )
+    assert rc == 2
+    assert "error:" in capsys.readouterr().err
 
 
 def test_detect(db, capsys):
