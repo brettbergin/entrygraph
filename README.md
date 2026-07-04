@@ -164,14 +164,22 @@ entrygraph paths --source '*' --sink-category command_exec
   source and reaches the sink without a proven read. Explicit sources rank above
   handler-as-source ones; `--explicit-sources` drops the handler-only seeds
   entirely (at the cost of property-read frameworks like Express `req.body`).
+- **Flow verification**: a bounded reaching-defs check runs over the candidate
+  findings and labels each with whether a request value actually flows to the
+  sink — `flow: confirmed` when it does, `flow: not observed` when it provably
+  doesn't (that path is down-weighted). It follows up to `--taint-hops` interior
+  call hops (default 3; `0` = same-function only) and is conservative: anything
+  it can't analyze stays unlabeled and unchanged. `--confirmed-only` keeps just
+  the confirmed paths.
 - Target an exact sink with `--sink py:subprocess.run` instead of a category.
 
 **What a finding means.** A path is a *reachability lead to triage*, not a
 confirmed dataflow: it says a source-bearing symbol can reach a sink-bearing
-symbol through the call graph, not that an attacker-controlled value provably
-flows into the sink. The per-hop confidence tags (`exact`/`fuzzy`/`unresolved`)
-are *edge-resolution* confidence, not taint confidence. Rank and provenance
-labels are there to help you triage the list, highest-signal first.
+symbol through the call graph. The `flow:` label sharpens this where the check
+can see the code, but an unlabeled path is still just reachability. The per-hop
+confidence tags (`exact`/`fuzzy`/`unresolved`) are *edge-resolution* confidence,
+not taint confidence. Rank, provenance, and flow labels are there to help you
+triage the list, highest-signal first.
 
 ### `stats` & `--json`
 

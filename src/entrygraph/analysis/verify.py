@@ -1,9 +1,9 @@
-"""Same-function taint verification for a materialized path (#96 Phase 2).
+"""Taint verification for a materialized path (#96 Phase 2/3).
 
-Applies only when the path's source symbol directly makes the sink call (source
-and sink in one function). Reads the file from disk, guards against staleness via
-the indexed content hash, and returns a tri-state verdict. Nothing is persisted;
-parses are memoized per file within one query via ``FileFactCache``.
+Phase 2 checks the same-function case (source directly calls the sink); Phase 3
+extends it across a bounded number of call hops. Reads the files from disk,
+guards against staleness via the indexed content hash, and returns a tri-state
+verdict. Nothing is persisted; parses are memoized per file within one query.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from entrygraph.analysis.facts import extract_function_facts, language_supported
-from entrygraph.analysis.reaching import reaches
+from entrygraph.analysis.summaries import verify_interprocedural
 from entrygraph.fs.hashing import hash_bytes
 
 # handler-tier source kinds whose parameters seed taint (a request/argv handler)
@@ -54,44 +54,58 @@ class FileFactCache:
         return extract_function_facts(language, data, start_line, end_line)
 
 
-def verify_same_function(
+def verify_path(
     path,
     source_kind: str,
     source_channel_lines: set[int],
-    file_hash: str | None,
+    file_hashes: dict[str, str],
     cache: FileFactCache,
+    hop_limit: int = 3,
 ) -> bool | None:
-    """Tri-state: does a request value reach the sink within the source function?
+    """Tri-state: does a request value reach the sink across the path's functions?
 
-    Returns None unless the whole path lives in the source symbol's function
-    (source symbol is a function/method and directly calls the sink)."""
-    source_sym = path.symbols[0]
-    sink_caller = path.symbols[-2] if len(path.symbols) >= 2 else None
-    if sink_caller is None or source_sym.id != sink_caller.id:
-        return None  # not a same-function path
-    if source_sym.kind not in ("function", "method"):
+    Covers the same-function case (0 interior hops) and up to ``hop_limit``
+    interior call hops. Returns None whenever the path can't be safely analyzed
+    (unsupported language, stale file, too deep, non-positional-arg mapping)."""
+    functions = path.symbols[:-1]  # the last symbol is the external sink
+    if not functions:
         return None
-    if source_sym.file is None or not language_supported(_language_of(source_sym)):
-        return None
-
-    facts = cache.facts_for(
-        source_sym.file,
-        _language_of(source_sym),
-        file_hash,
-        source_sym.start_line,
-        source_sym.end_line,
-    )
-    if facts is None:
-        return None
+    # every function on the path must be a supported, resolvable definition
+    facts_list = []
+    languages: list[str | None] = []
+    is_method: list[bool] = []
+    for sym in functions:
+        lang = _language_of(sym)
+        if sym.kind not in ("function", "method") or sym.file is None:
+            return None
+        if not language_supported(lang):
+            return None
+        facts = cache.facts_for(
+            sym.file, lang, file_hashes.get(sym.file), sym.start_line, sym.end_line
+        )
+        if facts is None:
+            return None
+        facts_list.append(facts)
+        languages.append(lang)
+        is_method.append(sym.kind == "method")
 
     seed_roots: set[str] = set()
     if source_kind in _HANDLER_KINDS:
-        seed_roots |= set(facts.params)
+        seed_roots |= set(facts_list[0].params)
 
-    sink_edge = path.edges[-1]
-    sink_line = sink_edge.line
-    sink_callee = _callee_name(sink_edge, path.symbols[-1])
-    return reaches(facts, seed_roots, source_channel_lines, sink_line, sink_callee)
+    edge_lines = [e.line for e in path.edges]  # one per hop; last is the sink call
+    sink_callee = _callee_name(path.edges[-1], path.symbols[-1])
+    return verify_interprocedural(
+        symbols=path.symbols,
+        edge_lines=edge_lines,
+        seed_roots=seed_roots,
+        source_lines=source_channel_lines,
+        languages=languages,
+        is_method=is_method,
+        facts_list=facts_list,
+        sink_callee=sink_callee,
+        hop_limit=hop_limit,
+    )
 
 
 def _language_of(symbol) -> str | None:

@@ -343,3 +343,52 @@ def test_paths_json_source_kind(tmp_path, capsys):
     kinds = {r["source_kind"] for r in rows}
     assert "explicit" in kinds
     assert kinds & {"handler", "handler_params"}
+
+
+def test_paths_taint_hops_flag_and_multihop_label(tmp_path, capsys):
+    src = (
+        "import subprocess\n"
+        "from flask import Flask, request\n"
+        "app = Flask(__name__)\n"
+        "@app.route('/x')\n"
+        "def h():\n"
+        "    q = request.args.get('q')\n"
+        "    return run(q)\n"
+        "def run(cmd): subprocess.run(cmd)\n"
+    )
+    repo = tmp_path / "app"
+    repo.mkdir()
+    (repo / "app.py").write_text(src)
+    dbp = tmp_path / "ip.db"
+    assert main(["index", str(repo), "--db", str(dbp)]) == 0
+    capsys.readouterr()
+    rc = main(
+        [
+            "paths",
+            "--db",
+            str(dbp),
+            "--source-category",
+            "http_input",
+            "--sink-category",
+            "command_exec",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "flow: confirmed (1 hop)" in out  # 2-hop path -> 1 interior hop
+    # --taint-hops 0 disables the interprocedural check -> no confirmed flow line
+    main(
+        [
+            "paths",
+            "--db",
+            str(dbp),
+            "--taint-hops",
+            "0",
+            "--source-category",
+            "http_input",
+            "--sink-category",
+            "command_exec",
+        ]
+    )
+    out0 = capsys.readouterr().out
+    assert "flow: confirmed" not in out0

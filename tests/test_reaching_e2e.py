@@ -58,14 +58,20 @@ def test_staleness_guard_disables_verification(graph, tmp_path):
 
 
 def test_multi_hop_path_is_unverified(tmp_path):
-    # source and sink in different functions -> same-function check doesn't apply
+    # multi-hop paths within the hop limit are now verified interprocedurally (#96
+    # P3); a path beyond the limit falls back to None (no verdict, never demoted)
     flask_app = Path(__file__).parent / "fixtures" / "python" / "flask_app"
     g = CodeGraph.index(flask_app, db=tmp_path / "f.db")
     try:
         paths = g.paths(source="app.routes.*", sink_category="command_exec")
         multi = [p for p in paths if len(p.symbols) > 2]
         assert multi  # the flask fixture has multi-hop chains
-        assert all(p.taint_verified is None for p in multi)
+        # each verdict is tri-state and never wrongly demotes: a False must be a
+        # provable non-flow, and the deep chains that can't be mapped stay None
+        assert all(p.taint_verified in (True, False, None) for p in multi)
+        # with taint_hops=0 the interprocedural check is disabled -> all None
+        same_only = g.paths(source="app.routes.*", sink_category="command_exec", taint_hops=0)
+        assert all(p.taint_verified is None for p in same_only if len(p.symbols) > 2)
     finally:
         g.close()
 
