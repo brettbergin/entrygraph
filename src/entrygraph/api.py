@@ -119,6 +119,13 @@ class CodeGraph:
         self._last_index_stats: IndexStats | None = None
         self._registry_cache: tuple[tuple, object] | None = None
 
+    @property
+    def repo_root(self) -> str | None:
+        """The indexed repository's root path on disk, or None if unavailable — lets
+        callers read original source lines for a symbol/edge location."""
+        with self._session_factory() as session:
+            return session.execute(select(models.Repository.root_path)).scalar()
+
     # ---------------- construction ----------------
 
     @classmethod
