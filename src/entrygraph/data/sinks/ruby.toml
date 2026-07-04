@@ -4,18 +4,31 @@
 #   unresolved attribute calls -> "rb:*.execute"
 #   fuzzy/import project calls  -> the project qname (not matched here)
 
+# A fully-constant command (string literal or array of literals) is not an
+# injection surface; require interpolation (#{}) or a variable/identifier
+# argument. The hint matches an identifier in arg position but not inside a
+# quoted literal (#97).
 [[sink]]
 id = "rb.command-exec.kernel"
 category = "command_exec"
 severity = "high"
-callee = "rb:{system,exec,spawn,fork,syscall}"
-description = "Kernel command execution"
+callee = "rb:{system,exec,spawn}"
+require_arg_hint = "\\#\\{|(?:^|[(,])\\s*[\\[*&]?\\s*[a-zA-Z_@$]"
+description = "Kernel command execution with a dynamic argument"
+
+[[sink]]
+id = "rb.command-exec.process"
+category = "command_exec"
+severity = "high"
+callee = "rb:{fork,syscall}"
+description = "Process spawn / raw syscall"
 
 [[sink]]
 id = "rb.command-exec.attr"
 category = "command_exec"
 severity = "high"
 callee = "rb:*.{system,exec,spawn}"
+require_arg_hint = "\\#\\{|(?:^|[(,])\\s*[\\[*&]?\\s*[a-zA-Z_@$]"
 description = "Command execution on a receiver (Open3, Process, etc.)"
 
 [[sink]]
@@ -67,7 +80,8 @@ id = "rb.command-exec.open3"
 category = "command_exec"
 severity = "high"
 callee = "rb:*.{capture2,capture2e,capture3,popen2,popen3,popen2e}"
-description = "Open3 command execution"
+require_arg_hint = "\\#\\{|(?:^|[(,])\\s*[\\[*&]?\\s*[a-zA-Z_@$]"
+description = "Open3 command execution with a dynamic argument"
 
 [[sink]]
 id = "rb.deserialization"

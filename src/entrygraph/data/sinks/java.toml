@@ -15,12 +15,24 @@ severity = "high"
 callee = "java:{*.exec,Runtime.exec,ProcessBuilder,*.ProcessBuilder}"
 description = "OS command execution (Runtime.exec / ProcessBuilder)"
 
+# Unambiguous JDBC statement methods — receiver-agnostic, no arg guard.
+[[sink]]
+id = "java.sql-query"
+category = "sql"
+severity = "medium"
+callee = "java:*.{executeQuery,executeUpdate,executeLargeUpdate,executeBatch}"
+description = "JDBC statement execution"
+
+# Bare .execute is heavily overloaded (Executor.execute(runnable), HttpClient
+# .execute(request), command patterns) — same shape as rb.sql-execute (#91/#97).
+# Only a sink when the argument looks like SQL.
 [[sink]]
 id = "java.sql-execute"
 category = "sql"
 severity = "medium"
-callee = "java:*.{executeQuery,executeUpdate,execute,executeLargeUpdate,executeBatch}"
-description = "SQL statement execution (receiver-agnostic)"
+callee = "java:*.execute"
+require_arg_hint = "(?i)\\b(select|insert|update|delete|from|where|drop|truncate|alter|union|sql)\\b|\\+"
+description = "Raw SQL execute with a SQL-shaped statement"
 
 [[sink]]
 id = "java.deserialization"
@@ -58,19 +70,32 @@ severity = "high"
 callee = "java:{XMLDecoder,*.XMLDecoder,*.readUnshared,*.enableDefaultTyping}"
 description = "Unsafe deserialization (XMLDecoder / Jackson default typing)"
 
+# `.lookup` collides with the ubiquitous no-arg MethodHandles.lookup() (#97);
+# a JNDI lookup always names a target, so require a non-empty argument list.
 [[sink]]
 id = "java.jndi"
 category = "jndi"
 severity = "medium"
 callee = "java:*.lookup"
+require_arg_hint = "[^()\\s]"
 description = "JNDI lookup (InitialContext.lookup)"
 
 [[sink]]
 id = "java.expression-injection"
 category = "template_injection"
 severity = "high"
-callee = "java:*.{parseExpression,evaluate,createTemplate}"
-description = "Expression/template evaluation (SpEL / Velocity / Freemarker)"
+callee = "java:*.{parseExpression,createTemplate}"
+description = "Expression/template parsing (SpEL / Velocity / Freemarker)"
+
+# Bare .evaluate collides with JUnit Statement.evaluate() (no-arg) and countless
+# visitor/evaluator patterns (#97); require a non-empty argument list.
+[[sink]]
+id = "java.expression-injection.evaluate"
+category = "template_injection"
+severity = "high"
+callee = "java:*.evaluate"
+require_arg_hint = "[^()\\s]"
+description = "Expression evaluation with an argument (SpEL / XPath / EL)"
 
 [[sink]]
 id = "java.path-traversal"
