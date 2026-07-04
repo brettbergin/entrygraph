@@ -129,15 +129,25 @@ class CodeGraph:
     # ---------------- construction ----------------
 
     @classmethod
-    def index(cls, root: str | Path, db: str | Path | None = None) -> CodeGraph:
-        """Index (or fully re-index) a repository and return an open graph."""
+    def index(
+        cls,
+        root: str | Path,
+        db: str | Path | None = None,
+        *,
+        include_tests: bool = False,
+    ) -> CodeGraph:
+        """Index (or fully re-index) a repository and return an open graph.
+
+        Test files are recorded but not extracted unless ``include_tests`` is
+        set; flipping the flag on an existing index requires a full re-index.
+        """
         from entrygraph.pipeline.scanner import index_repository
 
         root = Path(root).resolve()
         db_path = Path(db) if db else root / DEFAULT_DB_NAME
         engine = make_engine(db_path)
         graph = cls(engine)
-        graph._last_index_stats = index_repository(root, engine)
+        graph._last_index_stats = index_repository(root, engine, include_tests=include_tests)
         return graph
 
     @classmethod
@@ -493,7 +503,7 @@ class CodeGraph:
 
     # ---------------- maintenance ----------------
 
-    def refresh(self, *, paranoid: bool = False) -> IndexStats:
+    def refresh(self, *, paranoid: bool = False, include_tests: bool = False) -> IndexStats:
         """Incrementally re-index: only changed/added/deleted files are reparsed."""
         from entrygraph.pipeline.scanner import index_repository
 
@@ -501,7 +511,13 @@ class CodeGraph:
             repo = session.execute(select(models.Repository)).scalars().first()
         if repo is None:
             raise RepositoryNotIndexedError("database has no indexed repository")
-        stats = index_repository(repo.root_path, self._engine, incremental=True, paranoid=paranoid)
+        stats = index_repository(
+            repo.root_path,
+            self._engine,
+            incremental=True,
+            paranoid=paranoid,
+            include_tests=include_tests,
+        )
         self._adjacency.clear()
         return stats
 

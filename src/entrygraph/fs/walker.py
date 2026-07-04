@@ -19,6 +19,7 @@ from pathlib import Path
 import pathspec
 
 from entrygraph.fs.lang import RepoLanguageProfile, detect_language
+from entrygraph.fs.testfiles import is_test_path
 
 PRUNED_DIRS = frozenset(
     {
@@ -63,7 +64,7 @@ class WalkedFile:
     language: str | None
     size_bytes: int
     mtime_ns: int
-    skip_reason: str | None = None  # too_large | binary | minified | None
+    skip_reason: str | None = None  # test | too_large | binary | minified | None
 
 
 def _collect_gitignores(root: Path) -> list[Path]:
@@ -154,11 +155,14 @@ def content_gate(abs_path: str, language: str | None, size_bytes: int) -> str | 
     return None
 
 
-def walk_repo(root: str | Path) -> tuple[list[WalkedFile], RepoLanguageProfile]:
+def walk_repo(
+    root: str | Path, *, include_tests: bool = False
+) -> tuple[list[WalkedFile], RepoLanguageProfile]:
     """Walk a repository, returning candidate files and a language profile.
 
     Files in unrecognized languages are omitted; recognized-but-gated files are
-    included with ``skip_reason`` set so they can be recorded in the DB.
+    included with ``skip_reason`` set so they can be recorded in the DB. Test
+    files are gated (``skip_reason="test"``) unless ``include_tests`` is set.
     """
     root = Path(root).resolve()
     spec = _load_gitignore(root)
@@ -213,10 +217,14 @@ def walk_repo(root: str | Path) -> tuple[list[WalkedFile], RepoLanguageProfile]:
                     language=language,
                     size_bytes=stat.st_size,
                     mtime_ns=stat.st_mtime_ns,
-                    # only the cheap (no-read) gate here; the byte-peek content
+                    # only the cheap (no-read) gates here; the byte-peek content
                     # gate is deferred to the diff phase so unchanged files aren't
                     # opened on every walk (see fs.hashing.diff_files).
-                    skip_reason=cheap_gate(name, stat.st_size),
+                    skip_reason=(
+                        "test"
+                        if not include_tests and is_test_path(rel, language)
+                        else cheap_gate(name, stat.st_size)
+                    ),
                 )
             )
 

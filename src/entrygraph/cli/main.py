@@ -79,12 +79,18 @@ def cmd_index(args) -> int:
 
     def _run():
         if getattr(args, "full", False) or not Path(db).exists():
-            graph = CodeGraph.index(root, db=db)
+            graph = CodeGraph.index(root, db=db, include_tests=args.include_tests)
             stats = graph._last_index_stats
             graph.close()
             return stats
         with CodeGraph.open(db) as graph:
-            return index_repository(root, graph._engine, incremental=True, paranoid=args.paranoid)
+            return index_repository(
+                root,
+                graph._engine,
+                incremental=True,
+                paranoid=args.paranoid,
+                include_tests=args.include_tests,
+            )
 
     if args.json:
         print(to_json(_run()))
@@ -487,6 +493,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", help=f"database path (default: <path>/{DEFAULT_DB_NAME})")
     p.add_argument("--full", action="store_true", help="force full re-index (default: incremental)")
     p.add_argument("--paranoid", action="store_true", help="hash every file (skip mtime fast path)")
+    p.add_argument(
+        "--include-tests",
+        action="store_true",
+        help="index test files too (default: recorded but excluded; flipping this needs --full)",
+    )
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_index)
 

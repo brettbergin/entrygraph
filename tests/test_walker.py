@@ -99,3 +99,22 @@ def test_walk_fixture_repo():
     assert "cli.py" in paths
     stats = {s.name for s in profile.stats()}
     assert "python" in stats
+
+
+def test_walk_gates_test_files(tmp_path: Path):
+    # test files are recorded with skip_reason="test" (not dropped) so stats
+    # stay honest, and --include-tests lifts the gate.
+    _make(tmp_path, "app/routes.py")
+    _make(tmp_path, "tests/test_routes.py")
+    _make(tmp_path, "app/handler_test.go", b"package app\n")
+
+    files, _ = walk_repo(tmp_path)
+    by_path = {f.path: f for f in files}
+    assert by_path["app/routes.py"].skip_reason is None
+    assert by_path["tests/test_routes.py"].skip_reason == "test"
+    assert by_path["app/handler_test.go"].skip_reason == "test"
+
+    files, _ = walk_repo(tmp_path, include_tests=True)
+    by_path = {f.path: f for f in files}
+    assert by_path["tests/test_routes.py"].skip_reason is None
+    assert by_path["app/handler_test.go"].skip_reason is None
