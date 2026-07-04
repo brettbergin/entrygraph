@@ -42,8 +42,8 @@ def test_spot_check_new_sinks(registry):
     assert registry.match("py:hashlib.md5") == "py.weak-crypto"
     assert registry.match("js:vm.runInNewContext") == "js.code-eval.vm"
     assert registry.match("go:net/http.NewRequest") == "go.ssrf"
-    assert registry.match("java:ctx.lookup") == "java.jndi"
-    assert registry.match("rb:Open3.capture3") == "rb.command-exec.open3"
+    assert registry.match("java:ctx.lookup", "(name)") == "java.jndi"
+    assert registry.match("rb:Open3.capture3", "(user_cmd)") == "rb.command-exec.open3"
 
 
 def test_categories_are_queryable(registry):

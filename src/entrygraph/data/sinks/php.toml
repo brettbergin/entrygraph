@@ -54,19 +54,25 @@ severity = "high"
 callee = "php:{mysqli_query,mysqli_multi_query,pg_query,sqlite_query}"
 description = "SQL statement execution"
 
+# `.query`/`.exec`/`.prepare` on a fully-literal SQL string is the safe idiom
+# (constant statement, bound params); a `$` in the argument means a variable is
+# involved — interpolated into the string or concatenated — which is the actual
+# injection surface (#97).
 [[sink]]
 id = "php.sql.pdo-query"
 category = "sql"
 severity = "high"
 callee = "php:*.{query,exec}"
-description = "PDO/DB query execution (receiver-agnostic)"
+require_arg_hint = "\\$"
+description = "PDO/DB query execution with a variable in the statement"
 
 [[sink]]
 id = "php.sql.pdo-prepare"
 category = "sql"
 severity = "low"
 callee = "php:*.prepare"
-description = "PDO prepared statement (receiver-agnostic)"
+require_arg_hint = "\\$"
+description = "PDO prepared statement built with a variable"
 
 [[sink]]
 id = "php.path-traversal"
