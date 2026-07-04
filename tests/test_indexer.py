@@ -203,3 +203,48 @@ def test_include_tests_reincludes_test_files(tmp_engine, fixture_repo):
         assert row.skip_reason is None
         qnames = set(s.execute(select(Symbol.qname).where(Symbol.file_id == row.id)).scalars())
         assert "tests.test_routes.test_get_user" in qnames
+
+
+# ---------------- inline Rust test exclusion end-to-end (#100) ----------------
+
+_RUST_WITH_INLINE_TESTS = """
+use std::process::Command;
+
+pub fn run(cmd: &str) {
+    Command::new(cmd);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spawns() {
+        Command::new("evil");
+    }
+}
+"""
+
+
+def _rust_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "crate"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "lib.rs").write_text(_RUST_WITH_INLINE_TESTS)
+    (repo / "Cargo.toml").write_text('[package]\nname = "crate"\nversion = "0.1.0"\n')
+    return repo
+
+
+def test_inline_rust_tests_excluded_by_default(tmp_engine, tmp_path):
+    index_repository(_rust_repo(tmp_path), tmp_engine)
+    with Session(tmp_engine) as session:
+        qnames = set(session.execute(select(Symbol.qname)).scalars())
+    assert any(q.endswith(".run") for q in qnames)  # production fn kept
+    assert not any("spawns" in q or ".tests" in q for q in qnames)  # inline test gone
+
+
+def test_inline_rust_tests_kept_with_include_tests(tmp_engine, tmp_path):
+    # the flag must thread scanner -> worker -> extractor
+    index_repository(_rust_repo(tmp_path), tmp_engine, include_tests=True)
+    with Session(tmp_engine) as session:
+        qnames = set(session.execute(select(Symbol.qname)).scalars())
+    assert any("spawns" in q for q in qnames)

@@ -40,7 +40,7 @@ def test_pool_context_uses_fork_on_linux(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_parse_phase_falls_back_when_pool_breaks(monkeypatch: pytest.MonkeyPatch) -> None:
     to_index = _walked(scanner._PARALLEL_THRESHOLD + 5)
 
-    def fake_extract_one(wf: WalkedFile):
+    def fake_extract_one(wf: WalkedFile, include_tests: bool = False):
         return (wf.path, object(), True, "deadbeef")  # (path, extraction, is_package, hash)
 
     class _BrokenPool:

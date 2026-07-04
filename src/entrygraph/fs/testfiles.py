@@ -11,8 +11,10 @@ that are vanishingly rare in production code (``tests/``, ``__mocks__/``,
 ``src/test/``). All checks run on the **repo-relative** path so the absolute
 path to the repository can never false-match.
 
-Known gap: Rust inline ``#[cfg(test)] mod tests`` lives inside production
-``.rs`` files and needs extractor-level handling, not a file classifier.
+Rust inline ``#[cfg(test)] mod tests`` (and bare ``#[test]`` functions) live
+inside production ``.rs`` files, so the file classifier can't see them; they are
+excluded at extractor level instead — see ``extract/rust.py`` ``_drop_test_code``
+(#100), which honors the same ``--include-tests`` override.
 """
 
 from __future__ import annotations

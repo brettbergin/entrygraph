@@ -23,6 +23,7 @@ the trailing ``!`` stripped so sink patterns can match the generated call.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, ClassVar
 
 from entrygraph.extract.base import FileContext, node_text, span_of, truncate
@@ -43,6 +44,9 @@ _SRC_ROOTS = ("src",)
 _CRATE_ROOT = "_root"
 # Attribute nodes precede an item as leading siblings.
 _ATTRIBUTE = "attribute_item"
+# Items whose leading attributes can mark a whole subtree as test-only.
+_TEST_HOSTS = ("mod_item", "impl_item", "function_item")
+_STRING_LITERAL = re.compile(r'"[^"]*"')
 
 
 def _norm(text: str) -> str:
@@ -81,7 +85,67 @@ class RustExtractor:
         self._extract_imports(root, ctx, out)
         self._extract_calls(root, ctx, out)
         self._extract_bindings(root, ctx, out)
+        if not ctx.include_tests:
+            self._drop_test_code(root, out)
         return out
+
+    # ---------------- inline test exclusion (#100) ----------------
+
+    def _drop_test_code(self, root: Node, out: FileExtraction) -> None:
+        """Remove symbols/references/bindings that live inside inline test code.
+
+        Rust convention keeps unit tests in the production file — a
+        ``#[cfg(test)] mod tests { .. }`` module or a bare ``#[test]`` function —
+        which the file-level test gate (``fs/testfiles.py``) can't see. Here we
+        collect the line ranges of test-annotated modules, impls, and functions and
+        drop anything defined or originating within them. Imports/framework signals
+        are left intact: a test-only ``use`` doesn't inflate the graph, and pruning
+        them would risk framework detection. Honors ``--include-tests`` (this whole
+        pass is skipped when it's set)."""
+        regions = self._test_regions(root)
+        if not regions:
+            return
+
+        def in_test(span) -> bool:
+            return any(start <= span.start_line <= end for start, end in regions)
+
+        out.symbols = [s for s in out.symbols if not in_test(s.span)]
+        out.references = [r for r in out.references if not in_test(r.span)]
+        out.bindings = [b for b in out.bindings if not in_test(b.span)]
+
+    def _test_regions(self, root: Node) -> list[tuple[int, int]]:
+        """(start_line, end_line) ranges of every test-annotated mod/impl/fn."""
+        regions: list[tuple[int, int]] = []
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.type in _TEST_HOSTS and self._is_test_annotated(node):
+                regions.append((node.start_point.row + 1, node.end_point.row + 1))
+                continue  # nested items are already covered by this region
+            stack.extend(node.children)
+        return regions
+
+    def _is_test_annotated(self, node: Node) -> bool:
+        """True if a leading attribute is ``#[cfg(test)]`` or a ``#[test]``-family
+        attribute (``#[test]``, ``#[tokio::test]``, ``#[async_std::test]``)."""
+        return any(self._is_test_attr(node_text(a)) for a in self._attribute_nodes(node))
+
+    @staticmethod
+    def _is_test_attr(attr_text: str) -> bool:
+        inner = attr_text.strip().removeprefix("#[").removesuffix("]").strip()
+        path = inner.split("(", 1)[0].strip()
+        if path.split("::")[-1] == "test":  # #[test], #[tokio::test], ...
+            return True
+        if path == "cfg":
+            # cfg(test) / cfg(all(test, ..)); strip string literals so a
+            # feature="test-utils" predicate can't false-match the `test` token.
+            predicate = _STRING_LITERAL.sub("", inner[len("cfg") :])
+            # `cfg(not(test))` is production-only code (compiled when NOT testing)
+            # — must be kept, so bail before the positive `test` match.
+            if "not(test)" in re.sub(r"\s+", "", predicate):
+                return False
+            return re.search(r"\btest\b", predicate) is not None
+        return False
 
     # ---------------- bindings (#98) ----------------
 
