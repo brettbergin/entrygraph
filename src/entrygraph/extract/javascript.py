@@ -142,10 +142,16 @@ class JavaScriptExtractor:
         elif value.type == "call_expression":
             fn = value.child_by_field_name("function")
             if fn is not None and fn.type == "identifier":
+                callee = node_text(fn)
+                # `require`/`import` bind a *module*, not a typed value — a
+                # call_result here would shadow the correct import-based sink
+                # resolution (`cp = require('child_process'); cp.exec`), so skip it.
+                if callee in ("require", "import", "__require"):
+                    return
                 out.bindings.append(
                     RawBinding(
                         name=name,
-                        type_text=node_text(fn),
+                        type_text=callee,
                         span=span_of(node),
                         scope=scope,
                         kind="call_result",
