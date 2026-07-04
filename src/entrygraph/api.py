@@ -55,6 +55,28 @@ _HANDLER_SOURCE_KINDS: dict[str, tuple[EntrypointKind, ...]] = {
 
 type SourceSpec = str | Symbol | Entrypoint | list[str | Symbol | Entrypoint]
 
+# Risk multipliers by source provenance (#96 Phase 1). explicit/spec preserve the
+# pre-split tainted(1.0)/untainted(0.9) scores exactly; only handler-as-source
+# paths move, so a demonstrable request read outranks "this handler is shaped
+# like a source." See graph.scoring._SOURCE_WEIGHT.
+_SOURCE_KIND_EXPLICIT = "explicit"
+_SOURCE_KIND_SPEC = "spec"
+_SOURCE_KIND_HANDLER_PARAMS = "handler_params"
+_SOURCE_KIND_HANDLER = "handler"
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSets:
+    """Taint-origin symbol ids split by provenance strength (#96 Phase 1)."""
+
+    explicit: frozenset[int]  # calls a catalog accessor — demonstrable read
+    implicit: frozenset[int]  # handler-as-source — shaped like a source
+    spec: frozenset[int]  # user named it via `source`
+
+    @property
+    def all(self) -> frozenset[int]:
+        return self.explicit | self.implicit | self.spec
+
 
 def _traversal_params(
     min_confidence: int | None, include_fuzzy: bool, include_unresolved: bool
@@ -336,6 +358,7 @@ class CodeGraph:
         include_unresolved: bool = False,
         include_callbacks: bool = False,
         prune_sanitized: bool = False,
+        explicit_sources: bool = False,
         engine: str = "memory",
         strict: bool = False,
     ) -> list[CallPath]:
@@ -381,6 +404,7 @@ class CodeGraph:
                 include_fuzzy=fuzzy,
                 include_unresolved=unresolved,
                 include_callbacks=callbacks,
+                explicit_sources=explicit_sources,
             )
 
         if forced:
@@ -419,13 +443,17 @@ class CodeGraph:
         include_unresolved: bool = False,
         include_callbacks: bool = False,
         prune_sanitized: bool = False,
+        explicit_sources: bool = False,
         engine: str = "memory",
     ) -> PathResults:
         """One source->sink enumeration at a fixed confidence frontier (see `paths`)."""
         floor, include_cha = _traversal_params(min_confidence, include_fuzzy, include_unresolved)
         kinds = (*edge_kinds, "callback") if include_callbacks else edge_kinds
         with self._session_factory() as session:
-            sources = self._source_ids(session, source, source_category)
+            source_sets = self._resolve_sources(
+                session, source, source_category, explicit_only=explicit_sources
+            )
+            sources = set(source_sets.all)
             sinks = self._sink_ids(session, sink, sink_category)
             if not sources or not sinks:
                 return PathResults()
@@ -458,7 +486,7 @@ class CodeGraph:
             symbol_map = q.symbols_by_ids(session, all_ids)
             registry = self._registry(session)
             edge_map = self._edge_rows(session, raw_paths)
-            tainted_sources = self._tainted_source_ids(session, sources)
+            source_kinds = self._source_kinds(session, source_sets)
             source_meta = self._source_edge_meta(
                 session, {path[0][0] for path in raw_paths}, registry, source_category
             )
@@ -472,7 +500,7 @@ class CodeGraph:
                     symbol_map,
                     edge_map,
                     registry,
-                    tainted_sources,
+                    source_kinds,
                     excluded_nodes,
                     sibling_calls,
                     source_meta,
@@ -503,12 +531,17 @@ class CodeGraph:
         include_fuzzy: bool = False,
         include_unresolved: bool = False,
         include_callbacks: bool = False,
+        explicit_sources: bool = False,
         engine: str = "memory",
     ) -> bool:
         floor, include_cha = _traversal_params(min_confidence, include_fuzzy, include_unresolved)
         kinds = (*edge_kinds, "callback") if include_callbacks else edge_kinds
         with self._session_factory() as session:
-            sources = self._source_ids(session, source, source_category)
+            sources = set(
+                self._resolve_sources(
+                    session, source, source_category, explicit_only=explicit_sources
+                ).all
+            )
             sinks = self._sink_ids(session, sink, sink_category)
             if not sources or not sinks:
                 return False
@@ -620,10 +653,26 @@ class CodeGraph:
             return {spec.symbol.id}
         return q.symbol_ids_matching(session, str(spec))
 
-    def _source_ids(self, session: Session, source, source_category: str | None) -> set[int]:
-        """Taint origins: explicit `source` spec plus, for `source_category`, every
-        symbol that calls a matching catalog taint-source function."""
-        ids = self._spec_to_ids(session, source) if source is not None else set()
+    def _resolve_sources(
+        self,
+        session: Session,
+        source,
+        source_category: str | None,
+        explicit_only: bool = False,
+    ) -> SourceSets:
+        """Taint origins split by provenance (#96 Phase 1).
+
+        - ``spec``: symbols the user named via ``source`` (no penalty — they asked).
+        - ``explicit``: symbols that call a catalog taint-source accessor (a
+          demonstrable read of the category's input).
+        - ``implicit``: entrypoint handlers that receive the category's input as
+          parameters/properties with no accessor call — kept because property-read
+          frameworks (Express ``req.body``) produce no source edge (F-H9), but
+          down-weighted and dropped entirely under ``explicit_only``.
+        """
+        spec = self._spec_to_ids(session, source) if source is not None else set()
+        explicit: set[int] = set()
+        implicit: set[int] = set()
         if source_category is not None:
             registry = self._registry(session)
             source_pattern_ids = registry.source_ids_for_category(source_category)
@@ -633,21 +682,34 @@ class CodeGraph:
                         models.Edge.source_id.in_(source_pattern_ids)
                     )
                 ).scalars()
-                ids |= set(rows)
+                explicit |= set(rows)
             # Handler-as-source: an entrypoint handler receives the category's
             # attacker-controlled input even when no catalog accessor call
-            # appears in its body. HTTP: frameworks whose request access is a
-            # property read (Express `req.body`, Symfony `$request->get`)
-            # produce zero source edges (F-H9). CLI: cobra `RunE(cmd, args)`,
-            # click-decorated functions, argparse mains receive parsed argv as
-            # parameters, which likewise never match a call pattern (#86).
-            for category, kinds in _HANDLER_SOURCE_KINDS.items():
-                if source_category in (category, "all"):
-                    ep_rows = session.execute(
-                        select(models.Entrypoint.symbol_id).where(models.Entrypoint.kind.in_(kinds))
-                    ).scalars()
-                    ids |= set(ep_rows)
-        return ids
+            # appears in its body. HTTP: property-read frameworks (Express
+            # `req.body`) produce no source edge (F-H9); CLI: cobra/click/argparse
+            # handlers receive parsed argv as parameters (#86). Kept on by default
+            # (dropping them would make those frameworks unanalyzable), but this is
+            # weaker evidence than a demonstrable accessor call — so labeled and
+            # down-weighted, and omitted entirely under explicit_only.
+            if not explicit_only:
+                for category, kinds in _HANDLER_SOURCE_KINDS.items():
+                    if source_category in (category, "all"):
+                        ep_rows = session.execute(
+                            select(models.Entrypoint.symbol_id).where(
+                                models.Entrypoint.kind.in_(kinds)
+                            )
+                        ).scalars()
+                        implicit |= set(ep_rows)
+        # keep the sets disjoint so per-symbol classification is unambiguous:
+        # explicit/spec evidence outranks the implicit handler union
+        implicit -= explicit | spec
+        return SourceSets(
+            explicit=frozenset(explicit), implicit=frozenset(implicit), spec=frozenset(spec)
+        )
+
+    def _source_ids(self, session: Session, source, source_category: str | None) -> set[int]:
+        """Flat taint-origin set (compat wrapper over :meth:`_resolve_sources`)."""
+        return set(self._resolve_sources(session, source, source_category).all)
 
     def _category_sink_edge_ids(self, session: Session, sink_category: str) -> set[int]:
         """Edge ids tagged as a sink of `sink_category` — used to require that a
@@ -773,28 +835,30 @@ class CodeGraph:
         return meta
 
     @staticmethod
-    def _tainted_source_ids(session: Session, sources: set[int]) -> set[int]:
-        """Source symbol ids known to carry user-controlled data: entrypoints with
-        tainted params, plus call sites of catalog taint-source functions."""
-        if not sources:
-            return set()
-        tainted: set[int] = set()
-        rows = session.execute(
-            select(models.Entrypoint.symbol_id, models.Entrypoint.extra).where(
-                models.Entrypoint.symbol_id.in_(sources)
-            )
-        ).all()
-        for sid, extra in rows:
-            if extra and json.loads(extra).get("tainted_params"):
-                tainted.add(sid)
-        source_callers = session.execute(
-            select(models.Edge.src_symbol_id).where(
-                models.Edge.source_id.is_not(None),
-                models.Edge.src_symbol_id.in_(sources),
-            )
-        ).scalars()
-        tainted |= set(source_callers)
-        return tainted
+    def _source_kinds(session: Session, sets: SourceSets) -> dict[int, str]:
+        """Per-seed provenance label, strongest evidence first (#96 Phase 1):
+        explicit (accessor call) > spec (user named) > handler_params (implicit
+        handler with tainted params) > handler (bare implicit handler)."""
+        kinds: dict[int, str] = {}
+        for sid in sets.explicit:
+            kinds[sid] = _SOURCE_KIND_EXPLICIT
+        for sid in sets.spec:
+            kinds.setdefault(sid, _SOURCE_KIND_SPEC)
+        if sets.implicit:
+            rows = session.execute(
+                select(models.Entrypoint.symbol_id, models.Entrypoint.extra).where(
+                    models.Entrypoint.symbol_id.in_(sets.implicit)
+                )
+            ).all()
+            has_params = {
+                sid for sid, extra in rows if extra and json.loads(extra).get("tainted_params")
+            }
+            for sid in sets.implicit:
+                kinds.setdefault(
+                    sid,
+                    _SOURCE_KIND_HANDLER_PARAMS if sid in has_params else _SOURCE_KIND_HANDLER,
+                )
+        return kinds
 
     @staticmethod
     def _nodes_with_open_frontier(
@@ -856,7 +920,7 @@ class CodeGraph:
         symbol_map,
         edge_map,
         registry,
-        tainted_sources,
+        source_kinds,
         excluded_nodes,
         sibling_calls,
         source_meta,
@@ -896,13 +960,14 @@ class CodeGraph:
             )
 
         source_channel, source_key = source_meta.get(path[0][0], (None, None))
+        source_kind = source_kinds.get(path[0][0], _SOURCE_KIND_SPEC)
         risk = score_path(
             hop_confidences=[h.confidence for h in hops],
             hop_vias=[(row.via if row is not None else h.via) for row, h in zip(rows, hops)],
             sink_severity=registry.severity_of(sink_id),
             sanitized_effect=sanitized_effect,
             constant_args=terminal_const,
-            source_tainted=path[0][0] in tainted_sources,
+            source_kind=source_kind,
             source_channel=source_channel,
             source_key=source_key,
         )
@@ -912,6 +977,7 @@ class CodeGraph:
             edges=tuple(path_edges),
             risk_score=risk,
             may_continue=may_continue,
+            source_kind=source_kind,
             source_channel=source_channel,
             source_key=source_key,
         )

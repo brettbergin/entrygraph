@@ -32,7 +32,7 @@ def test_score_path_ordering_by_severity():
         "hop_vias": [None],
         "sanitized_effect": None,
         "constant_args": False,
-        "source_tainted": True,
+        "source_kind": "explicit",
     }
     critical = score_path(sink_severity="critical", **common)
     low = score_path(sink_severity="low", **common)
@@ -46,7 +46,7 @@ def test_score_path_confidence_and_length_penalty():
         sink_severity="high",
         sanitized_effect=None,
         constant_args=False,
-        source_tainted=True,
+        source_kind="explicit",
     )
     low_conf = score_path(
         hop_confidences=[int(Confidence.FUZZY)],
@@ -54,7 +54,7 @@ def test_score_path_confidence_and_length_penalty():
         sink_severity="high",
         sanitized_effect=None,
         constant_args=False,
-        source_tainted=True,
+        source_kind="explicit",
     )
     assert high_conf > low_conf
     long_path = score_path(
@@ -63,7 +63,7 @@ def test_score_path_confidence_and_length_penalty():
         sink_severity="high",
         sanitized_effect=None,
         constant_args=False,
-        source_tainted=True,
+        source_kind="explicit",
     )
     assert long_path < high_conf  # length decay
 
@@ -73,7 +73,7 @@ def test_score_path_sanitizer_and_constant_args():
         "hop_confidences": [int(Confidence.EXACT)],
         "hop_vias": [None],
         "sink_severity": "critical",
-        "source_tainted": True,
+        "source_kind": "explicit",
     }
     neutralized = score_path(sanitized_effect="neutralizes", constant_args=False, **base)
     reduced = score_path(sanitized_effect="reduces", constant_args=False, **base)
@@ -91,7 +91,7 @@ def test_score_path_speculative_via_discount():
         sink_severity="high",
         sanitized_effect=None,
         constant_args=False,
-        source_tainted=True,
+        source_kind="explicit",
     )
     cha = score_path(
         hop_confidences=[int(Confidence.FUZZY)],
@@ -99,6 +99,6 @@ def test_score_path_speculative_via_discount():
         sink_severity="high",
         sanitized_effect=None,
         constant_args=False,
-        source_tainted=True,
+        source_kind="explicit",
     )
     assert cha < plain

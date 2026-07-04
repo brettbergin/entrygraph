@@ -349,6 +349,11 @@ def _path_card(index: int, path, source_label: str | None, read_line=None) -> Gr
     source_ann = Text("")
     if source_label:
         detail = ""
+        # provenance: a demonstrable accessor read (explicit) vs handler-as-source
+        # (the handler is shaped like a source but no request read is proven) — #96
+        kind = getattr(path, "source_kind", None)
+        if kind in ("explicit", "handler", "handler_params"):
+            detail += " · explicit" if kind == "explicit" else " · handler"
         channel = getattr(path, "source_channel", None)
         key = getattr(path, "source_key", None)
         if channel:
@@ -438,6 +443,7 @@ def cmd_paths(args) -> int:
             include_unresolved=args.include_unresolved,
             include_callbacks=args.include_callbacks,
             prune_sanitized=args.prune_sanitized,
+            explicit_sources=args.explicit_sources,
             strict=args.strict,
         )
         read_line = _line_reader(graph.repo_root)  # read original lines while db is open-adjacent
@@ -471,6 +477,7 @@ def cmd_paths(args) -> int:
                         "min_confidence": p.min_confidence,
                         "risk_score": p.risk_score,
                         "may_continue": p.may_continue,
+                        "source_kind": p.source_kind,
                         "source_channel": p.source_channel,
                         "source_key": p.source_key,
                         "symbols": [s.qname for s in p.symbols],
@@ -510,6 +517,10 @@ def cmd_paths(args) -> int:
     con.print(
         "[dim]confidence: exact/import = resolved · fuzzy/unresolved = speculative"
         "   ⚡ = tagged sink[/]"
+    )
+    con.print(
+        "[dim]findings are reachability leads to triage, not confirmed dataflow; "
+        "source · explicit = a proven request read, · handler = handler-as-source[/]"
     )
     return 0
 
@@ -650,6 +661,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="prune_sanitized",
         action="store_true",
         help="drop paths where a category sanitizer is called (heuristic, no dataflow)",
+    )
+    p.add_argument(
+        "--explicit-sources",
+        dest="explicit_sources",
+        action="store_true",
+        help="only count catalog request-accessor call sites as sources; drop "
+        "handler-as-source seeds (handlers with no proven request read)",
     )
     p.set_defaults(func=cmd_paths)
 
