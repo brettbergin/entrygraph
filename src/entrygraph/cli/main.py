@@ -254,10 +254,40 @@ def _risk_word(risk: float | None) -> str:
     return "high" if risk >= 0.66 else "medium" if risk >= 0.33 else "low"
 
 
-def _path_card(index: int, path, source_label: str | None) -> Group:
+def _line_reader(repo_root: str | None):
+    """Best-effort reader of the literal source line at file:line, given the indexed
+    repo root. Caches each file's lines; returns None when the repo/file/line is gone
+    (querying a `.db` whose repo has moved must not crash — just skip the snippet)."""
+    if not repo_root:
+        return lambda _file, _line: None
+    root = Path(repo_root)
+    cache: dict[str, list[str] | None] = {}
+
+    def read(file: str | None, line: int | None) -> str | None:
+        if not file or not line or line < 1:
+            return None
+        if file not in cache:
+            try:
+                cache[file] = (
+                    (root / file).read_text(encoding="utf-8", errors="replace").splitlines()
+                )
+            except OSError:
+                cache[file] = None
+        lines = cache[file]
+        if not lines or line > len(lines):
+            return None
+        text = lines[line - 1].strip()
+        return (text[:157] + "…") if len(text) > 158 else text
+
+    return read
+
+
+def _path_card(index: int, path, source_label: str | None, read_line=None) -> Group:
     """A finding card: SOURCE and SINK on labeled lines with clickable file:line, the
-    call chain between them, and per-edge confidence — the shape a reviewer reads."""
+    call chain between them, and per-edge confidence — the shape a reviewer reads.
+    When `read_line` is given, the literal source and sink lines are shown too."""
     syms, edges = path.symbols, path.edges
+    read_line = read_line or (lambda _f, _l: None)
     # rows: (role, name, location, annotation) — role in {source, hop, sink}
     rows: list[tuple[str, str, str | None, Text]] = [
         (
@@ -280,6 +310,12 @@ def _path_card(index: int, path, source_label: str | None) -> Group:
             ann.append("  const-args", style="dim green")
         rows.append(("sink" if is_sink else "hop", _display_name(syms[i + 1]), loc, ann))
 
+    # literal source line (the handler def) and sink line (the dangerous call site)
+    snippet = {
+        "source": read_line(getattr(syms[0], "file", None), syms[0].start_line),
+        "sink": read_line(getattr(syms[-2], "file", None), edges[-1].line) if edges else None,
+    }
+
     name_w = max(len(r[1]) for r in rows)
     loc_w = max(len(r[2] or "?") for r in rows)
     labels = {"source": "source ", "hop": "  ↓    ", "sink": "sink   "}
@@ -301,6 +337,11 @@ def _path_card(index: int, path, source_label: str | None) -> Group:
         line.append("  ")
         line.append_text(ann)
         lines.append(line)
+        if snippet.get(role):
+            snip = Text("          ")
+            snip.append("│ ", style="dim")
+            snip.append(snippet[role], style="italic red" if role == "sink" else "dim italic")
+            lines.append(snip)
     if path.may_continue:
         lines.append(
             Text("       (path may continue via dynamic/excluded edges)", style="dim yellow")
@@ -331,6 +372,7 @@ def cmd_paths(args) -> int:
             prune_sanitized=args.prune_sanitized,
             strict=args.strict,
         )
+        read_line = _line_reader(graph.repo_root)  # read original lines while db is open-adjacent
     if getattr(paths, "mode", None) == "widened":
         # The adaptive search found no high-confidence paths and fell back to the
         # speculative frontier (class-hierarchy, unresolved wildcard sinks, callbacks)
@@ -360,6 +402,14 @@ def cmd_paths(args) -> int:
                         "may_continue": p.may_continue,
                         "symbols": [s.qname for s in p.symbols],
                         "lines": [e.line for e in p.edges],
+                        "source_line": read_line(
+                            getattr(p.symbols[0], "file", None), p.symbols[0].start_line
+                        ),
+                        "sink_line": read_line(
+                            getattr(p.symbols[-2], "file", None), p.edges[-1].line
+                        )
+                        if p.edges
+                        else None,
                     }
                     for p in paths
                 ]
@@ -380,7 +430,7 @@ def cmd_paths(args) -> int:
     con.print(f"[bold]{len(paths)}[/] path(s)  [dim]{origin} → {target}[/]\n")
     source_label = args.source_category or (args.source and "source")
     for i, path in enumerate(paths, 1):
-        con.print(_path_card(i, path, source_label))
+        con.print(_path_card(i, path, source_label, read_line))
         con.print()
     con.print(
         "[dim]confidence: exact/import = resolved · fuzzy/unresolved = speculative"

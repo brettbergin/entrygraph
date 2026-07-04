@@ -94,6 +94,26 @@ def test_paths_by_category(db, capsys):
     assert paths and paths[0]["symbols"][-1] == "py:subprocess.run"
 
 
+def test_paths_show_literal_source_and_sink_lines(db, capsys):
+    args = [
+        "paths",
+        "--db",
+        db,
+        "--source-category",
+        "http_input",
+        "--sink-category",
+        "command_exec",
+    ]
+    # JSON carries the literal lines read from the indexed repo on disk
+    assert main([*args, "--json"]) == 0
+    p = json.loads(capsys.readouterr().out)[0]
+    assert p["source_line"] and "def create_report" in p["source_line"]
+    assert p["sink_line"] and "run(" in p["sink_line"]  # the actual dangerous call
+    # the finding card renders the sink call site too
+    assert main(args) == 0
+    assert "run(" in capsys.readouterr().out
+
+
 NETHTTP_APP = Path(__file__).parent / "fixtures" / "go" / "nethttp_app"
 
 
