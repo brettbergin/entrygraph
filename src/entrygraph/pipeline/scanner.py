@@ -9,6 +9,7 @@ full re-index.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import sys
@@ -111,7 +112,7 @@ def index_repository(
             _load_existing_symbols(session, repo.id, table)
 
         to_index = diff.to_index
-        extractions, worker_hashes = _parse_phase(to_index, max_workers)
+        extractions, worker_hashes = _parse_phase(to_index, max_workers, include_tests)
         # the diff phase deferred hashing of parsed files to the worker; fold the
         # results back in so file rows get their content_hash.
         diff.hashes.update(worker_hashes)
@@ -228,47 +229,49 @@ def _pool_context():
 
 
 def _extract_sequential(
-    to_index: list[WalkedFile],
+    to_index: list[WalkedFile], include_tests: bool = False
 ) -> list[tuple[str, FileExtraction, bool, str]]:
     results = []
     for wf in to_index:
-        result = extract_one(wf)
+        result = extract_one(wf, include_tests)
         if result is not None:
             results.append(result)
     return results
 
 
 def _collect_extractions(
-    to_index: list[WalkedFile], max_workers: int | None
+    to_index: list[WalkedFile], max_workers: int | None, include_tests: bool = False
 ) -> list[tuple[str, FileExtraction, bool, str]]:
     if not to_index:
         return []
     workers = max_workers if max_workers is not None else (os.cpu_count() or 2)
     if len(to_index) < _PARALLEL_THRESHOLD or workers <= 1:
-        return _extract_sequential(to_index)
+        return _extract_sequential(to_index, include_tests)
 
     batches = [to_index[i : i + _BATCH] for i in range(0, len(to_index), _BATCH)]
+    # a picklable partial carries the flag across the spawn/fork pool boundary
+    worker = functools.partial(extract_batch, include_tests=include_tests)
     try:
         results = []
         with ProcessPoolExecutor(max_workers=workers, mp_context=_pool_context()) as pool:
-            for batch_result in pool.map(extract_batch, batches):
+            for batch_result in pool.map(worker, batches):
                 results.extend(batch_result)
         return results
     except BrokenProcessPool:
         # A worker pool couldn't start or died (e.g. an unguarded __main__ under
         # spawn, or a sandbox with no subprocess support). Degrade to correct,
         # single-threaded extraction rather than crashing the whole index.
-        return _extract_sequential(to_index)
+        return _extract_sequential(to_index, include_tests)
 
 
 def _parse_phase(
-    to_index: list[WalkedFile], max_workers: int | None
+    to_index: list[WalkedFile], max_workers: int | None, include_tests: bool = False
 ) -> tuple[list[tuple[str, FileExtraction, bool]], dict[str, str]]:
     """Extract to_index files, returning (extractions, content hashes by path).
 
     The worker hashes each file it reads, so hashes flow back here instead of the
     diff phase reading every file a second time."""
-    raw = _collect_extractions(to_index, max_workers)
+    raw = _collect_extractions(to_index, max_workers, include_tests)
     extractions = [(path, x, pkg) for path, x, pkg, _h in raw]
     hashes = {path: h for path, _x, _pkg, h in raw}
     return extractions, hashes

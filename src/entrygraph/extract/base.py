@@ -18,6 +18,9 @@ class FileContext:
     module_path: str
     source: bytes
     is_package: bool = False  # e.g. Python __init__.py
+    # When False, extractors drop test code the file-level gate can't see because
+    # it lives inside a production file (e.g. Rust `#[cfg(test)] mod tests`). #100
+    include_tests: bool = False
 
 
 class LanguageExtractor(Protocol):

@@ -18,10 +18,15 @@ from entrygraph.fs.walker import WalkedFile
 from entrygraph.parsing.parsers import parse, supported
 
 
-def extract_one(walked: WalkedFile) -> tuple[str, FileExtraction, bool, str] | None:
+def extract_one(
+    walked: WalkedFile, include_tests: bool = False
+) -> tuple[str, FileExtraction, bool, str] | None:
     """Parse+extract one file -> (path, extraction, is_package, content_hash), or
     None to skip. The hash is computed from the bytes read here so the diff phase
-    doesn't read the same file a second time just to hash it."""
+    doesn't read the same file a second time just to hash it.
+
+    ``include_tests`` reaches the extractor so it can keep or drop in-file test
+    code the walker's file-level gate can't see (Rust ``#[cfg(test)]``). #100"""
     language = walked.language
     if walked.skip_reason or not language or not supported(language):
         return None
@@ -41,14 +46,17 @@ def extract_one(walked: WalkedFile) -> tuple[str, FileExtraction, bool, str] | N
         module_path=module_path,
         source=source,
         is_package=is_package,
+        include_tests=include_tests,
     )
     return walked.path, extractor.extract(tree, ctx), is_package, content_hash
 
 
-def extract_batch(batch: list[WalkedFile]) -> list[tuple[str, FileExtraction, bool, str]]:
+def extract_batch(
+    batch: list[WalkedFile], include_tests: bool = False
+) -> list[tuple[str, FileExtraction, bool, str]]:
     results = []
     for walked in batch:
-        result = extract_one(walked)
+        result = extract_one(walked, include_tests)
         if result is not None:
             results.append(result)
     return results

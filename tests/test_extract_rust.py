@@ -237,3 +237,131 @@ def test_index_axum_app_reachability(tmp_path):
     chain = [s.qname for s in paths[0].symbols]
     assert chain[0] == "handlers.create_report"
     assert chain[-1] == "rs:std.process.Command.new"
+
+
+# ---------------- inline test exclusion (#100) ----------------
+
+
+def extract_tests(source: str, path: str = "src/lib.rs", include_tests: bool = False):
+    module_path, is_package = EXTRACTOR.module_path_for(path)
+    src = source.encode()
+    ctx = FileContext(
+        path=path,
+        language="rust",
+        module_path=module_path,
+        source=src,
+        is_package=is_package,
+        include_tests=include_tests,
+    )
+    return EXTRACTOR.extract(parse("rust", src), ctx)
+
+
+_CFG_TEST_SRC = """
+use std::process::Command;
+
+pub fn run(cmd: &str) {
+    Command::new(cmd);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn helper() -> u32 { 3 }
+
+    #[test]
+    fn it_runs() {
+        helper();
+        Command::new("evil");
+    }
+}
+"""
+
+
+def test_cfg_test_mod_symbols_excluded_by_default():
+    x = extract_tests(_CFG_TEST_SRC)
+    qnames = {s.qualified_name for s in x.symbols}
+    # production symbol kept
+    assert "_root.run" in qnames
+    # the test module and everything inside it is gone
+    assert not any("tests" in q or "helper" in q or "it_runs" in q for q in qnames)
+
+
+def test_cfg_test_mod_references_excluded_by_default():
+    x = extract_tests(_CFG_TEST_SRC)
+    callers = {r.caller_qualified_name for r in x.references}
+    # the production Command::new call survives
+    assert any(
+        r.callee_name == "new" and r.caller_qualified_name == "_root.run" for r in x.references
+    )
+    # no call originates from inside the test module (helper()/Command::new in it_runs)
+    assert not any(c and ("it_runs" in c or "helper" in c) for c in callers)
+
+
+def test_include_tests_keeps_inline_tests():
+    x = extract_tests(_CFG_TEST_SRC, include_tests=True)
+    qnames = {s.qualified_name for s in x.symbols}
+    assert any("it_runs" in q for q in qnames)
+    assert any("tests" in q for q in qnames)
+
+
+def test_bare_test_and_tokio_test_functions_excluded():
+    x = extract_tests(
+        """
+pub fn keep() {}
+
+#[test]
+fn plain_test() { keep(); }
+
+#[tokio::test]
+async fn async_test() { keep(); }
+"""
+    )
+    qnames = {s.qualified_name for s in x.symbols}
+    assert "_root.keep" in qnames
+    assert "_root.plain_test" not in qnames
+    assert "_root.async_test" not in qnames
+
+
+def test_cfg_feature_named_test_is_not_excluded():
+    # #[cfg(feature = "test-utils")] must NOT be treated as #[cfg(test)]
+    x = extract_tests(
+        """
+#[cfg(feature = "test-utils")]
+pub mod helpers {
+    pub fn scaffold() {}
+}
+"""
+    )
+    qnames = {s.qualified_name for s in x.symbols}
+    assert any("scaffold" in q for q in qnames)
+
+
+def test_cfg_not_test_is_production_and_kept():
+    # #[cfg(not(test))] compiles in NON-test builds -> it is production code
+    x = extract_tests(
+        """
+#[cfg(not(test))]
+pub fn only_in_release() {}
+"""
+    )
+    qnames = {s.qualified_name for s in x.symbols}
+    assert "_root.only_in_release" in qnames
+
+
+def test_cfg_test_impl_block_excluded():
+    x = extract_tests(
+        """
+pub struct S;
+
+impl S { pub fn real(&self) {} }
+
+#[cfg(test)]
+impl S {
+    fn only_for_tests(&self) {}
+}
+"""
+    )
+    qnames = {s.qualified_name for s in x.symbols}
+    assert "_root.S.real" in qnames
+    assert "_root.S.only_for_tests" not in qnames
