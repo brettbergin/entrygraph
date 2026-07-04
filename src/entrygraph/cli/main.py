@@ -12,9 +12,9 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from rich.console import Group
 from rich.panel import Panel
 from rich.text import Text
-from rich.tree import Tree
 
 from entrygraph import CodeGraph, __version__
 from entrygraph.cli import render
@@ -231,34 +231,81 @@ def cmd_callees(args) -> int:
     return 0
 
 
-def _path_tree(index: int, path) -> Tree:
-    src = path.symbols[0]
-    header = Text()
-    header.append(f"[{index}] ", style="dim")
-    header.append("■ ", style=risk_style(path.risk_score))
-    header.append("risk ", style="dim")
-    header.append(risk_text(path.risk_score))
-    header.append(f"  {src.qname}", style="bold")
-    tree = Tree(header, guide_style="dim")
-    node = tree
-    for edge, sym in zip(path.edges, path.symbols[1:]):
-        is_sink = sym is path.symbols[-1]
-        label = Text()
-        label.append("→ ", style="dim")
-        label.append(sym.qname, style="bold red" if is_sink else kind_text(sym.kind).style)
-        label.append(f"   line {edge.line}", style="dim")
-        label.append("  ")
-        label.append_text(confidence_text(edge.confidence))
-        if edge.via:
-            label.append(f" via {edge.via}", style="dim italic")
+def _display_name(sym) -> str:
+    """A short, readable symbol name for a path row: `subprocess.run` for externals,
+    `ReportRunner.start` for methods, the bare name otherwise (the file:line column
+    carries the location, so the dotted module prefix is redundant)."""
+    qname = sym.qname
+    if ":" in qname:  # external placeholder, e.g. py:subprocess.run / rb:*.execute
+        return qname.split(":", 1)[1]
+    parts = qname.split(".")
+    if sym.kind == "method" and len(parts) >= 2:
+        return ".".join(parts[-2:])
+    return parts[-1]
+
+
+def _loc(file: str | None, line: int) -> str | None:
+    return f"{file}:{line}" if file else None
+
+
+def _risk_word(risk: float | None) -> str:
+    if risk is None:
+        return "?"
+    return "high" if risk >= 0.66 else "medium" if risk >= 0.33 else "low"
+
+
+def _path_card(index: int, path, source_label: str | None) -> Group:
+    """A finding card: SOURCE and SINK on labeled lines with clickable file:line, the
+    call chain between them, and per-edge confidence — the shape a reviewer reads."""
+    syms, edges = path.symbols, path.edges
+    # rows: (role, name, location, annotation) — role in {source, hop, sink}
+    rows: list[tuple[str, str, str | None, Text]] = [
+        (
+            "source",
+            _display_name(syms[0]),
+            _loc(getattr(syms[0], "file", None), syms[0].start_line),
+            Text(f"({source_label})", style="cyan") if source_label else Text(""),
+        )
+    ]
+    for i, edge in enumerate(edges):
+        is_sink = i == len(edges) - 1
+        # the call happens in the caller's file (syms[i]) at the edge's line; this
+        # also gives the sink a real location, since the sink symbol is external.
+        loc = _loc(getattr(syms[i], "file", None), edge.line)
+        ann = Text()
         if is_sink and edge.sink_id:
-            label.append(f"  ⚑ {edge.sink_id}", style="red")
+            ann.append(f"⚡ {edge.sink_id}  ", style="bold red")
+        ann.append_text(confidence_text(edge.confidence))
         if is_sink and edge.constant_args:
-            label.append("  [const-args]", style="dim green")
-        node = node.add(label)
+            ann.append("  const-args", style="dim green")
+        rows.append(("sink" if is_sink else "hop", _display_name(syms[i + 1]), loc, ann))
+
+    name_w = max(len(r[1]) for r in rows)
+    loc_w = max(len(r[2] or "?") for r in rows)
+    labels = {"source": "source ", "hop": "  ↓    ", "sink": "sink   "}
+
+    head = Text()
+    head.append(f"[{index}] ", style="dim")
+    head.append("risk ", style="dim")
+    head.append_text(risk_text(path.risk_score))
+    head.append(f" ({_risk_word(path.risk_score)})", style=risk_style(path.risk_score))
+    lines: list[Text] = [head]
+    for role, name, loc, ann in rows:
+        line = Text("  ")
+        line.append(labels[role], style="bold" if role != "hop" else "dim")
+        line.append(" ")
+        name_style = "bold red" if role == "sink" else "bold" if role == "source" else "white"
+        line.append(name.ljust(name_w), style=name_style)
+        line.append("  ")
+        line.append((loc or "?").ljust(loc_w), style="cyan" if loc else "dim")
+        line.append("  ")
+        line.append_text(ann)
+        lines.append(line)
     if path.may_continue:
-        node.add(Text("… may continue (dynamic/excluded edges)", style="dim italic yellow"))
-    return tree
+        lines.append(
+            Text("       (path may continue via dynamic/excluded edges)", style="dim yellow")
+        )
+    return Group(*lines)
 
 
 def cmd_paths(args) -> int:
@@ -331,8 +378,14 @@ def cmd_paths(args) -> int:
     )
     target = args.sink or (args.sink_category and f"category:{args.sink_category}") or "sink"
     con.print(f"[bold]{len(paths)}[/] path(s)  [dim]{origin} → {target}[/]\n")
+    source_label = args.source_category or (args.source and "source")
     for i, path in enumerate(paths, 1):
-        con.print(_path_tree(i, path))
+        con.print(_path_card(i, path, source_label))
+        con.print()
+    con.print(
+        "[dim]confidence: exact/import = resolved · fuzzy/unresolved = speculative"
+        "   ⚡ = tagged sink[/]"
+    )
     return 0
 
 
