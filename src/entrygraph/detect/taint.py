@@ -43,6 +43,7 @@ class SourcePattern:
     category: str
     callee: str
     description: str = ""
+    channel: str | None = None  # http_input: query|path|header|cookie|body|form
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +207,7 @@ def _load_toml(
             category=raw["category"],
             callee=raw["callee"],
             description=raw.get("description", ""),
+            channel=raw.get("channel"),
         )
         for raw in data.get("source", [])
     ]

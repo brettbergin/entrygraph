@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from entrygraph.db.meta import ensure_schema
 from entrygraph.db.models import Detection, Edge, Entrypoint, File, Repository, Symbol
 from entrygraph.detect import entrypoints as entrypoint_rules
+from entrygraph.detect.entrypoints.base import first_string_arg
 from entrygraph.detect.express_mounts import resolve_mount_prefixes
 from entrygraph.detect.frameworks import detect_frameworks
 from entrygraph.detect.manifests import parse_manifests
@@ -612,6 +613,12 @@ def _write_edges_and_entrypoints(
             is_call = edge.kind is EdgeKind.CALLS
             sink_id = sink_registry.match(edge.dst_qname, edge.arg_preview) if is_call else None
             source_id = sink_registry.match_source(edge.dst_qname) if is_call else None
+            # the specific input identifier (query param, header, flag) rides the
+            # first string-literal argument when there is one (#87)
+            source_key: str | None = None
+            if source_id and edge.arg_preview:
+                key = first_string_arg(edge.arg_preview)
+                source_key = key[:128] if key else None
             if edge.kind is EdgeKind.PASSED_AS_CALLBACK and edge.dst_symbol_id is not None:
                 callback_handler_by_line.setdefault(edge.line, edge.dst_symbol_id)
             dedup_key = (
@@ -638,6 +645,7 @@ def _write_edges_and_entrypoints(
                     "arg_preview": edge.arg_preview,
                     "sink_id": sink_id,
                     "source_id": source_id,
+                    "source_key": source_key,
                     "via": edge.via,
                 }
             )

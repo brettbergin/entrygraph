@@ -130,11 +130,41 @@ category = "http_input"
 callee = "php:{filter_input,filter_input_array}"
 description = "Filtered request input"
 
+# split by channel (#87)
 [[source]]
-id = "php.laravel.request"
+id = "php.request.body"
 category = "http_input"
-callee = "php:*.{input,query,post,cookie,header}"
-description = "Laravel request accessors"
+channel = "body"
+callee = "php:*.input"
+description = "Laravel request input (body/query merge)"
+
+[[source]]
+id = "php.request.query"
+category = "http_input"
+channel = "query"
+callee = "php:*.query"
+description = "Laravel/Symfony query input"
+
+[[source]]
+id = "php.request.form"
+category = "http_input"
+channel = "form"
+callee = "php:*.post"
+description = "Laravel/Symfony post-form input"
+
+[[source]]
+id = "php.request.cookie"
+category = "http_input"
+channel = "cookie"
+callee = "php:*.cookie"
+description = "Laravel/Symfony cookie input"
+
+[[source]]
+id = "php.request.header"
+category = "http_input"
+channel = "header"
+callee = "php:*.header"
+description = "Laravel/Symfony header input"
 
 # ---------------- sanitizers ----------------
 

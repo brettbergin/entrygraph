@@ -60,11 +60,28 @@ category = "cli_arg"
 callee = "js:*.{opts,parseSync}"
 description = "commander/yargs parsed-argument access"
 
+# split by channel (#87); these match call-form access — property reads are
+# covered by handler-as-source (F-H9).
 [[source]]
-id = "js.express.req"
+id = "js.express.body"
 category = "http_input"
-callee = "js:*.{body,query,params}"
-description = "Express request input"
+channel = "body"
+callee = "js:*.body"
+description = "Express request body"
+
+[[source]]
+id = "js.express.query"
+category = "http_input"
+channel = "query"
+callee = "js:*.query"
+description = "Express query string"
+
+[[source]]
+id = "js.express.params"
+category = "http_input"
+channel = "path"
+callee = "js:*.params"
+description = "Express route params"
 
 # --- sanitizers (S3): neutralize/reduce taint for a sink category ---
 [[sanitizer]]

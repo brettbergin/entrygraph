@@ -94,10 +94,18 @@ callee = "cs:{DirectorySearcher,*.DirectorySearcher}"
 description = "LDAP query (DirectorySearcher)"
 
 [[source]]
-id = "csharp.input"
+id = "csharp.http.body"
 category = "http_input"
-callee = "cs:*.{ReadLine,ReadFromJsonAsync,ReadAsStringAsync}"
-description = "Request/console input"
+channel = "body"
+callee = "cs:*.{ReadFromJsonAsync,ReadAsStringAsync}"
+description = "HTTP request-body input"
+
+# Console.ReadLine was mislabeled http_input (#87 audit)
+[[source]]
+id = "csharp.stdin"
+category = "stdin_input"
+callee = "cs:*.ReadLine"
+description = "Console input"
 
 [[source]]
 id = "csharp.env"

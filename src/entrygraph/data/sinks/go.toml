@@ -44,11 +44,20 @@ severity = "low"
 callee = "go:net/http.{Get,Post,PostForm,Head}"
 description = "Outbound network request"
 
+# split by channel (#87)
 [[source]]
-id = "go.nethttp.request"
+id = "go.http.form"
 category = "http_input"
-callee = "go:*.{FormValue,PostFormValue,Query}"
-description = "HTTP request input"
+channel = "form"
+callee = "go:*.{FormValue,PostFormValue}"
+description = "net/http form input"
+
+[[source]]
+id = "go.http.query"
+category = "http_input"
+channel = "query"
+callee = "go:*.Query"
+description = "Query-string input (r.URL.Query / gin c.Query)"
 
 # --- C5 deepening ---
 [[sink]]
@@ -80,10 +89,25 @@ callee = "go:text/template.{New,Must}"
 description = "text/template (unescaped) rendering"
 
 [[source]]
-id = "go.gin.input"
+id = "go.gin.path"
 category = "http_input"
-callee = "go:*.{Param,GetHeader,Bind,BindJSON,ShouldBind,ShouldBindJSON}"
-description = "Gin request input"
+channel = "path"
+callee = "go:*.Param"
+description = "gin route-param input"
+
+[[source]]
+id = "go.gin.header"
+category = "http_input"
+channel = "header"
+callee = "go:*.GetHeader"
+description = "gin header input"
+
+[[source]]
+id = "go.gin.body"
+category = "http_input"
+channel = "body"
+callee = "go:*.{Bind,BindJSON,ShouldBind,ShouldBindJSON}"
+description = "gin request-body binding"
 
 # cobra/pflag typed flag getters (cmd.Flags().GetString(...)); viper config
 # reads share these names — both are operator-controlled input (#86).

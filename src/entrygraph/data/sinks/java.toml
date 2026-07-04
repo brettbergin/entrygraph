@@ -104,11 +104,34 @@ severity = "medium"
 callee = "java:{FileInputStream,*.FileInputStream,FileReader,*.FileReader,Files.readAllBytes,*.Files.readAllBytes,Paths.get}"
 description = "File access with a potentially attacker-controlled path"
 
+# split by channel so findings can say which request surface feeds a sink (#87)
 [[source]]
-id = "java.servlet.input"
+id = "java.servlet.query"
 category = "http_input"
-callee = "java:*.{getParameter,getParameterValues,getHeader,getQueryString,getInputStream,getReader,getCookies}"
-description = "Servlet request input"
+channel = "query"
+callee = "java:*.{getParameter,getParameterValues,getQueryString}"
+description = "Servlet query/form parameter input"
+
+[[source]]
+id = "java.servlet.header"
+category = "http_input"
+channel = "header"
+callee = "java:*.{getHeader,getHeaders}"
+description = "Servlet header input"
+
+[[source]]
+id = "java.servlet.cookie"
+category = "http_input"
+channel = "cookie"
+callee = "java:*.getCookies"
+description = "Servlet cookie input"
+
+[[source]]
+id = "java.servlet.body"
+category = "http_input"
+channel = "body"
+callee = "java:*.{getInputStream,getReader}"
+description = "Servlet request-body input"
 
 [[source]]
 id = "java.env"

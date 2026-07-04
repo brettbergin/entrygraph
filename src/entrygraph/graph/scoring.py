@@ -27,6 +27,30 @@ _CONFIDENCE_WEIGHT = {
 _SPECULATIVE_VIA = {"cha", "dynamic"}
 _LENGTH_DECAY = 0.97
 
+# Channel nudge (#87): body/query/path/form are attacker-controlled on any
+# request; headers and cookies are often proxy- or server-set, so a finding
+# sourced only from them is slightly lower-signal.
+_CHANNEL_WEIGHT = {"header": 0.85, "cookie": 0.85}
+
+# Input names that conventionally feed dangerous sinks — a known key from this
+# set nudges risk up (capped at 1.0 overall).
+_RISKY_KEYS = frozenset(
+    {
+        "id",
+        "path",
+        "file",
+        "filename",
+        "url",
+        "uri",
+        "cmd",
+        "command",
+        "dir",
+        "q",
+        "query",
+        "target",
+    }
+)
+
 # A literal-only argument preview: strings, numbers, bools, None, kwarg names,
 # and bracketed literal collections. Anything with an identifier/operator that
 # could carry a variable makes it non-constant.
@@ -74,6 +98,8 @@ def score_path(
     sanitized_effect: str | None,  # "neutralizes" | "reduces" | None
     constant_args: bool,
     source_tainted: bool,
+    source_channel: str | None = None,
+    source_key: str | None = None,
 ) -> float:
     """Return a risk score in [0, 1]; higher = riskier. See module docstring."""
     severity_base = _SEVERITY_BASE.get(sink_severity or "", _DEFAULT_SEVERITY)
@@ -89,6 +115,8 @@ def score_path(
         sanitizer_factor = 1.0
     const_factor = 0.4 if constant_args else 1.0
     source_factor = 1.0 if source_tainted else 0.9
+    channel_factor = _CHANNEL_WEIGHT.get(source_channel or "", 1.0)
+    key_factor = 1.05 if source_key and source_key.lower() in _RISKY_KEYS else 1.0
     risk = (
         severity_base
         * conf
@@ -97,5 +125,7 @@ def score_path(
         * sanitizer_factor
         * const_factor
         * source_factor
+        * channel_factor
+        * key_factor
     )
-    return round(risk, 4)
+    return round(min(risk, 1.0), 4)
