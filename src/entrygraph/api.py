@@ -360,6 +360,7 @@ class CodeGraph:
         prune_sanitized: bool = False,
         explicit_sources: bool = False,
         confirmed_only: bool = False,
+        taint_hops: int = 3,
         engine: str = "memory",
         strict: bool = False,
     ) -> list[CallPath]:
@@ -407,6 +408,7 @@ class CodeGraph:
                 include_callbacks=callbacks,
                 explicit_sources=explicit_sources,
                 confirmed_only=confirmed_only,
+                taint_hops=taint_hops,
             )
 
         if forced:
@@ -447,6 +449,7 @@ class CodeGraph:
         prune_sanitized: bool = False,
         explicit_sources: bool = False,
         confirmed_only: bool = False,
+        taint_hops: int = 3,
         engine: str = "memory",
     ) -> PathResults:
         """One source->sink enumeration at a fixed confidence frontier (see `paths`)."""
@@ -510,7 +513,7 @@ class CodeGraph:
                 )
                 for path in raw_paths
             ]
-            built = self._verify_same_function(session, built, raw_paths)
+            built = self._verify_same_function(session, built, raw_paths, taint_hops)
         if confirmed_only:
             built = [cp for cp in built if cp.taint_verified is True]
         results = [cp for cp in built if not (prune_sanitized and _has_sanitizer(cp))]
@@ -840,14 +843,14 @@ class CodeGraph:
             meta[sid] = (channel, source_key)
         return meta
 
-    def _verify_same_function(self, session: Session, built, raw_paths):
-        """Run the intraprocedural reaching check on same-function paths and demote
-        provable non-flows (#96 Phase 2). Verdict is tri-state; only ``False``
-        changes the score (x0.25). Bounded to the candidate pool (<= max_paths *
-        a small factor), one parse per distinct file, staleness-guarded."""
+    def _verify_same_function(self, session: Session, built, raw_paths, taint_hops: int = 3):
+        """Run the taint reaching check on candidate paths and demote provable
+        non-flows (#96 Phase 2/3). Verdict is tri-state; only ``False`` changes the
+        score (x0.25). Bounded to the candidate pool, ``taint_hops`` interior hops,
+        one parse per distinct file, staleness-guarded."""
         import dataclasses
 
-        from entrygraph.analysis.verify import FileFactCache, verify_same_function
+        from entrygraph.analysis.verify import FileFactCache, verify_path
 
         heads = {path[0][0] for path in raw_paths}
         if not heads:
@@ -855,16 +858,19 @@ class CodeGraph:
         repo_root = session.execute(select(models.Repository.root_path)).scalar()
         cache = FileFactCache(repo_root)
         accessor_lines = self._source_accessor_lines(session, heads)
-        file_hashes = self._file_hashes_for_symbols(session, heads)
+        # hashes for every function file on any candidate path (not just heads)
+        all_func_ids = {node for path in raw_paths for node, _ in path}
+        file_hashes = self._file_hashes_for_symbols(session, all_func_ids)
         out = []
         for cp in built:
             head = cp.symbols[0]
-            verdict = verify_same_function(
+            verdict = verify_path(
                 cp,
                 cp.source_kind or "spec",
                 accessor_lines.get(head.id, set()),
-                file_hashes.get(head.file),
+                file_hashes,
                 cache,
+                hop_limit=taint_hops,
             )
             if verdict is False:
                 out.append(

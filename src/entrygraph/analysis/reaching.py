@@ -9,27 +9,21 @@ Tri-state result:
 
 from __future__ import annotations
 
-from entrygraph.analysis.facts import AssignFact, CallFact, FunctionFacts, ReturnFact
+from entrygraph.analysis.facts import AssignFact, CallFact, FunctionFacts
 
 
-def reaches(
+def propagate(
     facts: FunctionFacts,
     seed_roots: set[str],
     source_lines: set[int],
-    sink_line: int,
-    sink_callee: str,
-) -> bool | None:
-    """Does a value derived from a seed reach the sink call's arguments?
+) -> set[str]:
+    """The set of tainted identifiers after fixpoint propagation from the seeds.
 
-    ``seed_roots`` are initially-tainted identifiers (handler params and the
-    assign-targets of explicit source accessor calls). ``source_lines`` mark
-    accessor call sites so an inline ``sink(accessor())`` is caught.
+    ``seed_roots`` are initially-tainted identifiers (handler params, incoming
+    tainted parameters, assign-targets of explicit source accessors);
+    ``source_lines`` mark accessor call sites whose read value is tainted.
     """
     tainted: set[str] = set(seed_roots)
-
-    # Seed from a source-accessor call site: the value read on that line is
-    # tainted. Bound to a variable via an assignment (`q = request.args[...]`) or
-    # via the call's own assign_target (`q = request.args.get(...)`).
     for f in facts.facts:
         if f.line in source_lines:
             if isinstance(f, AssignFact):
@@ -48,14 +42,33 @@ def reaches(
                         if tgt not in tainted:
                             tainted.add(tgt)
                             changed = True
-            elif isinstance(f, CallFact) and f.assign_target and f.assign_target not in tainted:
-                if f.arg_roots & tainted:
-                    tainted.add(f.assign_target)
-                    changed = True
-            elif isinstance(f, ReturnFact):
-                continue
+            elif (
+                isinstance(f, CallFact)
+                and f.assign_target
+                and f.assign_target not in tainted
+                and f.arg_roots & tainted
+            ):
+                tainted.add(f.assign_target)
+                changed = True
         if not changed:
             break
+    return tainted
+
+
+def reaches(
+    facts: FunctionFacts,
+    seed_roots: set[str],
+    source_lines: set[int],
+    sink_line: int,
+    sink_callee: str,
+) -> bool | None:
+    """Does a value derived from a seed reach the sink call's arguments?
+
+    ``seed_roots`` are initially-tainted identifiers (handler params and the
+    assign-targets of explicit source accessor calls). ``source_lines`` mark
+    accessor call sites so an inline ``sink(accessor())`` is caught.
+    """
+    tainted = propagate(facts, seed_roots, source_lines)
 
     # Locate the sink call on its line and test its arguments.
     sink_fact = next(

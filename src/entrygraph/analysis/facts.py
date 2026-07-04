@@ -30,10 +30,12 @@ class AssignFact:
 class CallFact:
     callee_name: str  # rightmost segment: "run"
     callee_text: str  # full: "subprocess.run"
-    arg_roots: frozenset[str]  # root identifiers among the arguments
+    arg_roots: frozenset[str]  # root identifiers among the arguments (union)
     nested_call_names: frozenset[str]  # callee names of calls nested in the args
     assign_target: str | None  # LHS if the call is the sole RHS of an assignment
     line: int
+    arg_roots_by_pos: tuple[frozenset[str], ...] = ()  # per positional argument (#96 P3)
+    has_nonpositional: bool = False  # kwarg/spread/variadic present -> position unknown
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,15 +354,26 @@ def _emit_assignment(node: Node, table: _LangTable, out: FunctionFacts) -> None:
     )
 
 
+_NONPOSITIONAL_ARG_TYPES = frozenset(
+    {"keyword_argument", "spread_element", "dictionary_splat", "list_splat", "variadic_argument"}
+)
+
+
 def _emit_call(node: Node, table: _LangTable, out: FunctionFacts) -> None:
     args = node.child_by_field_name("arguments")
     name, text = _callee_parts(node, table)
     arg_roots: set[str] = set()
     nested: set[str] = set()
+    by_pos: list[frozenset[str]] = []
+    has_nonpositional = False
     if args is not None:
         for a in args.named_children:
-            arg_roots |= _expr_roots(a, table)
+            if a.type in _NONPOSITIONAL_ARG_TYPES:
+                has_nonpositional = True
+            roots = _expr_roots(a, table)
+            arg_roots |= roots
             nested |= _call_names(a, table)
+            by_pos.append(frozenset(roots))
     out.facts.append(
         CallFact(
             callee_name=name,
@@ -369,6 +382,8 @@ def _emit_call(node: Node, table: _LangTable, out: FunctionFacts) -> None:
             nested_call_names=frozenset(nested),
             assign_target=_assign_target(node, table),
             line=node.start_point.row + 1,
+            arg_roots_by_pos=tuple(by_pos),
+            has_nonpositional=has_nonpositional,
         )
     )
 

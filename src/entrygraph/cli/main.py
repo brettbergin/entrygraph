@@ -416,11 +416,13 @@ def _path_card(index: int, path, source_label: str | None, read_line=None) -> Gr
             snip = Text(snip_text, style="italic red" if role == "sink" else "dim italic")
             lines.append(Padding(snip, (0, 0, 0, 10), expand=False))
     verified = getattr(path, "taint_verified", None)
+    hops = max(len(path.symbols) - 2, 0)  # interior call hops between source and sink
+    scope = "handler" if hops == 0 else f"{hops} hop{'s' if hops != 1 else ''}"
     if verified is True:
-        lines.append(Text("       flow: confirmed in handler", style="green"))
+        lines.append(Text(f"       flow: confirmed ({scope})", style="green"))
     elif verified is False:
         lines.append(
-            Text("       flow: not observed in handler (reachability only)", style="dim yellow")
+            Text(f"       flow: not observed ({scope}, reachability only)", style="dim yellow")
         )
     if path.may_continue:
         lines.append(
@@ -452,6 +454,7 @@ def cmd_paths(args) -> int:
             prune_sanitized=args.prune_sanitized,
             explicit_sources=args.explicit_sources,
             confirmed_only=args.confirmed_only,
+            taint_hops=args.taint_hops,
             strict=args.strict,
         )
         read_line = _line_reader(graph.repo_root)  # read original lines while db is open-adjacent
@@ -682,8 +685,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--confirmed-only",
         dest="confirmed_only",
         action="store_true",
-        help="keep only paths where a same-function reaching check confirms a "
-        "request value flows to the sink (drops unverified and refuted paths)",
+        help="keep only paths where the taint reaching check confirms a request "
+        "value flows to the sink (drops unverified and refuted paths)",
+    )
+    p.add_argument(
+        "--taint-hops",
+        dest="taint_hops",
+        type=int,
+        default=3,
+        help="max interior call hops the taint reaching check follows "
+        "(0 = same-function only; default 3)",
     )
     p.set_defaults(func=cmd_paths)
 
