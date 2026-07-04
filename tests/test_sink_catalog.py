@@ -73,3 +73,23 @@ def test_receiver_agnostic_sql_requires_dynamic_arg(registry):
     )  # param'd
     assert registry.match("js:*.query", "('SELECT * FROM t WHERE id = ' + id)") == "js.sql-query"
     assert registry.match("js:*.query", "({ where: { id } })") is None  # ORM/tRPC object arg
+
+
+def test_ruby_bare_execute_requires_sql_shaped_arg(registry):
+    # `rb:*.execute` collided with the Rails service-object convention
+    # (Service.new(params).execute) — 13,821 GitLab edges, ~99% not SQL (#91).
+    # Only a SQL-keyword or interpolated argument tags now.
+    assert registry.match("rb:*.execute", "(params)") is None
+    assert registry.match("rb:*.execute", "(declared_params(include_missing: false))") is None
+    assert registry.match("rb:*.execute", "()") is None
+    assert registry.match("rb:*.execute", None) is None
+    assert (
+        registry.match("rb:*.execute", '("SELECT * FROM t WHERE id = #{id}")') == "rb.sql-execute"
+    )
+    assert registry.match("rb:*.execute", '("select 1")') == "rb.sql-execute"  # (?i)
+    assert registry.match("rb:*.execute", '("TRUNCATE audit_events")') == "rb.sql-execute"
+    assert registry.match("rb:*.execute", "(sql_with_#{interp})") == "rb.sql-execute"
+    # unambiguous ActiveRecord methods stay unguarded
+    assert registry.match("rb:*.find_by_sql", "(anything)") == "rb.sql-query"
+    assert registry.match("rb:*.exec_query", "()") == "rb.sql-query"
+    assert registry.match("rb:*.select_all", None) == "rb.sql-query"
