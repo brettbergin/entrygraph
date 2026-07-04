@@ -2,3 +2,5 @@
 ; present) is the object it is called on. Bare calls have no receiver.
 (call
   method: (identifier) @callee) @call
+; params[:id] / request[:x] — element reference (subscript) on an accessor root
+(element_reference) @element

@@ -69,7 +69,7 @@ description = "Raw SQL execute with a SQL-shaped statement"
 [[source]]
 id = "rb.sinatra.params"
 category = "http_input"
-callee = "rb:*.params*"
+callee = "rb:{params*,*.params*}"
 description = "Sinatra/Rails request params"
 
 # --- C5 deepening ---

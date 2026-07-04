@@ -10,7 +10,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
 
-from entrygraph.extract.base import FileContext, node_text, span_of, truncate
+from entrygraph.extract.base import (
+    ACCESSOR_ROOTS,
+    REQUEST_ACCESSOR_PROPS,
+    FileContext,
+    member_key,
+    node_text,
+    span_of,
+    subscript_key,
+    truncate,
+)
 from entrygraph.extract.ir import (
     FileExtraction,
     RawImport,
@@ -430,6 +439,55 @@ class JavaScriptExtractor:
                 )
             )
             self._emit_callbacks(args, caller, out)
+
+        for node in caps.get("member", []):
+            self._emit_accessor_read(node, ctx, out, is_subscript=False)
+        for node in caps.get("subscript", []):
+            self._emit_accessor_read(node, ctx, out, is_subscript=True)
+
+    def _emit_accessor_read(self, node, ctx, out, *, is_subscript: bool) -> None:
+        """`req.body.name` / `req.query["q"]` read request input but are not calls,
+        so they emit no source edge. Synthesize an accessor-read reference carrying
+        the key when the shape is `<root>.<prop>` with root a request accessor and
+        prop a known input accessor (#87C). Skips the call-function position so a
+        real `req.body.foo()` call isn't double-counted."""
+        parent = node.parent
+        if (
+            parent is not None
+            and parent.type == "call_expression"
+            and parent.child_by_field_name("function") is node
+        ):
+            return
+        obj = node.child_by_field_name("object")
+        if obj is None or obj.type != "member_expression":
+            return
+        root_node = obj.child_by_field_name("object")
+        prop_node = obj.child_by_field_name("property")
+        if root_node is None or prop_node is None:
+            return
+        root = node_text(root_node)
+        prop = node_text(prop_node)
+        if root not in ACCESSOR_ROOTS or prop not in REQUEST_ACCESSOR_PROPS:
+            return
+        accessor = node_text(obj)  # "req.body"
+        if is_subscript:
+            index = node.child_by_field_name("index")
+            key = subscript_key(node_text(index)) if index is not None else None
+        else:
+            outer_prop = node.child_by_field_name("property")  # the `.name` in req.body.name
+            key = member_key(node_text(outer_prop)) if outer_prop is not None else None
+        out.references.append(
+            RawReference(
+                kind="call",
+                callee_text=accessor,
+                callee_name=prop,
+                receiver_text=root,
+                span=span_of(node),
+                caller_qualified_name=self._caller(node, ctx),
+                arg_count=1,
+                arg_preview=f'("{key}")' if key else None,
+            )
+        )
 
     def _assign_target(self, call) -> str | None:
         """The binding a call (or its enclosing call-chain) is assigned to, for

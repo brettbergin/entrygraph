@@ -24,7 +24,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
 
-from entrygraph.extract.base import FileContext, node_text, span_of, truncate
+from entrygraph.extract.base import (
+    ACCESSOR_ROOTS,
+    FileContext,
+    node_text,
+    span_of,
+    subscript_key,
+    truncate,
+)
 from entrygraph.extract.ir import FileExtraction, RawImport, RawReference, RawSymbol
 from entrygraph.kinds import SymbolKind
 from entrygraph.parsing.queries import captures, load_query
@@ -304,6 +311,32 @@ class PhpExtractor:
                     arg_preview=truncate(node_text(arg)) if arg is not None else None,
                 )
             )
+
+        for node in caps.get("subscript", []):
+            self._emit_superglobal_source(node, ctx, out)
+
+    def _emit_superglobal_source(self, node: Node, ctx: FileContext, out: FileExtraction) -> None:
+        """`$_GET["x"]` reads request input but is a subscript, not a call. Synthesize
+        a `$_GET` accessor read carrying the key when the object is a superglobal (#87C)."""
+        kids = node.named_children  # [$_GET, "name"] — fields aren't exposed here
+        if not kids or kids[0].type != "variable_name":
+            return
+        root = node_text(kids[0])
+        if root not in ACCESSOR_ROOTS:
+            return
+        key = subscript_key(node_text(kids[1])) if len(kids) > 1 else None
+        out.references.append(
+            RawReference(
+                kind="call",
+                callee_text=root,
+                callee_name=root,
+                receiver_text=None,
+                span=span_of(node),
+                caller_qualified_name=self._caller(node, ctx),
+                arg_count=1,
+                arg_preview=f'("{key}")' if key else None,
+            )
+        )
 
     def _emit_call(
         self,
