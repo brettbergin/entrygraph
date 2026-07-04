@@ -415,6 +415,13 @@ def _path_card(index: int, path, source_label: str | None, read_line=None) -> Gr
             # the name column, and the italic styling sets it apart from metadata.
             snip = Text(snip_text, style="italic red" if role == "sink" else "dim italic")
             lines.append(Padding(snip, (0, 0, 0, 10), expand=False))
+    verified = getattr(path, "taint_verified", None)
+    if verified is True:
+        lines.append(Text("       flow: confirmed in handler", style="green"))
+    elif verified is False:
+        lines.append(
+            Text("       flow: not observed in handler (reachability only)", style="dim yellow")
+        )
     if path.may_continue:
         lines.append(
             Text("       (path may continue via dynamic/excluded edges)", style="dim yellow")
@@ -444,6 +451,7 @@ def cmd_paths(args) -> int:
             include_callbacks=args.include_callbacks,
             prune_sanitized=args.prune_sanitized,
             explicit_sources=args.explicit_sources,
+            confirmed_only=args.confirmed_only,
             strict=args.strict,
         )
         read_line = _line_reader(graph.repo_root)  # read original lines while db is open-adjacent
@@ -478,6 +486,7 @@ def cmd_paths(args) -> int:
                         "risk_score": p.risk_score,
                         "may_continue": p.may_continue,
                         "source_kind": p.source_kind,
+                        "taint_verified": p.taint_verified,
                         "source_channel": p.source_channel,
                         "source_key": p.source_key,
                         "symbols": [s.qname for s in p.symbols],
@@ -668,6 +677,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="only count catalog request-accessor call sites as sources; drop "
         "handler-as-source seeds (handlers with no proven request read)",
+    )
+    p.add_argument(
+        "--confirmed-only",
+        dest="confirmed_only",
+        action="store_true",
+        help="keep only paths where a same-function reaching check confirms a "
+        "request value flows to the sink (drops unverified and refuted paths)",
     )
     p.set_defaults(func=cmd_paths)
 
