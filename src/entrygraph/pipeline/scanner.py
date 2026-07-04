@@ -393,6 +393,11 @@ def _load_existing_symbols(session: Session, repo_id: int, table: SymbolTable) -
             elif kind in (SymbolKind.VARIABLE, SymbolKind.CONSTANT) and "." in qname:
                 module, var = qname.rsplit(".", 1)
                 table.module_bindings.setdefault(module, {})[var] = type_ref
+            elif kind in (SymbolKind.FUNCTION, SymbolKind.METHOD):
+                # a function's type_ref is its resolved return type; needed so a
+                # call_result binding in a changed file can still type through an
+                # unchanged callee's return type on incremental re-index (#113)
+                table.return_types[qname] = type_ref
     # class bases/parents of surviving classes, from inherit + implement edges.
     # dst_qname is the already-resolved parent FQN, so it feeds both class_bases
     # (raw text, legacy) and class_parents (the transitive ancestor walk).

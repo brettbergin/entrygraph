@@ -102,7 +102,7 @@ class Symbol(Base):
     is_exported: Mapped[bool] = mapped_column(default=True)
     # Resolved type reference for this symbol, kind-dependent (#98): FIELD/PROPERTY
     # = declared field type qname; VARIABLE/CONSTANT = module-level binding type;
-    # FUNCTION = declared return type. NULL when no binding was resolved.
+    # FUNCTION/METHOD = resolved return type (#113). NULL when none was resolved.
     type_ref: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (

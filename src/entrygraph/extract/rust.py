@@ -199,33 +199,49 @@ class RustExtractor:
                 )
             return
         value = node.child_by_field_name("value")
-        ctor = self._construction_type(value) if value is not None else None
-        if ctor is None:
+        built = self._construction_type(value) if value is not None else None
+        if built is None:
             return
+        type_text, kind = built
         out.bindings.append(
             RawBinding(
                 name=name,
-                type_text=ctor,
+                type_text=type_text,
                 span=span_of(node),
                 scope=self._caller(node, ctx),
-                kind="constructor",
+                kind=kind,
             )
         )
 
-    def _construction_type(self, value: Node) -> str | None:
-        """`Foo::new()` / `Foo::default()` -> `Foo` (the type path before `::new`)."""
+    def _construction_type(self, value: Node) -> tuple[str, str] | None:
+        """(type_text, binding_kind) for a `let x = <call>` RHS.
+
+        `Foo::new()` / `Foo::default()` -> ("Foo", "constructor"). Any other call —
+        a free `make()` or a cross-module `pkg::make()` — yields (callee_path,
+        "call_result"), typed later through the callee's return type (#113)."""
         if value.type != "call_expression":
             return None
         fn = value.child_by_field_name("function")
-        if fn is None or fn.type != "scoped_identifier":
+        if fn is None:
             return None
-        name_node = fn.child_by_field_name("name")
-        path_node = fn.child_by_field_name("path")
-        if name_node is None or path_node is None:
-            return None
-        if node_text(name_node) not in ("new", "default"):
-            return None
-        return _norm(node_text(path_node))
+        if fn.type == "scoped_identifier":
+            name_node = fn.child_by_field_name("name")
+            path_node = fn.child_by_field_name("path")
+            if (
+                name_node is not None
+                and path_node is not None
+                and node_text(name_node) in ("new", "default")
+            ):
+                return (_norm(node_text(path_node)), "constructor")  # Foo::new() -> Foo
+            return (_norm(node_text(fn)), "call_result")  # pkg::make() -> via return type
+        if fn.type == "identifier":
+            return (node_text(fn), "call_result")  # make() -> via return type
+        return None
+
+    def _return_type_text(self, node: Node) -> str | None:
+        """Written return type of a `fn` (`-> Foo` / `-> pkg::Foo`), last segment."""
+        rt = node.child_by_field_name("return_type")
+        return self._type_name(rt) if rt is not None else None
 
     def _enclosing_struct_name(self, node: Node) -> str | None:
         current = node.parent
@@ -263,6 +279,7 @@ class RustExtractor:
                     signature=self._signature(node),
                     decorators=decorators,
                     is_exported=self._is_pub(node),
+                    return_type_text=self._return_type_text(node),
                 )
             )
             self._emit_decorator_refs(node, qname, out)
@@ -382,6 +399,7 @@ class RustExtractor:
                     signature=self._signature(child),
                     decorators=self._decorators(child),
                     is_exported=self._is_pub(child),
+                    return_type_text=self._return_type_text(child),
                 )
             )
             self._emit_decorator_refs(child, qname, out)
