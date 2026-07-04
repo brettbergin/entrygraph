@@ -282,7 +282,13 @@ def _line_reader(repo_root: str | None):
     return read
 
 
-def _path_card(index: int, path, source_label: str | None, read_line=None) -> Group:
+def _crop(text: str, width: int) -> str:
+    return text if len(text) <= width else text[: max(1, width - 1)] + "…"
+
+
+def _path_card(
+    index: int, path, source_label: str | None, read_line=None, width: int = 100
+) -> Group:
     """A finding card: SOURCE and SINK on labeled lines with clickable file:line, the
     call chain between them, and per-edge confidence — the shape a reviewer reads.
     When `read_line` is given, the literal source and sink lines are shown too."""
@@ -310,15 +316,18 @@ def _path_card(index: int, path, source_label: str | None, read_line=None) -> Gr
             ann.append("  const-args", style="dim green")
         rows.append(("sink" if is_sink else "hop", _display_name(syms[i + 1]), loc, ann))
 
-    # literal source line (the handler def) and sink line (the dangerous call site)
+    # Literal sink line (the dangerous call). The source line is only useful when the
+    # source is a real handler symbol; a module-level route source (whole Grape/Rails
+    # file) points at line 1 — a magic comment / import — so skip it there.
     snippet = {
-        "source": read_line(getattr(syms[0], "file", None), syms[0].start_line),
         "sink": read_line(getattr(syms[-2], "file", None), edges[-1].line) if edges else None,
     }
+    if syms[0].kind != "module":
+        snippet["source"] = read_line(getattr(syms[0], "file", None), syms[0].start_line)
 
     name_w = max(len(r[1]) for r in rows)
-    loc_w = max(len(r[2] or "?") for r in rows)
     labels = {"source": "source ", "hop": "  ↓    ", "sink": "sink   "}
+    snip_w = max(40, width - 12)  # snippet indent (10) + gutter (2)
 
     head = Text()
     head.append(f"[{index}] ", style="dim")
@@ -327,20 +336,25 @@ def _path_card(index: int, path, source_label: str | None, read_line=None) -> Gr
     head.append(f" ({_risk_word(path.risk_score)})", style=risk_style(path.risk_score))
     lines: list[Text] = [head]
     for role, name, loc, ann in rows:
-        line = Text("  ")
+        # crop rather than wrap: long file paths + tags otherwise wrap ugly on narrow terminals
+        line = Text("  ", no_wrap=True, overflow="ellipsis")
         line.append(labels[role], style="bold" if role != "hop" else "dim")
         line.append(" ")
         name_style = "bold red" if role == "sink" else "bold" if role == "source" else "white"
         line.append(name.ljust(name_w), style=name_style)
         line.append("  ")
-        line.append((loc or "?").ljust(loc_w), style="cyan" if loc else "dim")
+        line.append(loc or "?", style="cyan" if loc else "dim")  # not padded — keeps rows narrow
         line.append("  ")
         line.append_text(ann)
         lines.append(line)
-        if snippet.get(role):
-            snip = Text("          ")
+        snip_text = snippet.get(role)
+        if snip_text:
+            snip = Text("          ", no_wrap=True, overflow="ellipsis")
             snip.append("│ ", style="dim")
-            snip.append(snippet[role], style="italic red" if role == "sink" else "dim italic")
+            snip.append(
+                _crop(snip_text, snip_w),
+                style="italic red" if role == "sink" else "dim italic",
+            )
             lines.append(snip)
     if path.may_continue:
         lines.append(
@@ -430,7 +444,7 @@ def cmd_paths(args) -> int:
     con.print(f"[bold]{len(paths)}[/] path(s)  [dim]{origin} → {target}[/]\n")
     source_label = args.source_category or (args.source and "source")
     for i, path in enumerate(paths, 1):
-        con.print(_path_card(i, path, source_label, read_line))
+        con.print(_path_card(i, path, source_label, read_line, con.width))
         con.print()
     con.print(
         "[dim]confidence: exact/import = resolved · fuzzy/unresolved = speculative"
