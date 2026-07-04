@@ -243,3 +243,31 @@ def test_receiver_typing_preserves_external_sink_stamp():
     # (covered end-to-end by the java/csharp e2e tests staying green).
     r = builtin_registry()
     assert r.match("py:*.execute", '("SELECT 1")') == "py.sql-execute"
+
+
+def test_cross_file_import_followed_receiver_typing():
+    # a receiver imported from another module, bound there at module level to a
+    # type, resolves its method across the file hop (#98 P3)
+    from entrygraph.db.engine import make_engine
+    from entrygraph.db.meta import create_schema
+
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td)
+        (p / "db.py").write_text("class Pool:\n    def run_query(self, q): pass\n\npool = Pool()\n")
+        (p / "app.py").write_text(
+            "from db import pool\n\ndef handler():\n    pool.run_query('SELECT 1')\n"
+        )
+        engine = make_engine(p / "g.db")
+        create_schema(engine)
+        index_repository(p, engine)
+        with Session(engine) as s:
+            rows = {
+                (sq, e.dst_qname, e.via)
+                for sq, e in s.execute(
+                    select(models.Symbol.qname, models.Edge)
+                    .join(models.Edge, models.Edge.src_symbol_id == models.Symbol.id)
+                    .where(models.Edge.via == "binding")
+                )
+            }
+        assert ("app.handler", "db.Pool.run_query", "binding") in rows
+        engine.dispose()

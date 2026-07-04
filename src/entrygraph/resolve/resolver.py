@@ -252,12 +252,56 @@ class FileResolver:
         guess = f"{self.prefix}:*.{ref.callee_name}"
         return self.sink_registry.match(guess, ref.arg_preview) is not None
 
+    def _receiver_typed_bind(
+        self, ref: RawReference
+    ) -> tuple[int | None, str, Confidence, str | None] | None:
+        """Resolve `receiver.method` via the binding table when the receiver has a
+        known type (local var / field / imported module-level binding). Returns None
+        when there is no binding, so callers fall through to normal resolution.
+
+        A project type binds to the concrete method (+ ancestors); an external type
+        yields a typed external qname (`go:database/sql.DB.execute`) so a
+        receiver-typed sink matches instead of relying on the `*.method` guess."""
+        if ref.receiver_text is None or "." in ref.receiver_text:
+            return None
+        rtype = self._bindings.receiver_type(ref.receiver_text, ref.caller_qualified_name)
+        if rtype is None:
+            return None
+        is_project = not rtype.startswith(f"{self.prefix}:") and rtype in self.table.by_fqn
+        if is_project:
+            # Binding to a concrete PROJECT method would erase a `*.method` sink
+            # stamp (same hazard the fuzzy step guards), so defer to the sink there.
+            if self._guess_is_sink(ref):
+                return None
+            candidate = f"{rtype}.{ref.callee_name}"
+            dst_id = self.table.by_fqn.get(candidate)
+            if dst_id is not None:
+                return dst_id, candidate, Confidence.IMPORT, "binding"
+            for base_fqn in ancestors(rtype, self.table):
+                candidate = f"{base_fqn}.{ref.callee_name}"
+                dst_id = self.table.by_fqn.get(candidate)
+                if dst_id is not None:
+                    return dst_id, candidate, Confidence.IMPORT, "binding"
+            return None
+        typed = f"{rtype}.{ref.callee_name}"
+        return self.externals.get_or_create(typed), typed, Confidence.IMPORT, "binding"
+
     def _bind(self, ref: RawReference) -> tuple[int | None, str, Confidence, str | None]:
         # A `(` in the callee text means it is a member access on a *call result*
         # (`re.search(rx).groups`, `os.popen(cmd).read`), so the dotted path is not
         # a real qname. Don't expand it through the import map or store it verbatim
         # as a guess — that is what produced multi-hundred-char garbage dst_qnames.
         chained = "(" in ref.callee_text
+
+        # 0. receiver typing via the binding table (#98): a local var / field / an
+        # imported module-level binding, typed to a known type, resolves
+        # `receiver.method` by that type. Runs first so a typed value that is *also*
+        # an imported name (`from db import pool` where `pool = Pool()`) binds to
+        # its type instead of being treated as a namespace by step 1. Only fires
+        # when a real binding exists, so plain module imports are untouched.
+        typed = self._receiver_typed_bind(ref)
+        if typed is not None:
+            return typed
 
         # 1. import-map expansion (chase re-export chains for project targets)
         first_seg = ref.callee_text.split(".", 1)[0].split("(", 1)[0]
@@ -305,33 +349,6 @@ class FileResolver:
                 dst_id = self.table.by_fqn.get(candidate)
                 if dst_id is not None:
                     return dst_id, candidate, Confidence.IMPORT, None
-
-        # 3c. receiver typing via the binding table (#98): a local var / field
-        # bound to a known type resolves `receiver.method` by that type. A project
-        # type binds to the concrete method (+ ancestors); an external type yields
-        # a typed external qname (`go:database/sql.DB.execute`) so a receiver-typed
-        # sink matches instead of relying on the `*.execute` arg-hint guess.
-        if ref.receiver_text is not None and "." not in ref.receiver_text:
-            rtype = self._bindings.receiver_type(ref.receiver_text, ref.caller_qualified_name)
-            if rtype is not None:
-                is_project = not rtype.startswith(f"{self.prefix}:") and rtype in self.table.by_fqn
-                # Binding to a concrete PROJECT method would erase a `*.method` sink
-                # stamp (same hazard the fuzzy step guards). An external typed qname
-                # (`go:database/sql.DB.execute`) still matches `*.execute`, so it is
-                # safe and in fact tightens receiver-agnostic sinks.
-                if is_project and not self._guess_is_sink(ref):
-                    candidate = f"{rtype}.{ref.callee_name}"
-                    dst_id = self.table.by_fqn.get(candidate)
-                    if dst_id is not None:
-                        return dst_id, candidate, Confidence.IMPORT, "binding"
-                    for base_fqn in ancestors(rtype, self.table):
-                        candidate = f"{base_fqn}.{ref.callee_name}"
-                        dst_id = self.table.by_fqn.get(candidate)
-                        if dst_id is not None:
-                            return dst_id, candidate, Confidence.IMPORT, "binding"
-                elif not is_project:
-                    typed = f"{rtype}.{ref.callee_name}"
-                    return self.externals.get_or_create(typed), typed, Confidence.IMPORT, "binding"
 
         # 4. unique-name fuzzy match (project symbols only, never ambiguous).
         # For attribute calls with an unknown receiver (e.g. `runner.execute()`

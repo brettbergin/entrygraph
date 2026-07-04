@@ -55,3 +55,25 @@ def test_unresolvable_registration_keeps_service_marker(tmp_path):
         assert "/Foo" in routes  # service marker fallback
     finally:
         g.close()
+
+
+def test_local_constructor_impl_expands(tmp_path):
+    # `impl := &Ingester{}; RegisterIngesterServer(s, impl)` — the impl is a local
+    # bound to a construction, resolved via the binding table (#98 P3)
+    (tmp_path / "go.mod").write_text("module ex\n")
+    (tmp_path / "s.go").write_text(
+        "package server\n"
+        "type Ingester struct{}\n"
+        "func (i *Ingester) Push(r int) {}\n"
+        "func (i *Ingester) Query(r int) {}\n"
+        "func Setup(s int) {\n"
+        "\timpl := &Ingester{}\n"
+        "\tRegisterIngesterServer(s, impl)\n"
+        "}\n"
+    )
+    g = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    try:
+        routes = {e.route for e in g.entrypoints() if e.kind == "rpc_handler"}
+        assert routes == {"/Ingester/Push", "/Ingester/Query"}
+    finally:
+        g.close()

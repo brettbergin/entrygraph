@@ -109,7 +109,8 @@ class FileBindingView:
             self._scoped.setdefault(b.scope, {})[b.name] = resolved
 
     def type_of(self, name: str, scope: str | None = None) -> str | None:
-        """Type qname bound to ``name`` in ``scope``, falling back to module level."""
+        """Type qname bound to ``name`` in ``scope``, falling back to module level,
+        then to a declared field, then across a single import hop (#98 P3)."""
         scoped = self._scoped.get(scope)
         if scoped and name in scoped:
             return scoped[name]
@@ -119,7 +120,29 @@ class FileBindingView:
         # a declared field of the enclosing type: "Owner.name"
         if scope:
             owner = scope.rsplit(".", 1)[0]
-            return self._table.field_types.get(f"{owner}.{name}")
+            field = self._table.field_types.get(f"{owner}.{name}")
+            if field is not None:
+                return field
+        # cross-file: the receiver is an imported name bound at module level in its
+        # source module (`from .db import conn` where `conn = pg.Pool(...)`).
+        return self._imported_binding(name)
+
+    def _imported_binding(self, name: str) -> str | None:
+        target = self._import_map.get(name)
+        if target is None or "." not in target:
+            return None
+        module, exported = target.rsplit(".", 1)
+        seen: set[tuple[str, str]] = set()
+        # chase re-export chains a bounded number of hops (barrel files)
+        for _ in range(8):
+            binding = self._table.module_bindings.get(module, {}).get(exported)
+            if binding is not None:
+                return binding
+            rx = self._table.reexports.get(module, {}).get(exported)
+            if rx is None or (module, exported) in seen:
+                return None
+            seen.add((module, exported))
+            module, exported = rx
         return None
 
     def receiver_type(self, receiver: str, caller_fqn: str | None) -> str | None:
