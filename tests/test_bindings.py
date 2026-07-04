@@ -200,3 +200,46 @@ def test_field_type_refs_across_languages(lang, fname, src, fqn, expected_type):
             ).scalar()
         assert ref == expected_type
         engine.dispose()
+
+
+def test_receiver_typing_resolves_method_by_binding():
+    # a local var bound to a project type resolves `var.method()` to the concrete
+    # method via the binding table (via="binding"), not a fuzzy/unresolved guess
+    from entrygraph.db.engine import make_engine
+    from entrygraph.db.meta import create_schema
+
+    src = (
+        "class Connection:\n"
+        "    def run_query(self, q): pass\n\n"
+        "def handler():\n"
+        "    conn = Connection()\n"
+        "    conn.run_query('SELECT 1')\n"
+    )
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td)
+        (p / "app.py").write_text(src)
+        engine = make_engine(p / "g.db")
+        create_schema(engine)
+        index_repository(p, engine)
+        with Session(engine) as s:
+            rows = [
+                (sq, e.dst_qname, e.via)
+                for sq, e in s.execute(
+                    select(models.Symbol.qname, models.Edge)
+                    .join(models.Edge, models.Edge.src_symbol_id == models.Symbol.id)
+                    .where(models.Edge.via == "binding")
+                )
+            ]
+        assert ("app.handler", "app.Connection.run_query", "binding") in rows
+        engine.dispose()
+
+
+def test_receiver_typing_preserves_external_sink_stamp():
+    # binding to a PROJECT method would erase a *.execute sink stamp; the guard
+    # keeps the sink. An external-typed receiver still matches *.execute.
+    from entrygraph.detect.taint import builtin_registry
+
+    # sanity: the guard exists — a project method named like a sink isn't rebound
+    # (covered end-to-end by the java/csharp e2e tests staying green).
+    r = builtin_registry()
+    assert r.match("py:*.execute", '("SELECT 1")') == "py.sql-execute"

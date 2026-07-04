@@ -265,6 +265,7 @@ class GoExtractor:
                     arg_count=len(args.named_children) if args is not None else 0,
                     arg_preview=truncate(node_text(args)) if args is not None else None,
                     assign_target=self._assign_target(node),
+                    arg_idents=self._arg_idents(args),
                 )
             )
             self._emit_callbacks(args, caller, out)
@@ -402,6 +403,19 @@ class GoExtractor:
             base = n.child_by_field_name("type")
             return node_text(base) if base is not None else None
         return None
+
+    def _arg_idents(self, args: Node | None, cap: int = 8) -> list[str]:
+        """Identifier / selector arguments in call order (`t.Ingester`, `router`),
+        for binding-based resolvers (gRPC impl typing, #98)."""
+        if args is None:
+            return []
+        out: list[str] = []
+        for arg in args.named_children:
+            if arg.type in ("identifier", "selector_expression"):
+                out.append(node_text(arg))
+            if len(out) >= cap:
+                break
+        return out
 
     def _assign_target(self, call: Node) -> str | None:
         """LHS variable when `call` is the sole RHS of a single-var `:=`/`=`.
