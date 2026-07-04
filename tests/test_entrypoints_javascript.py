@@ -113,13 +113,17 @@ def test_next_pages_index_files_map_to_parent():
     assert _pages_rule().match(_js_ext(path="pages/api/index.ts"))[0].route == "/api"
 
 
-def test_next_pages_excludes_tests_and_type_decls():
+def test_next_pages_excludes_type_decls():
+    # Colocated tests are excluded at walk time (fs/testfiles, #94); the rule
+    # keeps only the .d.ts guard, which is not a test-file concern.
+    from entrygraph.fs.testfiles import is_test_path
+
+    assert _pages_rule().match(_js_ext(path="apps/web/pages/api/types.d.ts")) == []
     for path in (
         "apps/web/pages/api/book/recurring-event.test.ts",
         "apps/web/pages/api/foo.spec.ts",
-        "apps/web/pages/api/types.d.ts",
     ):
-        assert _pages_rule().match(_js_ext(path=path)) == []
+        assert is_test_path(path)
 
 
 def test_next_pages_ignores_non_api_pages():
