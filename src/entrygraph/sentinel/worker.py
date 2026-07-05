@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Protocol
 
 from entrygraph.api import CodeGraph
+from entrygraph.gate import sarif as sarif_mod
+from entrygraph.gate import store as gate_store
 from entrygraph.gate.engine import GateResult, run_gate
 from entrygraph.sentinel import store
 from entrygraph.sentinel.github import GitHubApp
@@ -101,6 +103,7 @@ def build_check_run(result: GateResult) -> CheckRunSpec:
 class ScanOutcome:
     result: GateResult
     check_run_id: int | None
+    sarif_id: str | None = None
 
 
 def run_scan(
@@ -161,4 +164,76 @@ def run_scan(
         title=spec.title,
         summary=spec.summary,
     )
-    return ScanOutcome(result=result, check_run_id=check_run_id)
+
+    # publish the current reachable findings to code scanning; the stable
+    # partialFingerprints let GitHub track each finding across pushes. Best-effort:
+    # a repo with code scanning disabled just gets None back.
+    from entrygraph import __version__
+
+    report = sarif_mod.to_sarif(result.new + result.known, threshold=0.5, tool_version=__version__)
+    sarif_id = github.upload_sarif(
+        token=token,
+        repo_full_name=request.repo_full_name,
+        commit_sha=request.head_sha,
+        ref=f"refs/pull/{request.pr_number}/head",
+        sarif=report,
+    )
+    return ScanOutcome(result=result, check_run_id=check_run_id, sarif_id=sarif_id)
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshRequest:
+    """A push to the protected default branch: refresh the repo's baseline."""
+
+    installation_id: int
+    repo_full_name: str
+    repo_clone_url: str
+    branch: str
+    head_sha: str
+
+
+def refresh_baseline(
+    payload: dict,
+    *,
+    github: GitHubApp,
+    fetcher: RepoFetcher,
+    session_factory,
+    now: datetime,
+) -> int:
+    """Re-cut the repo's baseline from the just-merged default-branch head.
+
+    Baselines only ever move forward from the protected default branch (never a PR
+    head), so a PR can't poison what it is measured against. Returns the new
+    baseline's path count."""
+    request = RefreshRequest(**payload)
+    token = github.installation_token(request.installation_id, now=now).token
+
+    with tempfile.TemporaryDirectory(prefix="sentinel-baseline-") as tmp:
+        head_dir = Path(tmp) / "head"
+        head_dir.mkdir()
+        fetcher.fetch(
+            clone_url=request.repo_clone_url,
+            head_sha=request.head_sha,
+            token=token,
+            dest=head_dir,
+        )
+        graph = CodeGraph.index(head_dir, db=Path(tmp) / "baseline.db")
+        try:
+            with session_factory() as session:
+                owner = request.repo_full_name.split("/", 1)[0]
+                store.ensure_installation(session, request.installation_id, owner, now=now)
+                repo_id = store.resolve_repo(
+                    session, request.installation_id, request.repo_full_name, now=now
+                )
+                policy = gate_store.get_policy(session, repo_id)
+                findings = gate_store.enumerate_findings(graph, policy)
+                return gate_store.save_baseline(
+                    session,
+                    repo_id,
+                    findings,
+                    branch=request.branch,
+                    commit_sha=request.head_sha,
+                    now=now,
+                )
+        finally:
+            graph.close()

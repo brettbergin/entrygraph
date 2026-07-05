@@ -133,6 +133,37 @@ class GitHubApp:
             )
         return int(resp.json().get("id", 0))
 
+    def upload_sarif(
+        self,
+        *,
+        token: str,
+        repo_full_name: str,
+        commit_sha: str,
+        ref: str,
+        sarif: dict,
+    ) -> str | None:
+        """Upload a SARIF log to code scanning. GitHub wants the SARIF gzipped and
+        base64-encoded; ``ref`` is the git ref the analysis applies to (e.g.
+        ``refs/pull/<n>/head``). Returns the upload id, or None if GitHub declined
+        (code scanning may be disabled on the repo — not fatal to the scan)."""
+        import base64
+        import gzip
+        import json
+
+        encoded = base64.b64encode(gzip.compress(json.dumps(sarif).encode())).decode()
+        resp = self._client.post(
+            f"{self._api}/repos/{repo_full_name}/code-scanning/sarifs",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json={"commit_sha": commit_sha, "ref": ref, "sarif": encoded},
+        )
+        if resp.status_code not in (200, 202):
+            return None
+        return resp.json().get("id")
+
 
 def _parse_expiry(value: str | None) -> datetime:
     if not value:

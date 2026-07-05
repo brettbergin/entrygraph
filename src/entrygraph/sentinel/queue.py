@@ -23,8 +23,7 @@ from entrygraph.sentinel.github import GitHubApp
 from entrygraph.sentinel.store import init_store, make_store_engine
 from entrygraph.sentinel.webhook import ScanQueue
 from entrygraph.sentinel.worker import DulwichFetcher, run_scan
-
-_SCAN_JOB = "scan_pull_request"
+from entrygraph.sentinel.worker import refresh_baseline as _refresh_impl
 
 
 class ArqScanQueue(ScanQueue):
@@ -60,6 +59,21 @@ async def scan_pull_request(ctx: dict[str, Any], payload: dict[str, Any]) -> dic
     return {"status": outcome.result.status, "check_run_id": outcome.check_run_id}
 
 
+# arq dispatches by function __name__, so these coroutine names must match the
+# webhook's job constants (scan_pull_request / refresh_baseline).
+async def refresh_baseline(ctx: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """arq job: re-cut a repo's baseline from a default-branch push."""
+    count = await asyncio.to_thread(
+        _refresh_impl,
+        payload,
+        github=ctx["github"],
+        fetcher=DulwichFetcher(),
+        session_factory=ctx["session_factory"],
+        now=datetime.now(UTC),
+    )
+    return {"baseline_paths": count}
+
+
 async def _on_startup(ctx: dict[str, Any]) -> None:
     config = SentinelConfig.from_env()
     engine = make_store_engine(config.database_url)
@@ -72,7 +86,7 @@ async def _on_startup(ctx: dict[str, Any]) -> None:
 class WorkerSettings:
     """arq worker entrypoint: ``arq entrygraph.sentinel.queue.WorkerSettings``."""
 
-    functions = [scan_pull_request]
+    functions = [scan_pull_request, refresh_baseline]
     on_startup = _on_startup
 
     @staticmethod

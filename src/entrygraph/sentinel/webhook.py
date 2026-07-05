@@ -26,6 +26,8 @@ from entrygraph.sentinel.config import SentinelConfig
 # pull_request actions that warrant a (re)scan of the head commit
 _SCAN_ACTIONS = frozenset({"opened", "reopened", "synchronize", "ready_for_review"})
 _SCAN_JOB = "scan_pull_request"
+_REFRESH_JOB = "refresh_baseline"
+_NULL_SHA = "0" * 40
 
 
 def verify_signature(secret: str, body: bytes, signature_header: str | None) -> bool:
@@ -170,6 +172,34 @@ def _handle_installation_event(payload: dict[str, Any], session_factory) -> None
             store.upsert_installation(session, int(inst_id), str(login), now=now)
 
 
+def parse_push_event(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """A push to the protected default branch → a baseline-refresh payload, or None.
+
+    Only the default branch refreshes a baseline (a feature branch must never move
+    it), and a branch delete (null after-sha) is ignored."""
+    repo = payload.get("repository") or {}
+    default_branch = repo.get("default_branch", "main")
+    if payload.get("ref") != f"refs/heads/{default_branch}":
+        return None
+    after = payload.get("after")
+    if not after or after == _NULL_SHA or payload.get("deleted"):
+        return None
+    installation = (payload.get("installation") or {}).get("id")
+    full_name = repo.get("full_name")
+    clone_url = repo.get("clone_url")
+    if installation is None:
+        return None
+    if any(v in (None, "") for v in (full_name, clone_url)):
+        return None
+    return {
+        "installation_id": int(installation),
+        "repo_full_name": str(full_name),
+        "repo_clone_url": str(clone_url),
+        "branch": str(default_branch),
+        "head_sha": str(after),
+    }
+
+
 def create_app(
     config: SentinelConfig,
     *,
@@ -207,7 +237,7 @@ def create_app(
             return Response(status_code=200, content=b'{"status":"duplicate"}')
         if x_github_event == "ping":
             return Response(status_code=200, content=b'{"status":"pong"}')
-        if x_github_event not in ("pull_request", "installation"):
+        if x_github_event not in ("pull_request", "push", "installation"):
             return Response(status_code=202, content=b'{"status":"ignored"}')
         import json
 
@@ -219,6 +249,12 @@ def create_app(
             if session_factory is not None:
                 _handle_installation_event(payload, session_factory)
             return Response(status_code=202, content=b'{"status":"installation"}')
+        if x_github_event == "push":
+            refresh = parse_push_event(payload)
+            if refresh is None:
+                return Response(status_code=202, content=b'{"status":"skipped"}')
+            scan_queue.enqueue(_REFRESH_JOB, refresh)
+            return Response(status_code=202, content=b'{"status":"refresh"}')
         scan = parse_pull_request_event(payload)
         if scan is None:
             return Response(status_code=202, content=b'{"status":"skipped"}')
