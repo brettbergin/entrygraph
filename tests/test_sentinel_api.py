@@ -157,3 +157,54 @@ def test_policy_get_default_and_update(seeded):
     assert updated["risk_threshold"] == 0.8
     assert updated["mode"] == "warn"
     assert updated["gated_categories"] == ["command_exec"]
+
+
+# ---------------- discovery endpoints + CORS (dashboard) ----------------
+
+
+def test_list_installations(seeded):
+    r = _client(seeded).get("/installations", headers=_AUTH)
+    assert r.status_code == 200
+    insts = r.json()["installations"]
+    assert len(insts) == 1
+    assert insts[0]["id"] == 100
+    assert insts[0]["account_login"] == "octo"
+    assert insts[0]["repo_count"] == 1
+
+
+def test_list_installations_requires_token(seeded):
+    assert _client(seeded).get("/installations").status_code == 401
+
+
+def test_list_repos_with_latest_scan(seeded):
+    r = _client(seeded).get("/installations/100/repos", headers=_AUTH)
+    assert r.status_code == 200
+    repos = r.json()["repos"]
+    assert len(repos) == 1
+    assert repos[0]["full_name"] == "octo/app"
+    assert repos[0]["latest_scan"]["status"] == "failed"
+
+
+def test_list_repos_empty_for_unknown_installation(seeded):
+    r = _client(seeded).get("/installations/999/repos", headers=_AUTH)
+    assert r.status_code == 200
+    assert r.json()["repos"] == []
+
+
+def test_cors_headers_present_when_origin_allowed(seeded):
+    from entrygraph.sentinel.api import create_api
+
+    cfg = SentinelConfig(
+        app_id="1",
+        private_key_pem="k",
+        webhook_secret="w",
+        api_token=_TOKEN,
+        cors_origins=("https://dash.example.com",),
+    )
+    client = TestClient(create_api(cfg, seeded))
+    r = client.get(
+        "/installations",
+        headers={**_AUTH, "Origin": "https://dash.example.com"},
+    )
+    assert r.status_code == 200
+    assert r.headers.get("access-control-allow-origin") == "https://dash.example.com"

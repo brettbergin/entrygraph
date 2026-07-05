@@ -319,3 +319,32 @@ def purge_scans(session: Session, repo_id: int, *, keep: int) -> int:
         select(func.count()).select_from(models.ScanRun).where(models.ScanRun.repo_id == repo_id)
     ).scalar_one()
     return deleted - remaining
+
+
+# ---------------- dashboard discovery (M6) ----------------
+
+
+def list_installations(session: Session) -> list[Installation]:
+    """Every installation, for the dashboard's top-level list."""
+    return list(
+        session.execute(select(Installation).order_by(Installation.account_login)).scalars()
+    )
+
+
+def installation_repos(session: Session, installation_id: int) -> list[InstallationRepo]:
+    """The repo mappings for one installation (name + central repo_id)."""
+    return list(
+        session.execute(
+            select(InstallationRepo)
+            .where(InstallationRepo.installation_id == installation_id)
+            .order_by(InstallationRepo.full_name)
+        ).scalars()
+    )
+
+
+def repo_count(session: Session, installation_id: int) -> int:
+    return session.execute(
+        select(func.count())
+        .select_from(InstallationRepo)
+        .where(InstallationRepo.installation_id == installation_id)
+    ).scalar_one()

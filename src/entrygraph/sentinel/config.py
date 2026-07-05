@@ -35,6 +35,9 @@ class SentinelConfig:
     # bearer token guarding the REST API; empty means the API is disabled
     # (fail-closed — every request 503s until a token is configured)
     api_token: str = ""
+    # browser origins allowed to call the API (the dashboard); empty means
+    # same-origin only (no CORS middleware installed)
+    cors_origins: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> SentinelConfig:
@@ -62,10 +65,14 @@ class SentinelConfig:
             kwargs["api_base_url"] = env["SENTINEL_GITHUB_API_URL"].rstrip("/")
         if env.get("SENTINEL_API_TOKEN"):
             kwargs["api_token"] = env["SENTINEL_API_TOKEN"]
+        origins = tuple(
+            o.strip() for o in env.get("SENTINEL_CORS_ORIGINS", "").split(",") if o.strip()
+        )
         return cls(
             app_id=app_id,
             private_key_pem=private_key,
             webhook_secret=secret,
+            cors_origins=origins,
             **kwargs,
         )
 

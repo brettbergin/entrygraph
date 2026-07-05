@@ -72,6 +72,16 @@ def create_api(config: SentinelConfig, session_factory) -> FastAPI:
     findings store (see :func:`entrygraph.sentinel.store.init_store`)."""
     app = FastAPI(title="entrygraph Sentinel API", version="1")
 
+    if config.cors_origins:
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(config.cors_origins),
+            allow_methods=["GET", "POST", "PUT", "DELETE"],
+            allow_headers=["authorization", "content-type"],
+        )
+
     def require_token(authorization: str | None = Header(default=None)) -> None:
         if not config.api_token:
             raise HTTPException(status_code=503, detail="API disabled: no token configured")
@@ -86,6 +96,39 @@ def create_api(config: SentinelConfig, session_factory) -> FastAPI:
         if repo_id is None:
             raise HTTPException(status_code=404, detail="repo not found for this installation")
         return repo_id
+
+    # ---- discovery: the dashboard walks installations -> repos -> scans ----
+
+    @app.get("/installations", dependencies=[Depends(require_token)])
+    def get_installations() -> dict[str, Any]:
+        with session_factory() as session:
+            insts = store.list_installations(session)
+            return {
+                "installations": [
+                    {
+                        "id": i.id,
+                        "account_login": i.account_login,
+                        "suspended": i.suspended,
+                        "repo_count": store.repo_count(session, i.id),
+                    }
+                    for i in insts
+                ]
+            }
+
+    @app.get("/installations/{installation_id}/repos", dependencies=[Depends(require_token)])
+    def get_repos(installation_id: int) -> dict[str, Any]:
+        with session_factory() as session:
+            repos = store.installation_repos(session, installation_id)
+            out = []
+            for r in repos:
+                latest = store.latest_scan(session, r.repo_id)
+                out.append(
+                    {
+                        "full_name": r.full_name,
+                        "latest_scan": _scan_json(latest) if latest is not None else None,
+                    }
+                )
+            return {"repos": out}
 
     base = "/installations/{installation_id}/repos/{owner}/{repo}"
 
