@@ -469,3 +469,19 @@ def test_paths_taint_hops_flag_and_multihop_label(tmp_path, capsys):
     )
     out0 = capsys.readouterr().out
     assert "flow: confirmed" not in out0
+
+
+def test_cli_unexpected_error_is_handled_cleanly(monkeypatch, capsys):
+    # an unexpected internal exception surfaces as a concise error + non-zero exit,
+    # never a raw traceback (#116 QA: index crashes used to leak a stack trace)
+    import entrygraph.cli.main as m
+
+    def boom(_args):
+        raise ValueError("kaboom")
+
+    monkeypatch.setattr(m, "cmd_stats", boom)
+    rc = m.main(["stats", "--db", "/nonexistent.db"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "error: ValueError: kaboom" in err
+    assert "Traceback" not in err

@@ -161,3 +161,27 @@ def test_prepare_source_bad_url_raises(tmp_path):
             _file_url(tmp_path / "does-not-exist"), clone_dir=str(dest), timeout=30
         ):
             pass
+
+
+def test_prepare_source_refuses_mismatched_clone_dir(tmp_path):
+    # reusing a --clone-dir that holds a DIFFERENT repo must error, not silently
+    # index the wrong repo (#116 QA regression)
+    origin_a = _make_git_repo(tmp_path / "originA")
+    origin_b = _make_git_repo(tmp_path / "originB")
+    dest = tmp_path / "checkout"
+    with prepare_source(_file_url(origin_a), clone_dir=str(dest)) as src:
+        assert (src.root / "app.py").exists()
+    with pytest.raises(GitCloneError, match="different repository"):
+        with prepare_source(_file_url(origin_b), clone_dir=str(dest)):
+            pass
+
+
+def test_prepare_source_reuse_same_remote_ok(tmp_path):
+    # reusing the same clone-dir for the SAME repo still works (remote matches)
+    origin = _make_git_repo(tmp_path / "origin")
+    dest = tmp_path / "checkout"
+    url = _file_url(origin)
+    with prepare_source(url, clone_dir=str(dest)):
+        pass
+    with prepare_source(url, clone_dir=str(dest)) as src:
+        assert (src.root / "app.py").exists()

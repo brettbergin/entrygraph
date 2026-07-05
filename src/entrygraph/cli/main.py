@@ -950,6 +950,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    import os
+
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
@@ -957,6 +959,17 @@ def main(argv: list[str] | None = None) -> int:
     except EntrygraphError as exc:
         console(stderr=True).print(Text(f"error: {exc}", style="bold red"))
         return 2
+    except KeyboardInterrupt:
+        console(stderr=True).print(Text("interrupted", style="bold red"))
+        return 130
+    except Exception as exc:  # noqa: BLE001 — top-level CLI guard, keep output clean
+        # An unexpected failure (e.g. a DB integrity error while indexing) should
+        # surface as a concise diagnostic and a non-zero exit, not a raw traceback.
+        # Set ENTRYGRAPH_DEBUG=1 to re-raise the full traceback while developing.
+        if os.environ.get("ENTRYGRAPH_DEBUG"):
+            raise
+        console(stderr=True).print(Text(f"error: {type(exc).__name__}: {exc}", style="bold red"))
+        return 1
 
 
 if __name__ == "__main__":  # pragma: no cover

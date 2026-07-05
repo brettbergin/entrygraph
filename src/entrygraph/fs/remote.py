@@ -195,6 +195,32 @@ def _update(dest: Path, *, ref: str | None, depth: int, timeout: int) -> None:
     _fetch_ref(dest, ref=ref or "HEAD", depth=depth, timeout=timeout)
 
 
+def _origin_url(dest: Path) -> str | None:
+    """The existing checkout's ``origin`` remote URL, or None if unset/unreadable."""
+    git = shutil.which("git")
+    if git is None:
+        return None
+    try:
+        proc = subprocess.run(  # nosec B603 — fixed argv, no shell, git path from which
+            [git, "-C", str(dest), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout.strip() or None
+
+
+def _same_remote(requested: str, existing: str | None) -> bool:
+    """True if two git URLs point at the same repo, ignoring scheme, ``.git``
+    suffix, and https-vs-scp form (compared by host + path segments)."""
+    if existing is None:
+        return False
+    return _parse_url(requested) == _parse_url(existing)
+
+
 @contextmanager
 def prepare_source(
     path_or_url: str,
@@ -230,6 +256,16 @@ def prepare_source(
 
     dest = Path(clone_dir) if clone_dir else default_clone_dir(url)
     if (dest / ".git").exists():
+        # Refuse to reuse a checkout of a *different* repo — otherwise we would fetch
+        # and index that repo while reporting success for the requested URL (a silent
+        # wrong-repo scan). Verify the origin remote matches before updating. #116 QA
+        origin = _origin_url(dest)
+        if not _same_remote(url, origin):
+            raise GitCloneError(
+                f"{dest} already holds a checkout of a different repository "
+                f"({origin or 'unknown remote'}); refusing to reuse it for {url}. "
+                "Pass a fresh --clone-dir or remove that directory."
+            )
         _update(dest, ref=ref, depth=depth, timeout=timeout)
     else:
         _clone(url, dest, ref=ref, depth=depth, timeout=timeout)
