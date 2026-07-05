@@ -11,11 +11,16 @@ queue and a SQLite store; ``build_from_env`` assembles the production wiring fro
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI
 
 from entrygraph.sentinel.api import create_api
 from entrygraph.sentinel.config import SentinelConfig
 from entrygraph.sentinel.webhook import ScanQueue, create_app
+
+# where `npm run build` (frontend/) emits the dashboard
+_STATIC_DIR = Path(__file__).parent / "static"
 
 
 def create_service_app(
@@ -24,10 +29,24 @@ def create_service_app(
     session_factory,
     queue: ScanQueue | None = None,
 ) -> FastAPI:
-    """Webhook at ``/`` + REST API at ``/api``, sharing one findings store."""
+    """Webhook at ``/`` + REST API at ``/api`` + (if built) the dashboard at
+    ``/ui``, all sharing one findings store."""
     service = create_app(config, queue=queue, session_factory=session_factory)
     service.mount("/api", create_api(config, session_factory))
+    _mount_dashboard(service, _STATIC_DIR)
     return service
+
+
+def _mount_dashboard(service: FastAPI, static_dir: Path) -> None:
+    """Serve the built React dashboard at ``/ui`` when ``static_dir`` holds a build
+    (``npm run build`` in ``frontend/`` emits it). Absent a build the mount is
+    skipped, so the API/webhook run fine without the UI."""
+    if not (static_dir / "index.html").is_file():
+        return
+    from fastapi.staticfiles import StaticFiles
+
+    # html=True makes it an SPA fallback (unknown paths serve index.html)
+    service.mount("/ui", StaticFiles(directory=str(static_dir), html=True), name="dashboard")
 
 
 def build_from_env() -> FastAPI:  # pragma: no cover - production wiring

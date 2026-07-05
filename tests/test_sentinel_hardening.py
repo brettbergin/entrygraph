@@ -170,3 +170,32 @@ def test_service_app_mounts_webhook_and_api(session_factory):
         "/api/installations/1/repos/a/app/scans", headers={"Authorization": "Bearer tok"}
     )
     assert ok.status_code == 200
+
+
+# ---------------- dashboard mount (M6) ----------------
+
+
+def test_dashboard_mounts_when_built(tmp_path):
+    from fastapi import FastAPI
+
+    from entrygraph.sentinel.app import _mount_dashboard
+
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<!doctype html><title>Sentinel</title>")
+    app = FastAPI()
+    _mount_dashboard(app, static)
+    client = TestClient(app)
+    r = client.get("/ui/")
+    assert r.status_code == 200
+    assert "Sentinel" in r.text
+
+
+def test_dashboard_skipped_without_build(tmp_path):
+    from fastapi import FastAPI
+
+    from entrygraph.sentinel.app import _mount_dashboard
+
+    app = FastAPI()
+    _mount_dashboard(app, tmp_path / "does-not-exist")  # no build -> no mount
+    assert TestClient(app).get("/ui/").status_code == 404

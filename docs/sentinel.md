@@ -59,15 +59,16 @@ Point the GitHub App's webhook at `https://<host>/webhook` and subscribe to the
 
 ## Configuration
 
-| Variable                                | Required    | Purpose                                                           |
-| --------------------------------------- | ----------- | ----------------------------------------------------------------- |
-| `SENTINEL_GITHUB_APP_ID`                | yes         | The GitHub App's id.                                              |
-| `SENTINEL_WEBHOOK_SECRET`               | yes         | Verifies the `X-Hub-Signature-256` HMAC.                          |
-| `SENTINEL_GITHUB_PRIVATE_KEY` / `_FILE` | yes         | App private key (PEM inline or a file path).                      |
-| `SENTINEL_API_TOKEN`                    | for the API | Bearer token guarding `/api`; unset ⇒ the API fails closed (503). |
-| `SENTINEL_DATABASE_URL`                 | no          | Findings store (default SQLite; use Postgres in prod).            |
-| `SENTINEL_REDIS_URL`                    | no          | Job queue.                                                        |
-| `SENTINEL_GITHUB_API_URL`               | no          | Override for GitHub Enterprise.                                   |
+| Variable                                | Required    | Purpose                                                                                                                 |
+| --------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `SENTINEL_GITHUB_APP_ID`                | yes         | The GitHub App's id.                                                                                                    |
+| `SENTINEL_WEBHOOK_SECRET`               | yes         | Verifies the `X-Hub-Signature-256` HMAC.                                                                                |
+| `SENTINEL_GITHUB_PRIVATE_KEY` / `_FILE` | yes         | App private key (PEM inline or a file path).                                                                            |
+| `SENTINEL_API_TOKEN`                    | for the API | Bearer token guarding `/api`; unset ⇒ the API fails closed (503).                                                       |
+| `SENTINEL_DATABASE_URL`                 | no          | Findings store (default SQLite; use Postgres in prod).                                                                  |
+| `SENTINEL_REDIS_URL`                    | no          | Job queue.                                                                                                              |
+| `SENTINEL_GITHUB_API_URL`               | no          | Override for GitHub Enterprise.                                                                                         |
+| `SENTINEL_CORS_ORIGINS`                 | no          | Comma-separated browser origins allowed to call the API (only needed if the dashboard is hosted on a different origin). |
 
 Secrets come from the environment or a mounted secret file only — never the
 database or logs. `SentinelConfig.redacted()` is the log-safe view.
@@ -109,10 +110,20 @@ Findings grow with every scan. `entrygraph.sentinel.store.purge_scans(session, r
 their findings), keeping the store bounded on always-on installations. Wire it
 into a periodic maintenance job for your retention policy.
 
+## Dashboard
+
+A React + TypeScript dashboard (in [`frontend/`](../frontend/README.md)) walks
+installations → repos → scans → findings and manages suppressions + policy per
+repo. The Docker image builds it, and the web process serves it at **`/ui`** —
+open `https://<host>/ui` and paste your `SENTINEL_API_TOKEN`. For local
+development, `npm run dev` in `frontend/` proxies `/api` to a Sentinel on `:8000`.
+
 ## REST API
 
 All routes are under `/api/installations/{installation_id}/repos/{owner}/{repo}`
-and require `Authorization: Bearer $SENTINEL_API_TOKEN`.
+and require `Authorization: Bearer $SENTINEL_API_TOKEN`. Two discovery routes,
+`GET /api/installations` and `GET /api/installations/{id}/repos`, let the
+dashboard enumerate what exists.
 
 | Method     | Path                           | Purpose                        |
 | ---------- | ------------------------------ | ------------------------------ |
