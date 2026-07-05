@@ -101,3 +101,17 @@ def test_c6_file_presence_frameworks():
         )
     }
     assert "rack" in detected
+
+
+def test_rails_detected_without_manifest_dep():
+    # the rails monorepo (and apps depending on a component subset) has no top-level
+    # `rails` gem dep; detect it from code signals instead (#116 QA regression)
+    detected = detect_frameworks(
+        ManifestDeps(),  # no manifest deps at all
+        import_signals={("ruby", "action_controller"), ("ruby", "active_record")},
+        file_paths=["config/routes.rb", "app/controllers/users_controller.rb"],
+        languages_present={"ruby"},
+        symbol_names={"ApplicationController", "UsersController"},
+    )
+    rails = next((d for d in detected if d.name == "rails"), None)
+    assert rails is not None and rails.confidence > 0.8

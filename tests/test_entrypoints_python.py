@@ -62,3 +62,32 @@ def test_collect_route_wrappers_finds_forwarders_only():
     urls = _py_ext([_call("path", "('foo', v)", caller=None)])  # module-level urlpattern
     wrappers = _collect_route_wrappers([("p1", rest, False), ("p2", urls, False)])
     assert wrappers == {"rest_path"}
+
+
+def test_dedup_prefers_fastapi_over_flask_on_confidence_tie():
+    # both flask and fastapi rules fire for `@app.get('/x')`; on a detection tie the
+    # route must read as fastapi (its primary syntax), not flask (#116 QA regression)
+    from entrygraph.extract.ir import EntrypointHint
+    from entrygraph.kinds import EntrypointKind
+    from entrygraph.pipeline.scanner import _dedup_entrypoint_hints
+
+    def hint(framework, rule):
+        return EntrypointHint(
+            rule_id=rule,
+            kind=EntrypointKind.HTTP_ROUTE,
+            handler_qualified_name="app.read_item",
+            route="/items",
+            http_methods=["GET"],
+            framework=framework,
+        )
+
+    flask = hint("flask", "python.flask.route")
+    fastapi = hint("fastapi", "python.fastapi.route")
+    tie = {"flask": 0.7, "fastapi": 0.7}
+    # deterministic regardless of hint order
+    assert _dedup_entrypoint_hints([flask, fastapi], tie)[0].framework == "fastapi"
+    assert _dedup_entrypoint_hints([fastapi, flask], tie)[0].framework == "fastapi"
+    assert len(_dedup_entrypoint_hints([flask, fastapi], tie)) == 1
+    # confidence still dominates the tiebreak: a clearly-more-confident flask wins
+    strong_flask = {"flask": 0.95, "fastapi": 0.7}
+    assert _dedup_entrypoint_hints([fastapi, flask], strong_flask)[0].framework == "flask"
