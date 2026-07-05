@@ -88,6 +88,35 @@ severity = "medium"
 callee = "go:text/template.{New,Must}"
 description = "text/template (unescaped) rendering"
 
+# --- coverage lift to `full` tier (#135) ---
+[[sink]]
+id = "go.command-exec.syscall"
+category = "command_exec"
+severity = "high"
+callee = "go:syscall.{Exec,ForkExec,StartProcess}"
+description = "Direct process exec via syscall"
+
+[[sink]]
+id = "go.deserialization"
+category = "deserialization"
+severity = "medium"
+callee = "go:encoding/gob.NewDecoder"
+description = "gob decoding of untrusted input (decodes into arbitrary registered types)"
+
+[[sink]]
+id = "go.xxe"
+category = "xxe"
+severity = "medium"
+callee = "go:encoding/xml.{Unmarshal,NewDecoder}"
+description = "XML parsing susceptible to XXE / entity expansion"
+
+[[sink]]
+id = "go.dynamic-load"
+category = "dynamic_load"
+severity = "high"
+callee = "go:plugin.Open"
+description = "Dynamic plugin (.so) load"
+
 [[source]]
 id = "go.gin.path"
 category = "http_input"
