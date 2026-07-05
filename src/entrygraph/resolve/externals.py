@@ -27,8 +27,9 @@ LANG_PREFIX = {
 
 
 class ExternalRegistry:
-    def __init__(self, allocate_id: Callable[[], int]) -> None:
+    def __init__(self, allocate_id: Callable[[], int], repo_id: int) -> None:
         self._allocate_id = allocate_id
+        self._repo_id = repo_id  # stamped on every minted external symbol row (#116)
         self.by_qname: dict[str, int] = {}
         self.new_rows: list[dict] = []  # Symbol insert dicts, drained by the writer
 
@@ -45,6 +46,7 @@ class ExternalRegistry:
         self.new_rows.append(
             {
                 "id": symbol_id,
+                "repo_id": self._repo_id,
                 "file_id": None,
                 "kind": SymbolKind.EXTERNAL,
                 "name": qname.split(":", 1)[-1].rsplit(".", 1)[-1],

@@ -34,19 +34,47 @@ from entrygraph.errors import EntrygraphError
 DEFAULT_DB_NAME = ".entrygraph.db"
 
 
+def global_db_path() -> Path:
+    """The shared, home-dir index that holds every repository's graph (#116).
+
+    Keeping the database out of each project's root means one `index` populates a
+    single global store; queries select the relevant repo by working directory."""
+    directory = Path.home() / ".entrygraph"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / DEFAULT_DB_NAME
+
+
 def _discover_db(explicit: str | None) -> Path:
-    if explicit:
-        return Path(explicit)
-    current = Path.cwd()
-    for directory in (current, *current.parents):
-        candidate = directory / DEFAULT_DB_NAME
-        if candidate.exists():
-            return candidate
-    return current / DEFAULT_DB_NAME
+    return Path(explicit) if explicit else global_db_path()
+
+
+def _current_repo_root(db_path: Path) -> str | None:
+    """The indexed repository whose root is the working directory or its nearest
+    ancestor, so `entrygraph paths` run inside a repo scopes to that repo in the
+    global DB. None when the cwd isn't under any indexed repo."""
+    if not db_path.exists():
+        return None
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from entrygraph.db import models
+    from entrygraph.db.engine import make_engine
+
+    engine = make_engine(db_path)
+    try:
+        with Session(engine) as session:
+            roots = [r for (r,) in session.execute(select(models.Repository.root_path))]
+    finally:
+        engine.dispose()
+    here = {Path.cwd(), *Path.cwd().parents}
+    matches = [r for r in roots if Path(r) in here]
+    return max(matches, key=len) if matches else None  # nearest ancestor wins
 
 
 def _open(args) -> CodeGraph:
-    return CodeGraph.open(_discover_db(getattr(args, "db", None)))
+    db = _discover_db(getattr(args, "db", None))
+    # bind to the repo the user is in; fall back to the sole repo of a single-repo DB
+    return CodeGraph.open(db, root=_current_repo_root(db))
 
 
 def _percent_bar(percent: float, width: int = 12) -> Text:
@@ -110,7 +138,7 @@ def _thin_coverage_note(languages, path_count: int) -> str | None:
 def cmd_index(args) -> int:
     from contextlib import ExitStack
 
-    from entrygraph.fs.remote import is_git_url, prepare_source, repo_name
+    from entrygraph.fs.remote import is_git_url, prepare_source
     from entrygraph.pipeline.scanner import index_repository
 
     con = console()
@@ -134,15 +162,10 @@ def cmd_index(args) -> int:
 
     with stack:
         root = src.root
-        # A URL clone is ephemeral or lives under ./.entrygraph/clones, so the DB
-        # must land somewhere persistent (cwd), keyed by repo name; a local path
-        # keeps the historical <root>/.entrygraph.db default.
-        if args.db:
-            db = Path(args.db)
-        elif src.url is not None:
-            db = Path.cwd() / f"{repo_name(src.url)}{DEFAULT_DB_NAME}"
-        else:
-            db = root / DEFAULT_DB_NAME
+        # Everything indexes into the shared global DB by default; each repo is
+        # keyed by its root_path there, so no per-repo db file is needed (#116).
+        # --db still overrides (e.g. an isolated CI database for the gate).
+        db = Path(args.db) if args.db else global_db_path()
 
         def _run():
             if getattr(args, "full", False) or not Path(db).exists():
@@ -600,12 +623,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_db(p):
-        p.add_argument("--db", help=f"index database path (default: discover {DEFAULT_DB_NAME})")
+        p.add_argument("--db", help="index database path (default: ~/.entrygraph/.entrygraph.db)")
         p.add_argument("--json", action="store_true", help="emit JSON")
 
     p = sub.add_parser("index", help="index or re-index a repository (local path or git URL)")
     p.add_argument("path", help="local directory, or a git URL to clone and index")
-    p.add_argument("--db", help=f"database path (default: <path>/{DEFAULT_DB_NAME})")
+    p.add_argument("--db", help="database path (default: ~/.entrygraph/.entrygraph.db)")
     p.add_argument("--full", action="store_true", help="force full re-index (default: incremental)")
     p.add_argument("--paranoid", action="store_true", help="hash every file (skip mtime fast path)")
     p.add_argument(

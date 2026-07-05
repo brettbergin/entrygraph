@@ -28,6 +28,7 @@ def _seed(session) -> None:
         [
             Symbol(
                 id=1,
+                repo_id=1,
                 file_id=1,
                 kind=SymbolKind.FUNCTION,
                 name="handler",
@@ -37,6 +38,7 @@ def _seed(session) -> None:
             ),
             Symbol(
                 id=2,
+                repo_id=1,
                 file_id=1,
                 kind=SymbolKind.FUNCTION,
                 name="helper",
@@ -45,7 +47,12 @@ def _seed(session) -> None:
                 end_line=9,
             ),
             Symbol(
-                id=3, file_id=None, kind=SymbolKind.EXTERNAL, name="run", qname="py:subprocess.run"
+                id=3,
+                repo_id=1,
+                file_id=None,
+                kind=SymbolKind.EXTERNAL,
+                name="run",
+                qname="py:subprocess.run",
             ),
         ]
     )
@@ -54,6 +61,7 @@ def _seed(session) -> None:
         [
             Edge(
                 id=1,
+                repo_id=1,
                 kind=EdgeKind.CALLS,
                 src_symbol_id=1,
                 dst_symbol_id=2,
@@ -64,6 +72,7 @@ def _seed(session) -> None:
             ),
             Edge(
                 id=2,
+                repo_id=1,
                 kind=EdgeKind.CALLS,
                 src_symbol_id=2,
                 dst_symbol_id=3,
@@ -78,6 +87,7 @@ def _seed(session) -> None:
     session.add(
         Entrypoint(
             id=1,
+            repo_id=1,
             kind=EntrypointKind.HTTP_ROUTE,
             framework="flask",
             symbol_id=1,
@@ -136,6 +146,7 @@ def test_edge_via_and_new_kinds_round_trip(session_factory):
             [
                 Edge(
                     id=3,
+                    repo_id=1,
                     kind=EdgeKind.CALLS,
                     src_symbol_id=1,
                     dst_symbol_id=2,
@@ -147,6 +158,7 @@ def test_edge_via_and_new_kinds_round_trip(session_factory):
                 ),
                 Edge(
                     id=4,
+                    repo_id=1,
                     kind=EdgeKind.PASSED_AS_CALLBACK,
                     src_symbol_id=1,
                     dst_symbol_id=2,
@@ -157,7 +169,11 @@ def test_edge_via_and_new_kinds_round_trip(session_factory):
                 ),
             ]
         )
-        s.add(Entrypoint(id=2, kind=EntrypointKind.MIDDLEWARE, framework="flask", symbol_id=1))
+        s.add(
+            Entrypoint(
+                id=2, repo_id=1, kind=EntrypointKind.MIDDLEWARE, framework="flask", symbol_id=1
+            )
+        )
         s.commit()
 
         assert s.get(Edge, 3).via == "cha"

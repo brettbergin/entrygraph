@@ -30,7 +30,7 @@ def make_resolver(table, refs=(), imports=(), module="app.routes", module_id=2, 
         imports=list(imports),
         references=list(refs),
     )
-    externals = ExternalRegistry(iter(range(100, 200)).__next__)
+    externals = ExternalRegistry(iter(range(100, 200)).__next__, repo_id=1)
     return FileResolver(x, module_id, table, externals, sink_registry=sink_registry), externals
 
 
@@ -94,7 +94,7 @@ def test_relative_import_from_package_init_resolves_submodule():
             )
         ],
     )
-    externals = ExternalRegistry(iter(range(100, 200)).__next__)
+    externals = ExternalRegistry(iter(range(100, 200)).__next__, repo_id=1)
     resolver = FileResolver(x, 1, table, externals, is_package=True)
     edges = resolver.resolve()
     imp = next(e for e in edges if e.kind is EdgeKind.IMPORTS)
@@ -385,7 +385,7 @@ def test_fuzzy_resolution_does_not_cross_languages():
         error_count=0,
         references=[ref("render")],
     )
-    externals = ExternalRegistry(iter(range(100, 200)).__next__)
+    externals = ExternalRegistry(iter(range(100, 200)).__next__, repo_id=1)
     resolver = FileResolver(x, 1, table, externals)
     call = next(e for e in resolver.resolve() if e.kind is EdgeKind.CALLS)
     # unresolved (no same-language target), not a FUZZY bind to the JS symbol
@@ -406,7 +406,7 @@ def test_fuzzy_resolution_binds_within_same_language():
         error_count=0,
         references=[ref("render")],
     )
-    externals = ExternalRegistry(iter(range(100, 200)).__next__)
+    externals = ExternalRegistry(iter(range(100, 200)).__next__, repo_id=1)
     resolver = FileResolver(x, 1, table, externals)
     call = next(e for e in resolver.resolve() if e.kind is EdgeKind.CALLS)
     assert call.dst_symbol_id == 21 and call.confidence is Confidence.FUZZY

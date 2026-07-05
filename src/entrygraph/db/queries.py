@@ -56,6 +56,7 @@ def _symbol_select() -> Select:
 
 def select_symbols(
     session: Session,
+    repo_id: int,
     *,
     kind: str | SymbolKind | None = None,
     name: str | None = None,
@@ -67,10 +68,14 @@ def select_symbols(
     after: tuple[str, int] | None = None,
 ) -> list[Symbol]:
     # (qname, id) is a total order (id breaks qname ties), so `after` supports
-    # keyset pagination: WHERE (qname, id) > (:aq, :ai) walks ix_symbols_qname
+    # keyset pagination: WHERE (qname, id) > (:aq, :ai) walks ix_symbols_repo_qname
     # directly, unlike OFFSET which rescans and discards all prior rows (O(N^2)
     # over a full iteration).
-    stmt = _symbol_select().order_by(models.Symbol.qname, models.Symbol.id)
+    stmt = (
+        _symbol_select()
+        .where(models.Symbol.repo_id == repo_id)
+        .order_by(models.Symbol.qname, models.Symbol.id)
+    )
     if kind is not None:
         stmt = stmt.where(models.Symbol.kind == SymbolKind(kind))
     elif not include_external:
@@ -93,26 +98,28 @@ def select_symbols(
     return [symbol_to_dto(sym, path) for sym, path in session.execute(stmt)]
 
 
-def symbols_by_ids(session: Session, ids: set[int]) -> dict[int, Symbol]:
+def symbols_by_ids(session: Session, repo_id: int, ids: set[int]) -> dict[int, Symbol]:
     if not ids:
         return {}
-    stmt = _symbol_select().where(models.Symbol.id.in_(ids))
+    stmt = _symbol_select().where(models.Symbol.repo_id == repo_id, models.Symbol.id.in_(ids))
     return {sym.id: symbol_to_dto(sym, path) for sym, path in session.execute(stmt)}
 
 
-def symbol_ids_matching(session: Session, pattern: str) -> set[int]:
+def symbol_ids_matching(session: Session, repo_id: int, pattern: str) -> set[int]:
     """Symbol ids whose qname matches a glob (or exact qname)."""
     return set(
         session.execute(
-            select(models.Symbol.id).where(_match(models.Symbol.qname, pattern))
+            select(models.Symbol.id).where(
+                models.Symbol.repo_id == repo_id, _match(models.Symbol.qname, pattern)
+            )
         ).scalars()
     )
 
 
 def select_files(
-    session: Session, *, language: str | None = None, path: str | None = None
+    session: Session, repo_id: int, *, language: str | None = None, path: str | None = None
 ) -> list[FileInfo]:
-    stmt = select(models.File).order_by(models.File.path)
+    stmt = select(models.File).where(models.File.repo_id == repo_id).order_by(models.File.path)
     if language is not None:
         stmt = stmt.where(models.File.language == language)
     if path is not None:
@@ -131,6 +138,7 @@ def select_files(
 
 def select_entrypoints(
     session: Session,
+    repo_id: int,
     *,
     kind: str | EntrypointKind | None = None,
     framework: str | None = None,
@@ -141,6 +149,7 @@ def select_entrypoints(
         select(models.Entrypoint, models.Symbol, models.File.path)
         .join(models.Symbol, models.Entrypoint.symbol_id == models.Symbol.id)
         .join(models.File, models.Symbol.file_id == models.File.id, isouter=True)
+        .where(models.Entrypoint.repo_id == repo_id)
         .order_by(models.Entrypoint.id)
     )
     if kind is not None:

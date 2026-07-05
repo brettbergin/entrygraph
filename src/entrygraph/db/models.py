@@ -86,6 +86,10 @@ class Symbol(Base):
     __tablename__ = "symbols"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)  # app-assigned
+    # Owning repository. Denormalized onto the row (not only via file_id) so every
+    # read can scope to one repo in a global multi-repo database, and external
+    # placeholder symbols (file_id NULL) still carry a repo. (#116)
+    repo_id: Mapped[int] = mapped_column(ForeignKey("repositories.id", ondelete="CASCADE"))
     # NULL for kind=external placeholder symbols (no defining file in the repo).
     file_id: Mapped[int | None] = mapped_column(ForeignKey("files.id", ondelete="CASCADE"))
     kind: Mapped[SymbolKind] = mapped_column(
@@ -107,8 +111,8 @@ class Symbol(Base):
 
     __table_args__ = (
         Index("ix_symbols_file", "file_id"),
-        Index("ix_symbols_qname", "qname"),
-        Index("ix_symbols_kind_name", "kind", "name"),
+        Index("ix_symbols_repo_qname", "repo_id", "qname"),
+        Index("ix_symbols_repo_kind_name", "repo_id", "kind", "name"),
         Index("ix_symbols_parent", "parent_id"),
     )
 
@@ -117,6 +121,8 @@ class Edge(Base):
     __tablename__ = "edges"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)  # app-assigned
+    # Owning repository — denormalized for one-repo scoping in a global DB (#116).
+    repo_id: Mapped[int] = mapped_column(ForeignKey("repositories.id", ondelete="CASCADE"))
     kind: Mapped[EdgeKind] = mapped_column(
         Enum(EdgeKind, native_enum=False, length=16, values_callable=_values)
     )
@@ -143,6 +149,7 @@ class Edge(Base):
     via: Mapped[str | None] = mapped_column(String(12))
 
     __table_args__ = (
+        Index("ix_edges_repo_kind", "repo_id", "kind"),
         Index("ix_edges_src_kind", "src_symbol_id", "kind"),
         Index("ix_edges_dst_kind", "dst_symbol_id", "kind"),
         Index("ix_edges_srcfile", "src_file_id"),
@@ -157,6 +164,8 @@ class Entrypoint(Base):
     __tablename__ = "entrypoints"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)  # app-assigned
+    # Owning repository — denormalized for one-repo scoping in a global DB (#116).
+    repo_id: Mapped[int] = mapped_column(ForeignKey("repositories.id", ondelete="CASCADE"))
     kind: Mapped[EntrypointKind] = mapped_column(
         Enum(EntrypointKind, native_enum=False, length=24, values_callable=_values)
     )
@@ -167,7 +176,7 @@ class Entrypoint(Base):
     extra: Mapped[str | None] = mapped_column(Text)  # JSON blob: decorator args etc.
 
     __table_args__ = (
-        Index("ix_entrypoints_kind_fw", "kind", "framework"),
+        Index("ix_entrypoints_repo_kind_fw", "repo_id", "kind", "framework"),
         Index("ix_entrypoints_symbol", "symbol_id"),
     )
 
