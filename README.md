@@ -17,6 +17,12 @@ precision. Entrypoints include decorator/attribute routes, call-based route
 registration, middleware, and config-file handlers (serverless, SAM, Procfile,
 Dockerfile).
 
+On top of the graph, entrygraph ships a **diff-aware reachability gate** for CI
+(baseline the accepted paths, then fail only on ones a change *introduces*) and
+**[Sentinel](#sentinel--the-gate-as-a-self-hostable-service)** — an optional
+self-hostable GitHub App that runs the gate on PR webhooks with a Check Run,
+SARIF, a REST API, and a dashboard.
+
 ## Install
 
 ```bash
@@ -292,11 +298,28 @@ upload and manages the baseline across runs — see
     mode: block # or "warn"
 ```
 
+### Sentinel — the gate as a self-hostable service
+
 For teams that would rather run the gate as a service than wire the Action into
-every repo, **Sentinel** is a self-hostable GitHub App that runs the same gate on
-PR webhooks, keeps baselines centrally, and posts a Check Run + SARIF. It ships
-behind the `entrygraph[sentinel]` extra (FastAPI + arq/Redis + Postgres) — see
-[docs/sentinel.md](docs/sentinel.md).
+every repo, **Sentinel** is a self-hostable **GitHub App + service** that runs the
+same gate on PR webhooks:
+
+- Verifies the webhook, fetches the PR head, indexes it, diffs against a
+  **central baseline**, and posts a GitHub **Check Run** plus **SARIF** to code
+  scanning — the counts match the CLI gate exactly.
+- Baselines auto-refresh **only** from the protected default branch on merge, so a
+  PR can't move the baseline it's measured against. Uninstalling the App
+  hard-deletes all of an installation's data.
+- A token-guarded **REST API** (`/api`) and a **React + [Primer](https://primer.style/)
+  dashboard** (`/ui`) surface scans, findings, suppressions, and per-repo policy —
+  every route scoped by installation + repo.
+- Operate it with the CLI: `entrygraph sentinel serve` / `worker` /
+  `config` / `installations` / `purge` / `baseline`.
+
+It reuses the gate engine unchanged (**never executes analyzed code**) and ships
+behind the `entrygraph[sentinel]` extra (FastAPI + arq/Redis + Postgres), so the
+core CLI stays dependency-lean. Full deploy guide, security posture, and secret-
+rotation runbook in [docs/sentinel.md](docs/sentinel.md).
 
 ## Python API
 
