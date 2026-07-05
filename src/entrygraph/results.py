@@ -83,6 +83,9 @@ class CallPath:
     source_channel: str | None = None  # query|path|header|cookie|body|form (#87)
     source_key: str | None = None  # the specific param/header/flag name (#87)
     source_kind: str | None = None  # explicit|spec|handler_params|handler (#96)
+    # the taint source category this path was enumerated under (http_input, ...),
+    # when a `source_category` query produced it; feeds the path fingerprint (#116).
+    source_category: str | None = None
     # same-function reaching-defs verdict: True (flow observed) / False (provable
     # non-flow, demoted) / None (not checked / unknown). #96 Phase 2.
     taint_verified: bool | None = None
