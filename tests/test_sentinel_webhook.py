@@ -182,3 +182,40 @@ def test_non_scan_action_is_skipped_not_enqueued():
     assert resp.status_code == 202
     assert resp.json()["status"] == "skipped"
     assert queue.jobs == []
+
+
+# ---------------- installation lifecycle events (M2) ----------------
+
+
+def _install_payload(action, inst_id=900, login="octo"):
+    return {"action": action, "installation": {"id": inst_id, "account": {"login": login}}}
+
+
+def test_installation_created_upserts(tmp_path):
+    from datetime import UTC, datetime
+
+    from entrygraph.sentinel import store
+    from entrygraph.sentinel.webhook import create_app
+
+    sf = store.init_store(store.make_store_engine(f"sqlite:///{tmp_path / 's.db'}"))
+    client = TestClient(create_app(_CONFIG, session_factory=sf))
+    resp = _post(client, _install_payload("created"), event="installation", delivery="i1")
+    assert resp.status_code == 202
+    with sf() as s:
+        inst = store.get_installation(s, 900)
+        assert inst is not None and inst.account_login == "octo"
+    # ...and a deleted event hard-removes it
+    with sf() as s:
+        store.resolve_repo(s, 900, "octo/repo", now=datetime(2026, 1, 1, tzinfo=UTC))
+    resp = _post(client, _install_payload("deleted"), event="installation", delivery="i2")
+    assert resp.status_code == 202
+    with sf() as s:
+        assert store.get_installation(s, 900) is None
+        assert store.installation_repo_ids(s, 900) == []
+
+
+def test_installation_event_ignored_without_store():
+    # no session_factory -> installation events are acknowledged but not persisted
+    resp = _post(_client(), _install_payload("created"), event="installation", delivery="i3")
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "installation"
