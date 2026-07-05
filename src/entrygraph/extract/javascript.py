@@ -89,7 +89,7 @@ class JavaScriptExtractor:
         self._imports(root, ctx, out)
         self._calls(root, ctx, out)
         self._bindings(root, ctx, out)
-        out.default_export = self._default_export_ident(root)
+        out.default_export = self._default_export_ident(root) or self._commonjs_default_export(root)
         return out
 
     # ---------------- bindings (#98) ----------------
@@ -189,6 +189,24 @@ class JavaScriptExtractor:
             )
             if value is not None and value.type == "identifier":
                 return node_text(value)
+        return None
+
+    def _commonjs_default_export(self, root) -> str | None:
+        """CommonJS `module.exports = <identifier>` / `exports = <identifier>` -> that
+        identifier, the module's default export (the Express router pattern, mirroring
+        `export default router` for require()-based apps) — #113 QA follow-up."""
+        for child in root.named_children:
+            if child.type != "expression_statement" or not child.named_children:
+                continue
+            expr = child.named_children[0]
+            if expr.type != "assignment_expression":
+                continue
+            left = expr.child_by_field_name("left")
+            right = expr.child_by_field_name("right")
+            if left is None or right is None or right.type != "identifier":
+                continue
+            if node_text(left) in ("module.exports", "exports"):
+                return node_text(right)
         return None
 
     # ---------------- definitions ----------------

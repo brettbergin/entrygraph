@@ -308,3 +308,29 @@ def test_express_named_export_mount_end_to_end(tmp_path):
     graph.close()
     assert ("GET", "/users/list") in routes
     assert ("POST", "/users/create") in routes
+
+
+def test_express_commonjs_mount_prefix_end_to_end(tmp_path):
+    # CommonJS: child does `module.exports = router`, parent mounts a required module
+    # under a prefix — the prefix must reach the child routes (#113 QA follow-up)
+    from entrygraph import CodeGraph
+
+    (tmp_path / "package.json").write_text('{"name":"app","dependencies":{"express":"^4"}}')
+    (tmp_path / "users.js").write_text(
+        "const express = require('express');\n"
+        "const router = express.Router();\n"
+        "router.get('/list', listUsers);\n"
+        "router.post('/create', createUser);\n"
+        "module.exports = router;\n"
+    )
+    (tmp_path / "main.js").write_text(
+        "const express = require('express');\n"
+        "const users = require('./users');\n"
+        "const app = express();\n"
+        "app.use('/users', users);\n"
+    )
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    routes = {(e.http_method, e.route) for e in graph.entrypoints(framework="express")}
+    graph.close()
+    assert ("GET", "/users/list") in routes
+    assert ("POST", "/users/create") in routes
