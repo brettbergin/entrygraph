@@ -334,3 +334,28 @@ def test_express_commonjs_mount_prefix_end_to_end(tmp_path):
     graph.close()
     assert ("GET", "/users/list") in routes
     assert ("POST", "/users/create") in routes
+
+
+def test_express_inline_require_mount_prefix_end_to_end(tmp_path):
+    # inline `app.use('/api/v1', require('./controllers/api_v1'))`: the require call
+    # is the mount argument directly (no intermediate variable), resolved to the
+    # required module's default export so the prefix reaches its routes (#133)
+    from entrygraph import CodeGraph
+
+    (tmp_path / "package.json").write_text('{"name":"app","dependencies":{"express":"^4"}}')
+    (tmp_path / "controllers").mkdir()
+    (tmp_path / "controllers" / "api_v1.js").write_text(
+        "const express = require('express');\n"
+        "const router = express.Router();\n"
+        "router.get('/users', listUsers);\n"
+        "module.exports = router;\n"
+    )
+    (tmp_path / "app.js").write_text(
+        "const express = require('express');\n"
+        "const app = express();\n"
+        "app.use('/api/v1', require('./controllers/api_v1'));\n"
+    )
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    routes = {(e.http_method, e.route) for e in graph.entrypoints(framework="express")}
+    graph.close()
+    assert ("GET", "/api/v1/users") in routes

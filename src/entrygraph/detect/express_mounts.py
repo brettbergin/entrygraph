@@ -17,11 +17,17 @@ re-export chains through barrel files (`export { r as userRouter } from './impl'
 
 from __future__ import annotations
 
+import re
+
 from entrygraph.detect.entrypoints.base import first_string_arg, identifier_args
+from entrygraph.extract.javascript import resolve_relative_module
 
 _USE = "use"
 _DEFAULT = "<default>"  # a module's `export default` router
 _JS_LANGS = frozenset({"javascript", "typescript", "tsx"})
+# inline `require('./router')` used directly as a `.use()` argument (no
+# intermediate variable) — the mount target is the required module (#133)
+_INLINE_REQUIRE = re.compile(r"require\(\s*['\"]([^'\"]+)['\"]\s*\)")
 
 Node = tuple[str, str]  # (module_path, router-name)
 
@@ -65,7 +71,7 @@ def resolve_mount_prefixes(extractions) -> dict[str, dict[str, str]]:
             node = reexports[node]
         return node
 
-    for _p, x, _pkg in extractions:
+    for _p, x, is_package in extractions:
         if x.language not in _JS_LANGS:
             continue
         m = x.module_path
@@ -93,16 +99,23 @@ def resolve_mount_prefixes(extractions) -> dict[str, dict[str, str]]:
             prefix = first_string_arg("(" + ref.arg_preview.lstrip("("))
             prefix = prefix if prefix and prefix.startswith("/") else ""
             idents = identifier_args(ref.arg_preview)
-            if not idents:
-                continue  # `.use('/x', serveStatic(...))` — no sub-router identifier
-            target = idents[-1]  # the mounted router (last handler arg)
-            if target in whole_module:
-                child = (whole_module[target], _DEFAULT)  # default/namespace import
-            elif target in named:
-                source_module, exported = named[target]
-                child = follow_reexports((source_module, exported))
+            if idents:
+                target = idents[-1]  # the mounted router (last handler arg)
+                if target in whole_module:
+                    child = (whole_module[target], _DEFAULT)  # default/namespace import
+                elif target in named:
+                    source_module, exported = named[target]
+                    child = follow_reexports((source_module, exported))
+                else:
+                    child = (m, target)  # a router local to this module
             else:
-                child = (m, target)  # a router local to this module
+                # inline `app.use('/x', require('./router'))`: the require call is
+                # the mount argument directly, so resolve it like a default import
+                # to the required module's default export (#133)
+                inline = _INLINE_REQUIRE.findall(ref.arg_preview)
+                if not inline:
+                    continue  # `.use('/x', serveStatic(...))` — no sub-router
+                child = (resolve_relative_module(inline[-1], m, is_package), _DEFAULT)
             add_edge(child, parent, prefix)
 
     memo: dict[Node, str] = {}

@@ -64,6 +64,28 @@ def _atomic_segment(filename: str) -> str:
     return filename.replace(".", "_")
 
 
+def resolve_relative_module(spec: str, module_path: str, is_package: bool) -> str:
+    """Resolve an import/require spec to a repo module path, relative to the file
+    at ``module_path``. Non-relative specs (package imports) are returned as-is.
+
+    Shared with cross-file Express mount resolution, which resolves an inline
+    ``require('./router')`` mount target the same way an import would (#133)."""
+    if not spec.startswith("."):
+        return spec  # package import: keep as written (external)
+    parts = module_path.split(".")
+    parts = parts if is_package else parts[:-1]
+    for segment in spec.split("/"):
+        if segment in ("", "."):
+            continue
+        if segment == "..":
+            parts = parts[:-1]
+        else:
+            seg = _atomic_segment(segment)
+            if seg not in ("index", "mod"):
+                parts.append(seg)
+    return ".".join(p for p in parts if p) or "_root"
+
+
 class JavaScriptExtractor:
     language_ids: ClassVar[tuple[str, ...]] = ("javascript", "typescript", "tsx")
 
@@ -525,20 +547,7 @@ class JavaScriptExtractor:
             )
 
     def _resolve_module(self, spec: str, ctx: FileContext) -> str:
-        if not spec.startswith("."):
-            return spec  # package import: keep as written (external)
-        parts = ctx.module_path.split(".")
-        parts = parts if ctx.is_package else parts[:-1]
-        for segment in spec.split("/"):
-            if segment in ("", "."):
-                continue
-            if segment == "..":
-                parts = parts[:-1]
-            else:
-                seg = _atomic_segment(segment)
-                if seg not in ("index", "mod"):
-                    parts.append(seg)
-        return ".".join(p for p in parts if p) or "_root"
+        return resolve_relative_module(spec, ctx.module_path, ctx.is_package)
 
     # ---------------- calls ----------------
 
