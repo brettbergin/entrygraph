@@ -280,6 +280,18 @@ scanning), `--head-sha`. `baseline show` inspects the current baseline. The gate
 **never executes** the analyzed code — it is a parse-and-query operation. Baselines,
 scan history, findings, and per-repo policy are stored alongside the graph.
 
+For zero-config CI, a composite **GitHub Action** wraps index → gate → SARIF
+upload and manages the baseline across runs — see
+[docs/github-action.md](docs/github-action.md):
+
+```yaml
+- uses: actions/checkout@v4
+- uses: brettbergin/entrygraph@main
+  with:
+    threshold: "0.5"
+    mode: block # or "warn"
+```
+
 ## Python API
 
 ```python
