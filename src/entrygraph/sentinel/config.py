@@ -32,6 +32,9 @@ class SentinelConfig:
     database_url: str = "sqlite:///sentinel.db"
     redis_url: str = "redis://localhost:6379"
     api_base_url: str = "https://api.github.com"
+    # bearer token guarding the REST API; empty means the API is disabled
+    # (fail-closed — every request 503s until a token is configured)
+    api_token: str = ""
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> SentinelConfig:
@@ -57,6 +60,8 @@ class SentinelConfig:
             kwargs["redis_url"] = env["SENTINEL_REDIS_URL"]
         if env.get("SENTINEL_GITHUB_API_URL"):
             kwargs["api_base_url"] = env["SENTINEL_GITHUB_API_URL"].rstrip("/")
+        if env.get("SENTINEL_API_TOKEN"):
+            kwargs["api_token"] = env["SENTINEL_API_TOKEN"]
         return cls(
             app_id=app_id,
             private_key_pem=private_key,

@@ -18,6 +18,7 @@ from datetime import datetime
 from sqlalchemy import Engine, create_engine, delete, event, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from entrygraph.db import models
 from entrygraph.db.meta import create_schema
 from entrygraph.db.models import Repository
 from entrygraph.sentinel.models import (  # noqa: F401 (register tables)
@@ -146,3 +147,143 @@ def delete_installation(session: Session, installation_id: int) -> None:
         session.execute(delete(Repository).where(Repository.id.in_(repo_ids)))
     session.execute(delete(Installation).where(Installation.id == installation_id))
     session.commit()
+
+
+# ---------------- REST API queries (M4) ----------------
+
+
+def repo_id_for(session: Session, installation_id: int, full_name: str) -> int | None:
+    """The central repo_id for an installation's repo, or None if never scanned.
+
+    Read-only counterpart to :func:`resolve_repo` — the API never creates rows for
+    a repo that has no history."""
+    return session.execute(
+        select(InstallationRepo.repo_id).where(
+            InstallationRepo.installation_id == installation_id,
+            InstallationRepo.full_name == full_name,
+        )
+    ).scalar_one_or_none()
+
+
+def list_scans(session: Session, repo_id: int, *, limit: int = 50) -> list[models.ScanRun]:
+    """Most recent scan runs for a repo, newest first."""
+    return list(
+        session.execute(
+            select(models.ScanRun)
+            .where(models.ScanRun.repo_id == repo_id)
+            .order_by(models.ScanRun.created_at.desc(), models.ScanRun.id.desc())
+            .limit(limit)
+        ).scalars()
+    )
+
+
+def get_scan(session: Session, repo_id: int, scan_id: int) -> models.ScanRun | None:
+    """A scan run, but only if it belongs to ``repo_id`` (installation-scoped)."""
+    return session.execute(
+        select(models.ScanRun).where(
+            models.ScanRun.id == scan_id, models.ScanRun.repo_id == repo_id
+        )
+    ).scalar_one_or_none()
+
+
+def scan_findings(
+    session: Session, scan_id: int, *, status: str | None = None
+) -> list[models.Finding]:
+    stmt = select(models.Finding).where(models.Finding.scan_run_id == scan_id)
+    if status is not None:
+        stmt = stmt.where(models.Finding.status == status)
+    return list(session.execute(stmt.order_by(models.Finding.risk.desc())).scalars())
+
+
+def latest_scan(session: Session, repo_id: int) -> models.ScanRun | None:
+    return session.execute(
+        select(models.ScanRun)
+        .where(models.ScanRun.repo_id == repo_id)
+        .order_by(models.ScanRun.created_at.desc(), models.ScanRun.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def list_suppressions(session: Session, repo_id: int) -> list[models.Suppression]:
+    return list(
+        session.execute(
+            select(models.Suppression).where(models.Suppression.repo_id == repo_id)
+        ).scalars()
+    )
+
+
+def add_suppression(
+    session: Session,
+    repo_id: int,
+    fingerprint: str,
+    *,
+    reason: str | None = None,
+    created_by: str | None = None,
+    expires_at: datetime | None = None,
+) -> models.Suppression:
+    """Add (or replace) a waiver for a fingerprint on a repo."""
+    existing = session.execute(
+        select(models.Suppression).where(
+            models.Suppression.repo_id == repo_id,
+            models.Suppression.fingerprint == fingerprint,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.reason = reason
+        existing.created_by = created_by
+        existing.expires_at = expires_at
+        session.commit()
+        return existing
+    sup = models.Suppression(
+        repo_id=repo_id,
+        fingerprint=fingerprint,
+        reason=reason,
+        created_by=created_by,
+        expires_at=expires_at,
+    )
+    session.add(sup)
+    session.commit()
+    return sup
+
+
+def remove_suppression(session: Session, repo_id: int, fingerprint: str) -> bool:
+    """Delete a waiver; returns True if one existed."""
+    row = session.execute(
+        select(models.Suppression).where(
+            models.Suppression.repo_id == repo_id,
+            models.Suppression.fingerprint == fingerprint,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    session.delete(row)
+    session.commit()
+    return True
+
+
+def set_policy(
+    session: Session,
+    repo_id: int,
+    *,
+    risk_threshold: float | None = None,
+    gated_categories: list[str] | None = None,
+    mode: str | None = None,
+    min_confidence: str | None = None,
+) -> models.RepoPolicy:
+    """Upsert a repo's gate policy; only the provided fields change."""
+    import json
+
+    row = session.get(models.RepoPolicy, repo_id)
+    if row is None:
+        row = models.RepoPolicy(repo_id=repo_id)
+        session.add(row)
+    if risk_threshold is not None:
+        row.risk_threshold = risk_threshold
+    if gated_categories is not None:
+        row.gated_categories = json.dumps(gated_categories)
+    if mode is not None:
+        row.mode = mode
+    if min_confidence is not None:
+        row.min_confidence = min_confidence
+    session.commit()
+    return row
