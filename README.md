@@ -321,6 +321,22 @@ behind the `entrygraph[sentinel]` extra (FastAPI + arq/Redis + Postgres), so the
 core CLI stays dependency-lean. Full deploy guide, security posture, and secret-
 rotation runbook in [docs/sentinel.md](docs/sentinel.md).
 
+### Explorer — a web UI over the index
+
+To browse an index visually rather than via the CLI, the **explorer** is a
+read-only web UI (behind the `entrygraph[explore]` extra) that walks a repo's
+**symbols**, **entrypoints/routes**, **callers/callees**, **source→sink paths**,
+and an interactive **call graph**:
+
+```bash
+entrygraph index . --db /tmp/graph.db
+entrygraph explore serve --db /tmp/graph.db   # http://127.0.0.1:8100
+```
+
+The index is a global multi-repo store, so one server can explore many repos (the
+UI has a repo picker). Build the UI once with `cd explorer && npm run build`; see
+[explorer/README.md](explorer/README.md).
+
 ## Python API
 
 ```python
