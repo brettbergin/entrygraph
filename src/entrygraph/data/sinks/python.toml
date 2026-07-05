@@ -110,6 +110,53 @@ category = "http_input"
 callee = "py:flask.request*"
 description = "Flask request input (unspecified channel)"
 
+# FastAPI / Starlette parameter declarators. A typed handler param defaulting to
+# `Query(...)`/`Path(...)`/`Body(...)`/... is a demonstrable read of that request
+# channel, so the declarator call at the handler seeds an explicit, param-level
+# source (stronger than the handler-as-source fallback). fastapi re-exports these
+# from starlette, and users import either name.
+[[source]]
+id = "py.fastapi.query"
+category = "http_input"
+channel = "query"
+callee = "py:{fastapi,starlette.*}.Query"
+description = "FastAPI query-parameter declarator"
+
+[[source]]
+id = "py.fastapi.path"
+category = "http_input"
+channel = "path"
+callee = "py:{fastapi,starlette.*}.Path"
+description = "FastAPI path-parameter declarator"
+
+[[source]]
+id = "py.fastapi.header"
+category = "http_input"
+channel = "header"
+callee = "py:{fastapi,starlette.*}.Header"
+description = "FastAPI header declarator"
+
+[[source]]
+id = "py.fastapi.cookie"
+category = "http_input"
+channel = "cookie"
+callee = "py:{fastapi,starlette.*}.Cookie"
+description = "FastAPI cookie declarator"
+
+[[source]]
+id = "py.fastapi.form"
+category = "http_input"
+channel = "form"
+callee = "py:{fastapi,starlette.*}.Form"
+description = "FastAPI form-field declarator"
+
+[[source]]
+id = "py.fastapi.body"
+category = "http_input"
+channel = "body"
+callee = "py:{fastapi,starlette.*}.{Body,File,UploadFile}"
+description = "FastAPI request-body / file declarator"
+
 [[source]]
 id = "py.stdin"
 category = "user_input"

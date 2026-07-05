@@ -92,6 +92,16 @@ def verify_path(
     seed_roots: set[str] = set()
     if source_kind in _HANDLER_KINDS:
         seed_roots |= set(facts_list[0].params)
+    # A parameter-declarator accessor (FastAPI `q: str = Query(...)`, etc.) sits in
+    # the handler's signature, so its tainted value is a *parameter*, not a
+    # body-local assignment that `source_channel_lines` could seed. Signature
+    # default-value calls aren't captured as body facts, so any accessor line
+    # before the first body statement is a declarator — seed the params so the
+    # request value is tracked instead of wrongly refuted (#134).
+    head = functions[0]
+    body_start = min((f.line for f in facts_list[0].facts), default=head.start_line + 1)
+    if source_channel_lines and any(line < body_start for line in source_channel_lines):
+        seed_roots |= set(facts_list[0].params)
 
     edge_lines = [e.line for e in path.edges]  # one per hop; last is the sink call
     sink_callee = _callee_name(path.edges[-1], path.symbols[-1])

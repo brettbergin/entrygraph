@@ -83,6 +83,20 @@ channel = "path"
 callee = "js:*.params"
 description = "Express route params"
 
+[[source]]
+id = "js.express.header"
+category = "http_input"
+channel = "header"
+callee = "js:*.headers"
+description = "Express/Koa/Fastify request headers"
+
+[[source]]
+id = "js.express.cookie"
+category = "http_input"
+channel = "cookie"
+callee = "js:*.cookies"
+description = "Express/Koa request cookies"
+
 # --- sanitizers (S3): neutralize/reduce taint for a sink category ---
 [[sanitizer]]
 id = "js.sanitize.sqlstring"
