@@ -553,6 +553,7 @@ class CodeGraph:
                     excluded_nodes,
                     sibling_calls,
                     source_meta,
+                    source_category,
                 )
                 for path in raw_paths
             ]
@@ -1083,6 +1084,7 @@ class CodeGraph:
         excluded_nodes,
         sibling_calls,
         source_meta,
+        source_category=None,
     ) -> CallPath:
         symbols = tuple(symbol_map[node] for node, _ in path)
         hops = [hop for _, hop in path[1:]]
@@ -1139,6 +1141,7 @@ class CodeGraph:
             source_kind=source_kind,
             source_channel=source_channel,
             source_key=source_key,
+            source_category=source_category,
         )
 
     @staticmethod
