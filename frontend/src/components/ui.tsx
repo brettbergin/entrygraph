@@ -1,36 +1,64 @@
 import { useCallback, useEffect, useState } from "react";
+import { Flash, Label, type LabelProps, Spinner } from "@primer/react";
+import { Blankslate } from "@primer/react/experimental";
 import { AuthError } from "../api";
 import type { ScanCounts } from "../types";
 
-export function Badge({ kind }: { kind: string }) {
-  return <span className={`badge ${kind}`}>{kind}</span>;
+const STATUS_VARIANT: Record<string, LabelProps["variant"]> = {
+  passed: "success",
+  known: "success",
+  fixed: "success",
+  failed: "danger",
+  new: "danger",
+  warned: "attention",
+  "no-baseline": "attention",
+  suppressed: "secondary",
+  neutral: "secondary",
+};
+
+export function StatusLabel({ status }: { status: string }) {
+  return <Label variant={STATUS_VARIANT[status] ?? "secondary"}>{status}</Label>;
 }
 
 export function Counts({ counts }: { counts: ScanCounts }) {
   return (
-    <div className="counts">
-      <span>
-        <b>{counts.new}</b> new
-      </span>
-      <span>
-        <b>{counts.known}</b> known
-      </span>
-      <span>
-        <b>{counts.fixed}</b> fixed
-      </span>
-      <span>
-        <b>{counts.suppressed}</b> suppressed
-      </span>
+    <span className="muted fs0">
+      <span className="strong">{counts.new}</span> new ·{" "}
+      <span className="strong">{counts.known}</span> known ·{" "}
+      <span className="strong">{counts.fixed}</span> fixed ·{" "}
+      <span className="strong">{counts.suppressed}</span> suppressed
+    </span>
+  );
+}
+
+export function Loading({ label = "Loading…" }: { label?: string }) {
+  return (
+    <div className="section center" style={{ padding: 40 }}>
+      <Spinner size="medium" />
+      <div className="muted" style={{ marginTop: 12 }}>
+        {label}
+      </div>
     </div>
   );
 }
 
-export function ErrorBox({ message }: { message: string }) {
-  return <div className="error">{message}</div>;
+export function ErrorFlash({ message }: { message: string }) {
+  return (
+    <div className="section">
+      <Flash variant="danger">{message}</Flash>
+    </div>
+  );
 }
 
-export function Empty({ children }: { children: React.ReactNode }) {
-  return <div className="empty">{children}</div>;
+export function EmptyState({ title, children }: { title: string; children?: React.ReactNode }) {
+  return (
+    <div className="section">
+      <Blankslate>
+        <Blankslate.Heading>{title}</Blankslate.Heading>
+        {children && <Blankslate.Description>{children}</Blankslate.Description>}
+      </Blankslate>
+    </div>
+  );
 }
 
 export function shortSha(sha: string | null): string {

@@ -1,10 +1,12 @@
 # Sentinel dashboard
 
-A small React + TypeScript (Vite) dashboard for the [Sentinel](../docs/sentinel.md)
-reachability-gate service. It walks **installations → repos → scans → findings**,
-and lets you manage **suppressions** and the **gate policy** per repo. It talks to
-the Sentinel REST API (`/api`) with a bearer token you paste on the sign-in
-screen (stored in `localStorage`).
+A React + TypeScript (Vite) dashboard for the [Sentinel](../docs/sentinel.md)
+reachability-gate service, built with GitHub's own [Primer](https://primer.style/)
+design system (`@primer/react`) so it looks native to GitHub. It walks
+**installations → repos → scans → findings**, and lets you manage
+**suppressions** and the **gate policy** per repo. It talks to the Sentinel REST
+API (`/api`) with a bearer token you paste on the sign-in screen (stored in
+`localStorage`).
 
 ## Develop
 
@@ -37,11 +39,16 @@ allowed to call it, and enter the API base URL on the sign-in screen.
 
 ## Layout
 
+- `src/main.tsx` — Primer `ThemeProvider`/`BaseStyles` + the primitives CSS that
+  supplies the dark-mode color tokens.
 - `src/api.ts` — typed client + token/base storage.
 - `src/types.ts` — API response shapes.
-- `src/App.tsx` — top-level navigation (installations → repos → repo).
-- `src/components/RepoDetail.tsx` — scans/findings, suppressions, policy tabs.
-- `src/components/ui.tsx` — shared bits (`useAsync`, badges, formatting).
+- `src/App.tsx` — top-level navigation (installations → repos → repo), Primer
+  `Header` + `Breadcrumbs`.
+- `src/components/RepoDetail.tsx` — scans/findings (`DataTable`), suppressions,
+  and a policy form, tabbed with `UnderlineNav`.
+- `src/components/ui.tsx` — shared bits (`useAsync`, status `Label`s, `Blankslate`
+  empty states, formatting).
 
 The build output (`../src/entrygraph/sentinel/static`) and `node_modules` are
 git-ignored; the dashboard is not covered by the Python CI.

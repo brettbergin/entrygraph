@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button, FormControl, Heading, TextInput } from "@primer/react";
 import { getApiBase, setApiBase, setToken } from "../api";
 
 export function TokenGate({ onReady }: { onReady: () => void }) {
@@ -14,33 +15,42 @@ export function TokenGate({ onReady }: { onReady: () => void }) {
   }
 
   return (
-    <div className="app">
-      <form className="card gate" onSubmit={submit}>
-        <h1>
-          entrygraph <span style={{ color: "var(--accent)" }}>Sentinel</span>
-        </h1>
-        <p>Enter the API token (SENTINEL_API_TOKEN) to view scans and findings.</p>
+    <div className="app" style={{ maxWidth: 440 }}>
+      <form className="card" style={{ padding: 28, marginTop: "12vh" }} onSubmit={submit}>
+        <Heading as="h1" className="mb1" style={{ fontSize: 24 }}>
+          entrygraph <span className="accent">Sentinel</span>
+        </Heading>
+        <p className="muted mb3">
+          Enter the API token (SENTINEL_API_TOKEN) to view scans and findings.
+        </p>
         <div className="field">
-          <label>API token</label>
-          <input
-            type="password"
-            value={token}
-            onChange={(e) => setTok(e.target.value)}
-            placeholder="bearer token"
-            autoFocus
-          />
+          <FormControl>
+            <FormControl.Label>API token</FormControl.Label>
+            <TextInput
+              type="password"
+              block
+              value={token}
+              onChange={(e) => setTok(e.target.value)}
+              placeholder="bearer token"
+              autoFocus
+            />
+          </FormControl>
         </div>
         <div className="field">
-          <label>API base URL (blank = same origin)</label>
-          <input
-            value={base}
-            onChange={(e) => setBase(e.target.value)}
-            placeholder="https://sentinel.example.com"
-          />
+          <FormControl>
+            <FormControl.Label>API base URL</FormControl.Label>
+            <FormControl.Caption>Blank = same origin</FormControl.Caption>
+            <TextInput
+              block
+              value={base}
+              onChange={(e) => setBase(e.target.value)}
+              placeholder="https://sentinel.example.com"
+            />
+          </FormControl>
         </div>
-        <button className="btn primary" type="submit" style={{ width: "100%" }}>
+        <Button type="submit" variant="primary" block>
           Connect
-        </button>
+        </Button>
       </form>
     </div>
   );

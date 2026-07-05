@@ -1,25 +1,39 @@
 import { useState } from "react";
+import { Button, FormControl, Select, TextInput, UnderlineNav } from "@primer/react";
+import { DataTable, Table } from "@primer/react/experimental";
 import { api } from "../api";
 import type { Finding, Policy, Scan, Suppression } from "../types";
-import { Badge, Counts, Empty, ErrorBox, fmtTime, shortSha, useAsync } from "./ui";
+import { Counts, EmptyState, ErrorFlash, Loading, StatusLabel, fmtTime, shortSha, useAsync } from "./ui";
 
 type Props = { installationId: number; fullName: string; onAuthError: () => void };
 type Tab = "scans" | "suppressions" | "policy";
+const TABS: Tab[] = ["scans", "suppressions", "policy"];
 
 export function RepoDetail({ installationId, fullName, onAuthError }: Props) {
   const [tab, setTab] = useState<Tab>("scans");
   return (
     <div>
-      <div className="tabs">
-        {(["scans", "suppressions", "policy"] as Tab[]).map((t) => (
-          <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
+      <UnderlineNav aria-label="Repository sections">
+        {TABS.map((t) => (
+          <UnderlineNav.Item
+            key={t}
+            aria-current={tab === t ? "page" : undefined}
+            onSelect={(e) => {
+              e.preventDefault();
+              setTab(t);
+            }}
+          >
             {t[0].toUpperCase() + t.slice(1)}
-          </button>
+          </UnderlineNav.Item>
         ))}
+      </UnderlineNav>
+      <div className="section">
+        {tab === "scans" && <ScansTab {...{ installationId, fullName, onAuthError }} />}
+        {tab === "suppressions" && (
+          <SuppressionsTab {...{ installationId, fullName, onAuthError }} />
+        )}
+        {tab === "policy" && <PolicyTab {...{ installationId, fullName, onAuthError }} />}
       </div>
-      {tab === "scans" && <ScansTab {...{ installationId, fullName, onAuthError }} />}
-      {tab === "suppressions" && <SuppressionsTab {...{ installationId, fullName, onAuthError }} />}
-      {tab === "policy" && <PolicyTab {...{ installationId, fullName, onAuthError }} />}
     </div>
   );
 }
@@ -31,9 +45,9 @@ function ScansTab({ installationId, fullName, onAuthError }: Props) {
     [installationId, fullName],
     onAuthError,
   );
-  if (error) return <ErrorBox message={error} />;
-  if (loading) return <Empty>Loading scans…</Empty>;
-  if (!data || data.length === 0) return <Empty>No scans yet for this repo.</Empty>;
+  if (error) return <ErrorFlash message={error} />;
+  if (loading) return <Loading label="Loading scans…" />;
+  if (!data || data.length === 0) return <EmptyState title="No scans yet for this repo." />;
 
   if (selected) {
     return (
@@ -48,34 +62,35 @@ function ScansTab({ installationId, fullName, onAuthError }: Props) {
   }
 
   return (
-    <div className="card">
-      <table>
-        <thead>
-          <tr>
-            <th>PR</th>
-            <th>Head</th>
-            <th>Status</th>
-            <th>Counts</th>
-            <th>When</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((s) => (
-            <tr key={s.id} onClick={() => setSelected(s)} style={{ cursor: "pointer" }}>
-              <td>{s.pr_number ? `#${s.pr_number}` : "—"}</td>
-              <td className="mono">{shortSha(s.head_sha)}</td>
-              <td>
-                <Badge kind={s.status} />
-              </td>
-              <td>
-                <Counts counts={s.counts} />
-              </td>
-              <td>{fmtTime(s.created_at)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <Table.Container>
+      <DataTable
+        aria-labelledby="scans"
+        data={data}
+        columns={[
+          {
+            header: "PR",
+            field: "pr_number",
+            renderCell: (s) => (s.pr_number ? `#${s.pr_number}` : "—"),
+          },
+          {
+            header: "Head",
+            field: "head_sha",
+            renderCell: (s) => <span className="mono">{shortSha(s.head_sha)}</span>,
+          },
+          { header: "Status", field: "status", renderCell: (s) => <StatusLabel status={s.status} /> },
+          { header: "Counts", field: "id", renderCell: (s) => <Counts counts={s.counts} /> },
+          {
+            header: "When",
+            field: "created_at",
+            renderCell: (s) => (
+              <button className="linklike" onClick={() => setSelected(s)}>
+                {fmtTime(s.created_at)}
+              </button>
+            ),
+          },
+        ]}
+      />
+    </Table.Container>
   );
 }
 
@@ -92,58 +107,62 @@ function FindingsView({
     [installationId, fullName, scan.id, status],
     onAuthError,
   );
+  const rows = (data ?? []).map((f) => ({ ...f, id: f.fingerprint }));
   return (
     <div>
-      <div className="toolbar">
-        <button className="btn ghost" onClick={onBack}>
+      <div className="row wrap" style={{ marginBottom: 14 }}>
+        <Button variant="invisible" onClick={onBack}>
           ← scans
-        </button>
+        </Button>
         <span className="mono">
           {scan.pr_number ? `PR #${scan.pr_number} · ` : ""}
           {shortSha(scan.head_sha)}
         </span>
-        <Badge kind={scan.status} />
+        <StatusLabel status={scan.status} />
         <div className="spacer" />
-        <select value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="">all statuses</option>
-          <option value="new">new</option>
-          <option value="known">known</option>
-          <option value="fixed">fixed</option>
-          <option value="suppressed">suppressed</option>
-        </select>
+        <Select value={status} onChange={(e) => setStatus(e.target.value)}>
+          <Select.Option value="">all statuses</Select.Option>
+          <Select.Option value="new">new</Select.Option>
+          <Select.Option value="known">known</Select.Option>
+          <Select.Option value="fixed">fixed</Select.Option>
+          <Select.Option value="suppressed">suppressed</Select.Option>
+        </Select>
       </div>
-      {error && <ErrorBox message={error} />}
+      {error && <ErrorFlash message={error} />}
       {loading ? (
-        <Empty>Loading findings…</Empty>
-      ) : !data || data.length === 0 ? (
-        <Empty>No findings for this filter.</Empty>
+        <Loading label="Loading findings…" />
+      ) : rows.length === 0 ? (
+        <EmptyState title="No findings for this filter." />
       ) : (
-        <div className="card">
-          <table>
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Sink</th>
-                <th>Source</th>
-                <th>Risk</th>
-                <th>Fingerprint</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((f) => (
-                <tr key={f.fingerprint}>
-                  <td>
-                    <Badge kind={f.status} />
-                  </td>
-                  <td className="mono">{f.sink_id ?? "—"}</td>
-                  <td className="mono">{f.source_category ?? "—"}</td>
-                  <td>{f.risk.toFixed(2)}</td>
-                  <td className="mono">{f.fingerprint.slice(0, 12)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table.Container>
+          <DataTable
+            aria-labelledby="findings"
+            data={rows}
+            columns={[
+              {
+                header: "Status",
+                field: "status",
+                renderCell: (f) => <StatusLabel status={f.status} />,
+              },
+              {
+                header: "Sink",
+                field: "sink_id",
+                renderCell: (f) => <span className="mono">{f.sink_id ?? "—"}</span>,
+              },
+              {
+                header: "Source",
+                field: "source_category",
+                renderCell: (f) => <span className="mono">{f.source_category ?? "—"}</span>,
+              },
+              { header: "Risk", field: "risk", renderCell: (f) => f.risk.toFixed(2) },
+              {
+                header: "Fingerprint",
+                field: "fingerprint",
+                renderCell: (f) => <span className="mono">{f.fingerprint.slice(0, 12)}</span>,
+              },
+            ]}
+          />
+        </Table.Container>
       )}
     </div>
   );
@@ -185,61 +204,64 @@ function SuppressionsTab({ installationId, fullName, onAuthError }: Props) {
     reload();
   }
 
+  const rows = (data ?? []).map((s) => ({ ...s, id: s.fingerprint }));
   return (
     <div>
       <form className="card" style={{ padding: 16, marginBottom: 16 }} onSubmit={add}>
-        <div className="row">
-          <input
-            style={{ flex: 2 }}
-            className="mono"
-            placeholder="fingerprint to waive"
-            value={fp}
-            onChange={(e) => setFp(e.target.value)}
-          />
-          <input
-            style={{ flex: 3 }}
-            placeholder="reason (optional)"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-          />
-          <button className="btn primary" disabled={busy || !fp.trim()}>
+        <div className="row wrap">
+          <div className="flex2">
+            <TextInput
+              className="mono"
+              block
+              placeholder="fingerprint to waive"
+              value={fp}
+              onChange={(e) => setFp(e.target.value)}
+            />
+          </div>
+          <div className="flex3">
+            <TextInput
+              block
+              placeholder="reason (optional)"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            />
+          </div>
+          <Button variant="primary" type="submit" disabled={busy || !fp.trim()}>
             Add waiver
-          </button>
+          </Button>
         </div>
-        {addErr && <div style={{ marginTop: 10 }}>{<ErrorBox message={addErr} />}</div>}
+        {addErr && <ErrorFlash message={addErr} />}
       </form>
-      {error && <ErrorBox message={error} />}
+      {error && <ErrorFlash message={error} />}
       {loading ? (
-        <Empty>Loading…</Empty>
-      ) : !data || data.length === 0 ? (
-        <Empty>No suppressions. Add one above to waive a finding.</Empty>
+        <Loading />
+      ) : rows.length === 0 ? (
+        <EmptyState title="No suppressions.">Add one above to waive a finding.</EmptyState>
       ) : (
-        <div className="card">
-          <table>
-            <thead>
-              <tr>
-                <th>Fingerprint</th>
-                <th>Reason</th>
-                <th>By</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((s) => (
-                <tr key={s.fingerprint}>
-                  <td className="mono">{s.fingerprint}</td>
-                  <td>{s.reason ?? "—"}</td>
-                  <td>{s.created_by ?? "—"}</td>
-                  <td style={{ textAlign: "right" }}>
-                    <button className="btn danger" onClick={() => remove(s.fingerprint)}>
-                      Remove
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table.Container>
+          <DataTable
+            aria-labelledby="suppressions"
+            data={rows}
+            columns={[
+              {
+                header: "Fingerprint",
+                field: "fingerprint",
+                renderCell: (s) => <span className="mono">{s.fingerprint}</span>,
+              },
+              { header: "Reason", field: "reason", renderCell: (s) => s.reason ?? "—" },
+              { header: "By", field: "created_by", renderCell: (s) => s.created_by ?? "—" },
+              {
+                header: "",
+                field: "id",
+                renderCell: (s) => (
+                  <Button variant="danger" size="small" onClick={() => remove(s.fingerprint)}>
+                    Remove
+                  </Button>
+                ),
+              },
+            ]}
+          />
+        </Table.Container>
       )}
     </div>
   );
@@ -256,8 +278,8 @@ function PolicyTab({ installationId, fullName, onAuthError }: Props) {
   const [saved, setSaved] = useState(false);
   const p = draft ?? data;
 
-  if (error) return <ErrorBox message={error} />;
-  if (loading || !p) return <Empty>Loading policy…</Empty>;
+  if (error) return <ErrorFlash message={error} />;
+  if (loading || !p) return <Loading label="Loading policy…" />;
 
   function set<K extends keyof Policy>(key: K, value: Policy[K]) {
     setDraft({ ...(p as Policy), [key]: value });
@@ -278,53 +300,60 @@ function PolicyTab({ installationId, fullName, onAuthError }: Props) {
   }
 
   return (
-    <div className="card" style={{ padding: 20, maxWidth: 460 }}>
-      <div style={{ marginBottom: 16 }}>
-        <label>Risk threshold (gate at/above)</label>
-        <input
-          type="number"
-          step="0.05"
-          min="0"
-          max="1"
-          value={p.risk_threshold}
-          onChange={(e) => set("risk_threshold", parseFloat(e.target.value))}
-        />
+    <div className="card" style={{ padding: 20, maxWidth: 480 }}>
+      <div className="field">
+        <FormControl>
+          <FormControl.Label>Risk threshold (gate at/above)</FormControl.Label>
+          <TextInput
+            type="number"
+            value={String(p.risk_threshold)}
+            onChange={(e) => set("risk_threshold", parseFloat(e.target.value))}
+          />
+        </FormControl>
       </div>
-      <div style={{ marginBottom: 16 }}>
-        <label>Mode</label>
-        <select value={p.mode} onChange={(e) => set("mode", e.target.value)}>
-          <option value="block">block (fail the check)</option>
-          <option value="warn">warn (neutral)</option>
-        </select>
+      <div className="field">
+        <FormControl>
+          <FormControl.Label>Mode</FormControl.Label>
+          <Select value={p.mode} onChange={(e) => set("mode", e.target.value)}>
+            <Select.Option value="block">block (fail the check)</Select.Option>
+            <Select.Option value="warn">warn (neutral)</Select.Option>
+          </Select>
+        </FormControl>
       </div>
-      <div style={{ marginBottom: 16 }}>
-        <label>Minimum confidence</label>
-        <select value={p.min_confidence} onChange={(e) => set("min_confidence", e.target.value)}>
-          <option value="exact">exact</option>
-          <option value="import">import</option>
-          <option value="fuzzy">fuzzy</option>
-          <option value="unresolved">unresolved</option>
-        </select>
+      <div className="field">
+        <FormControl>
+          <FormControl.Label>Minimum confidence</FormControl.Label>
+          <Select value={p.min_confidence} onChange={(e) => set("min_confidence", e.target.value)}>
+            <Select.Option value="exact">exact</Select.Option>
+            <Select.Option value="import">import</Select.Option>
+            <Select.Option value="fuzzy">fuzzy</Select.Option>
+            <Select.Option value="unresolved">unresolved</Select.Option>
+          </Select>
+        </FormControl>
       </div>
-      <div style={{ marginBottom: 20 }}>
-        <label>Gated categories (comma-separated; blank = all)</label>
-        <input
-          value={(p.gated_categories ?? []).join(", ")}
-          onChange={(e) =>
-            set(
-              "gated_categories",
-              e.target.value.trim()
-                ? e.target.value.split(",").map((s) => s.trim()).filter(Boolean)
-                : null,
-            )
-          }
-        />
+      <div className="field">
+        <FormControl>
+          <FormControl.Label>Gated categories</FormControl.Label>
+          <FormControl.Caption>Comma-separated; blank = all</FormControl.Caption>
+          <TextInput
+            block
+            value={(p.gated_categories ?? []).join(", ")}
+            onChange={(e) =>
+              set(
+                "gated_categories",
+                e.target.value.trim()
+                  ? e.target.value.split(",").map((s) => s.trim()).filter(Boolean)
+                  : null,
+              )
+            }
+          />
+        </FormControl>
       </div>
       <div className="row">
-        <button className="btn primary" disabled={busy || !draft} onClick={save}>
+        <Button variant="primary" disabled={busy || !draft} onClick={save}>
           Save policy
-        </button>
-        {saved && <span style={{ color: "var(--green)" }}>Saved.</span>}
+        </Button>
+        {saved && <span className="success">Saved.</span>}
       </div>
     </div>
   );
