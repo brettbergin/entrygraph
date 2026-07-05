@@ -250,6 +250,36 @@ Add `--json` to any query command for machine-readable output (paths include
 > Colored tables, share/confidence bars, and risk-tree highlighting render in a
 > real terminal; piped or `--json` output is plain text.
 
+### `gate` & `baseline` — block *new* reachable paths in CI
+
+The reachability gate turns `paths` into a merge check: it diffs the current
+index's reachable dangerous paths against a stored **baseline** and fails only on
+paths a change *introduced*. Paths are identified by a line-independent
+**fingerprint**, so moving or reindenting code is never reported as new.
+
+```bash
+# on your default branch: record the accepted set
+entrygraph index . && entrygraph baseline update
+
+# on a PR branch: fail if the diff adds a new reachable dangerous path
+entrygraph index . && entrygraph gate --sarif findings.sarif
+```
+
+```
+╭──────────────────────────────────────────────────────────────╮
+│ gate: FAILED (block)  new 1 · known 5 · fixed 0 · suppressed 0│
+╰──────────────────────────────────────────────────────────────╯
+1 new path(s) at/above threshold:
+  risk 0.81  app.routes.upload → py.command-exec.subprocess  6c1566c2a29c
+```
+
+`gate` exits non-zero when a new path at/above the risk threshold appears (in
+`block` mode). Flags: `--threshold` (risk floor), `--warn` (report, never fail),
+`--branch` (baseline branch), `--sarif PATH` (SARIF 2.1.0 for GitHub code
+scanning), `--head-sha`. `baseline show` inspects the current baseline. The gate
+**never executes** the analyzed code — it is a parse-and-query operation. Baselines,
+scan history, findings, and per-repo policy are stored alongside the graph.
+
 ## Python API
 
 ```python

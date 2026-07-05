@@ -183,6 +183,11 @@ class CodeGraph:
         self._registry_cache: tuple[tuple, object] | None = None
 
     @property
+    def repo_id(self) -> int:
+        """The active repository this graph is bound to (its row id in the DB)."""
+        return self._repo_id
+
+    @property
     def repo_root(self) -> str | None:
         """The indexed repository's root path on disk, or None if unavailable — lets
         callers read original source lines for a symbol/edge location."""
