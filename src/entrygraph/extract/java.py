@@ -144,6 +144,7 @@ class JavaExtractor:
                     decorators=annotations,
                     modifiers=modifiers,
                     is_exported="public" in modifiers,
+                    return_type_text=self._return_type_text(node),
                 )
             )
             self._emit_annotation_refs(node, qname, out)
@@ -388,6 +389,45 @@ class JavaExtractor:
 
     def _signature(self, node: Node) -> str:
         return truncate(node_text(node).split("{", 1)[0].strip(), 120)
+
+    # value-preserving generic wrappers: `Optional<T>`/`CompletableFuture<T>` etc.
+    # denote a T for factory/DAO-style resolution; other generics (`List<T>`) keep
+    # their base type.
+    _RETURN_TYPE_UNWRAP = frozenset(
+        {"Optional", "CompletableFuture", "Future", "Callable", "Supplier"}
+    )
+
+    def _return_type_text(self, node: Node) -> str | None:
+        """Single resolvable type of a method's return type, or None for a
+        primitive/void. Feeds `SymbolTable.return_types` for call_result typing
+        (#132)."""
+        rt = node.child_by_field_name("type")
+        return self._java_type_name(rt) if rt is not None else None
+
+    def _java_type_name(self, n: Node) -> str | None:
+        t = n.type
+        if t in ("type_identifier", "scoped_type_identifier"):
+            return node_text(n)
+        if t == "generic_type":
+            base = next(
+                (
+                    c
+                    for c in n.named_children
+                    if c.type in ("type_identifier", "scoped_type_identifier")
+                ),
+                None,
+            )
+            if base is None:
+                return None
+            if node_text(base) in self._RETURN_TYPE_UNWRAP:
+                args = next((c for c in n.named_children if c.type == "type_arguments"), None)
+                for arg in args.named_children if args is not None else ():
+                    name = self._java_type_name(arg)
+                    if name:
+                        return name
+                return None
+            return node_text(base)  # `List<User>` -> `List` (best-effort metadata)
+        return None  # void_type / integral_type / boolean_type / floating_point_type
 
     def _modifiers_node(self, node: Node) -> Node | None:
         return next((c for c in node.named_children if c.type == "modifiers"), None)

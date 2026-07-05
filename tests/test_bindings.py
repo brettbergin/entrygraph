@@ -385,3 +385,64 @@ def test_function_return_type_persisted_as_type_ref():
             ).scalar()
         assert tr == "a.T"  # resolved return type persisted on the function
         engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("fname", "src", "fn_qname", "expected_type"),
+    [
+        (
+            "models.py",
+            "class Recipe:\n    pass\ndef get_recipe() -> Recipe:\n    return Recipe()\n",
+            "models.get_recipe",
+            "models.Recipe",
+        ),
+        (
+            "recipes.ts",
+            "export class Recipe {}\n"
+            "export function getRecipe(): Recipe { return new Recipe(); }\n",
+            "recipes.getRecipe",
+            "recipes.Recipe",
+        ),
+    ],
+)
+def test_return_type_persisted_python_ts(fname, src, fn_qname, expected_type):
+    # #132: Python/TS return annotations resolve to type_ref, mirroring Go/Rust
+    from entrygraph.db.engine import make_engine
+    from entrygraph.db.meta import create_schema
+
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td)
+        (p / fname).write_text(src)
+        engine = make_engine(p / "g.db")
+        create_schema(engine)
+        index_repository(p, engine)
+        with Session(engine) as s:
+            tr = s.execute(
+                select(models.Symbol.type_ref).where(models.Symbol.qname == fn_qname)
+            ).scalar()
+        assert tr == expected_type
+        engine.dispose()
+
+
+def test_return_type_persisted_java():
+    # #132: a Java method return type resolves to a same-package type_ref
+    from entrygraph.db.engine import make_engine
+    from entrygraph.db.meta import create_schema
+
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td)
+        pkg = p / "src" / "main" / "java" / "com" / "example"
+        pkg.mkdir(parents=True)
+        (pkg / "Recipe.java").write_text("package com.example;\npublic class Recipe {}\n")
+        (pkg / "Repo.java").write_text(
+            "package com.example;\npublic class Repo {\n  Recipe find() { return null; }\n}\n"
+        )
+        engine = make_engine(p / "g.db")
+        create_schema(engine)
+        index_repository(p, engine)
+        with Session(engine) as s:
+            tr = s.execute(
+                select(models.Symbol.type_ref).where(models.Symbol.qname == "com.example.Repo.find")
+            ).scalar()
+        assert tr == "com.example.Recipe"
+        engine.dispose()

@@ -127,6 +127,7 @@ class PythonExtractor:
                     decorators=self._decorators(node),
                     docstring=self._docstring(node),
                     is_exported=not name.startswith("_"),
+                    return_type_text=self._return_type_text(node),
                 )
             )
 
@@ -527,6 +528,46 @@ class PythonExtractor:
     def _signature(self, node: Node) -> str:
         first_line = node_text(node).split("\n", 1)[0].rstrip(":")
         return truncate(first_line, 120)
+
+    # value-preserving generic wrappers: `Optional[T]`/`Annotated[T, ...]`/`Final[T]`
+    # still denote a T, so the call result can be typed through them (#132).
+    _RETURN_TYPE_UNWRAP = frozenset({"Optional", "Final", "Annotated", "ClassVar"})
+
+    def _return_type_text(self, node: Node) -> str | None:
+        """Single resolvable type of a `def f(...) -> T:` annotation, or None.
+
+        Container generics (`list[T]`, `dict[...]`) are not the returned value's
+        type, so they yield None; only value-preserving wrappers unwrap to their
+        argument. Feeds `SymbolTable.return_types` for call_result typing (#132)."""
+        rt = node.child_by_field_name("return_type")
+        return self._type_name(rt) if rt is not None else None
+
+    def _type_name(self, n: Node) -> str | None:
+        t = n.type
+        if t == "type":  # the `return_type` field wraps the expression in a `type` node
+            return self._type_name(n.named_children[0]) if n.named_children else None
+        if t == "identifier":
+            text = node_text(n)
+            return None if text in ("None", "NoneType") else text
+        if t == "attribute":
+            return node_text(n)
+        if t == "binary_operator":  # PEP 604 union `T | None` -> the non-None member
+            for child in n.named_children:
+                name = self._type_name(child)
+                if name:
+                    return name
+            return None
+        if t == "generic_type":
+            base = n.named_children[0] if n.named_children else None
+            if base is None or node_text(base) not in self._RETURN_TYPE_UNWRAP:
+                return None
+            param = next((c for c in n.named_children if c.type == "type_parameter"), None)
+            for arg in param.named_children if param is not None else ():
+                name = self._type_name(arg)
+                if name:
+                    return name
+            return None
+        return None
 
     def _docstring(self, node: Node) -> str | None:
         body = node.child_by_field_name("body")

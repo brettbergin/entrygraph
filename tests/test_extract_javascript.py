@@ -199,3 +199,38 @@ def test_tsx_extraction_works():
     )
     assert any(s.name == "App" for s in x.symbols)
     assert any(r.callee_name == "doRender" for r in x.references)
+
+
+def test_ts_return_type_text():
+    # TS return annotations feed type_ref / call_result typing (#132); Promise<T>
+    # unwraps (awaited), predefined/array/void yield nothing
+    x = extract(
+        "class Recipe {}\n"
+        "function getRecipe(): Recipe { return new Recipe(); }\n"
+        "async function fetchRecipe(): Promise<Recipe> { }\n"
+        "const make = (): Recipe => new Recipe();\n"
+        "function arr(): Recipe[] { }\n"
+        "function untyped() { }\n"
+        "class Repo { find(): Recipe { } get n(): number { } }\n",
+        path="src/recipes.ts",
+        lang="typescript",
+    )
+    ret = {
+        s.qualified_name: s.return_type_text
+        for s in x.symbols
+        if s.kind in (SymbolKind.FUNCTION, SymbolKind.METHOD)
+    }
+    assert ret["recipes.getRecipe"] == "Recipe"
+    assert ret["recipes.fetchRecipe"] == "Recipe"  # Promise<T> -> T
+    assert ret["recipes.make"] == "Recipe"  # arrow bound to const
+    assert ret["recipes.arr"] is None  # T[] is not the returned value's type
+    assert ret["recipes.untyped"] is None
+    assert ret["recipes.Repo.find"] == "Recipe"
+    assert ret["recipes.Repo.n"] is None  # predefined type
+
+
+def test_js_has_no_return_types():
+    # JavaScript has no static return annotations -> always None (no-op for JS)
+    x = extract("function f() { return 1; }\n", path="src/a.js", lang="javascript")
+    fn = next(s for s in x.symbols if s.qualified_name == "a.f")
+    assert fn.return_type_text is None

@@ -140,3 +140,31 @@ def test_callback_and_dynamic_call_refs():
     assert {"worker", "done"} <= callbacks
     dynamic = {r.callee_name for r in x.references if r.kind == "dynamic_call"}
     assert dynamic == {"getattr", "<dynamic>"}
+
+
+def test_return_type_text():
+    # `-> T` annotations feed type_ref / call_result typing (#132); value-preserving
+    # wrappers unwrap, container generics do not, primitives/None yield nothing
+    x = extract(
+        "class Recipe: ...\n"
+        "def get_recipe() -> Recipe: ...\n"
+        "def maybe() -> Optional[Recipe]: ...\n"
+        "def union() -> Recipe | None: ...\n"
+        "def qualified() -> models.Recipe: ...\n"
+        "def container() -> list[Recipe]: ...\n"
+        "def nothing(): ...\n"
+        "class Repo:\n"
+        "    def find(self) -> Recipe: ...\n"
+    )
+    ret = {
+        s.qualified_name: s.return_type_text
+        for s in x.symbols
+        if s.kind in (SymbolKind.FUNCTION, SymbolKind.METHOD)
+    }
+    assert ret["app.mod.get_recipe"] == "Recipe"
+    assert ret["app.mod.maybe"] == "Recipe"  # Optional[T] -> T
+    assert ret["app.mod.union"] == "Recipe"  # T | None -> T
+    assert ret["app.mod.qualified"] == "models.Recipe"
+    assert ret["app.mod.container"] is None  # list[T] is not the returned value's type
+    assert ret["app.mod.nothing"] is None
+    assert ret["app.mod.Repo.find"] == "Recipe"
