@@ -952,6 +952,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_sentinel(sub)
 
+    # Graph explorer web UI; same lazy-registration pattern as sentinel.
+    from entrygraph.explore.cli import register as register_explore
+
+    register_explore(sub)
+
     return parser
 
 
