@@ -132,6 +132,11 @@ class FileExtraction:
     bindings: list[RawBinding] = field(default_factory=list)  # name->type sites (#98)
     entrypoint_hints: list[EntrypointHint] = field(default_factory=list)
     framework_signals: list[tuple[str, str]] = field(default_factory=list)  # (kind, value)
+    # Repo-relative paths of files that are test-only submodules declared elsewhere,
+    # e.g. Rust `#[cfg(test)] mod tests;` pointing at a separate `tests.rs`. The
+    # file-level test gate can't see these; the scanner drops them unless
+    # --include-tests. Candidate paths (both `X.rs` and `X/mod.rs`) — #100 follow-up.
+    test_submodule_files: list[str] = field(default_factory=list)
     # Repo-wide names of project functions that forward to a native route registrar
     # (Django path/re_path/url), e.g. Zulip's rest_path. Populated by the scanner
     # across all files before rules run, so a per-file rule can follow one level of

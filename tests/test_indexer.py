@@ -278,3 +278,37 @@ def test_index_defers_fk_across_batches(tmp_path, monkeypatch):
         assert graph.symbols(qname="Runner.Foo")  # class present, no crash
     finally:
         graph.close()
+
+
+def test_external_cfg_test_module_excluded(tmp_engine, tmp_path):
+    # Rust `#[cfg(test)] mod tests;` with the body in a separate tests.rs — the file
+    # gate can't classify it, so the scanner must exclude it (#100 cross-file gap).
+    repo = tmp_path / "crate"
+    (repo / "src").mkdir(parents=True)
+    (repo / "Cargo.toml").write_text('[package]\nname = "crate"\nversion = "0.1.0"\n')
+    (repo / "src" / "lib.rs").write_text(
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n\n#[cfg(test)]\nmod tests;\n"
+    )
+    (repo / "src" / "tests.rs").write_text(
+        "use super::*;\n#[test]\nfn it_adds() { assert_eq!(add(1, 2), 3); }\n"
+        "fn helper() -> i32 { 42 }\n"
+    )
+    index_repository(repo, tmp_engine)
+    with Session(tmp_engine) as s:
+        qnames = set(s.execute(select(Symbol.qname)).scalars())
+    assert any(q.endswith(".add") for q in qnames)  # production symbol kept
+    assert not any(
+        "it_adds" in q or "helper" in q or q.endswith(".tests") for q in qnames
+    )  # the external test module is gone
+
+
+def test_external_cfg_test_module_kept_with_include_tests(tmp_engine, tmp_path):
+    repo = tmp_path / "crate"
+    (repo / "src").mkdir(parents=True)
+    (repo / "Cargo.toml").write_text('[package]\nname = "crate"\nversion = "0.1.0"\n')
+    (repo / "src" / "lib.rs").write_text("pub fn add() {}\n\n#[cfg(test)]\nmod tests;\n")
+    (repo / "src" / "tests.rs").write_text("#[test]\nfn it_adds() {}\n")
+    index_repository(repo, tmp_engine, include_tests=True)
+    with Session(tmp_engine) as s:
+        qnames = set(s.execute(select(Symbol.qname)).scalars())
+    assert any("it_adds" in q for q in qnames)  # kept with --include-tests

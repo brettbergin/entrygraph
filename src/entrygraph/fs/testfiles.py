@@ -11,10 +11,12 @@ that are vanishingly rare in production code (``tests/``, ``__mocks__/``,
 ``src/test/``). All checks run on the **repo-relative** path so the absolute
 path to the repository can never false-match.
 
-Rust inline ``#[cfg(test)] mod tests`` (and bare ``#[test]`` functions) live
-inside production ``.rs`` files, so the file classifier can't see them; they are
-excluded at extractor level instead — see ``extract/rust.py`` ``_drop_test_code``
-(#100), which honors the same ``--include-tests`` override.
+Rust test code the file classifier can't see is excluded elsewhere, honoring the
+same ``--include-tests`` override: inline ``#[cfg(test)] mod tests { .. }`` and
+bare ``#[test]`` fns at extractor level (``extract/rust.py`` ``_drop_test_code``),
+and a ``#[cfg(test)] mod tests;`` whose body is a *separate* file
+(``tests.rs``/``tests/mod.rs``) at scanner level — the extractor reports the child
+paths (``_external_test_modules``) and the scanner drops those files (#100).
 """
 
 from __future__ import annotations
