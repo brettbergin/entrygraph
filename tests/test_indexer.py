@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from entrygraph.api import CodeGraph
 from entrygraph.db.models import Edge, Repository, Symbol
 from entrygraph.kinds import Confidence, EdgeKind, SymbolKind
 from entrygraph.pipeline.scanner import index_repository
@@ -248,3 +249,32 @@ def test_inline_rust_tests_kept_with_include_tests(tmp_engine, tmp_path):
     with Session(tmp_engine) as session:
         qnames = set(session.execute(select(Symbol.qname)).scalars())
     assert any("spawns" in q for q in qnames)
+
+
+def test_index_defers_fk_across_batches(tmp_path, monkeypatch):
+    """Regression (#116 QA): a C# class's qname prefix is its namespace, but its
+    parent is the file's module whose qname is the (deeper) directory path — so the
+    shallowest-qname-first insert sort puts the child in an EARLIER batch than its
+    parent module. With tiny batches this crashed on an immediate FK check; FK
+    enforcement must be deferred to COMMIT. Forcing _BATCH=1 makes every row its own
+    batch, so any parent-after-child ordering trips the bug without the fix."""
+    import entrygraph.pipeline.writer as writer
+
+    monkeypatch.setattr(writer, "_BATCH", 1)
+    repo = tmp_path / "app"
+    (repo / "a" / "b" / "Deep").mkdir(parents=True)
+    # namespace (Runner) is shallower than the dir-derived module path (a.b.Deep.App)
+    (repo / "a" / "b" / "Deep" / "App.cs").write_text(
+        "namespace Runner;\n"
+        "public class Foo {\n"
+        "  public class Bar { public int X; }\n"
+        "  public int M() => 1;\n"
+        "}\n"
+        "public class Baz { public int Y; }\n"
+    )
+    graph = CodeGraph.index(repo, db=tmp_path / "g.db")
+    try:
+        assert graph.stats().symbols > 0
+        assert graph.symbols(qname="Runner.Foo")  # class present, no crash
+    finally:
+        graph.close()
