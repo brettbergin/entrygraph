@@ -408,7 +408,7 @@ class CodeGraph:
         prune_sanitized: bool = False,
         explicit_sources: bool = False,
         confirmed_only: bool = False,
-        taint_hops: int = 3,
+        taint_hops: int = 5,
         engine: str = "memory",
         strict: bool = False,
     ) -> list[CallPath]:
@@ -497,7 +497,7 @@ class CodeGraph:
         prune_sanitized: bool = False,
         explicit_sources: bool = False,
         confirmed_only: bool = False,
-        taint_hops: int = 3,
+        taint_hops: int = 5,
         engine: str = "memory",
     ) -> PathResults:
         """One source->sink enumeration at a fixed confidence frontier (see `paths`)."""
@@ -926,7 +926,7 @@ class CodeGraph:
             meta[sid] = (channel, source_key)
         return meta
 
-    def _verify_same_function(self, session: Session, built, raw_paths, taint_hops: int = 3):
+    def _verify_same_function(self, session: Session, built, raw_paths, taint_hops: int = 5):
         """Run the taint reaching check on candidate paths and demote provable
         non-flows (#96 Phase 2/3). Verdict is tri-state; only ``False`` changes the
         score (x0.25). Bounded to the candidate pool, ``taint_hops`` interior hops,
