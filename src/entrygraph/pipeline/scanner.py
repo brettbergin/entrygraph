@@ -123,6 +123,17 @@ def index_repository(
         # results back in so file rows get their content_hash.
         diff.hashes.update(worker_hashes)
 
+        # Drop test-only submodule files declared elsewhere (Rust `#[cfg(test)] mod
+        # tests;` -> a separate tests.rs the file gate can't classify). Their symbols
+        # and edges are excluded; the file is recorded as skipped, not indexed. #100
+        if not include_tests:
+            test_files = {f for _p, x, _pkg in extractions for f in x.test_submodule_files}
+            if test_files:
+                extractions = [(p, x, pkg) for p, x, pkg in extractions if p not in test_files]
+                for wf in walked:
+                    if wf.path in test_files and wf.skip_reason is None:
+                        wf.skip_reason = "test"
+
         # ---- persist file rows (skipped + indexed + unchanged metadata) ----
         file_id_by_path = _write_files(session, repo, walked, diff, alloc, incremental)
 

@@ -54,6 +54,20 @@ def _norm(text: str) -> str:
     return text.replace("::", ".")
 
 
+def _submodule_files(decl_file: str, mod_name: str) -> list[str]:
+    """Candidate child file paths for ``mod <mod_name>;`` declared in ``decl_file``.
+
+    Rust resolves a bodyless module to a sibling file: a declaration in
+    ``dir/name.rs`` looks in ``dir/name/``, while one in ``mod.rs``/``lib.rs``/
+    ``main.rs`` (or the crate root) looks in the same ``dir/``. Both ``X.rs`` and
+    ``X/mod.rs`` layouts are returned."""
+    from pathlib import PurePosixPath
+
+    path = PurePosixPath(decl_file)
+    base = path.parent if path.stem in ("mod", "lib", "main") else path.parent / path.stem
+    return [str(base / f"{mod_name}.rs"), str(base / mod_name / "mod.rs")]
+
+
 class RustExtractor:
     language_ids: ClassVar[tuple[str, ...]] = ("rust",)
 
@@ -87,7 +101,28 @@ class RustExtractor:
         self._extract_bindings(root, ctx, out)
         if not ctx.include_tests:
             self._drop_test_code(root, out)
+            out.test_submodule_files = self._external_test_modules(root, ctx)
         return out
+
+    def _external_test_modules(self, root: Node, ctx: FileContext) -> list[str]:
+        """Candidate repo-relative paths of ``#[cfg(test)] mod X;`` submodules whose
+        body lives in a separate file (`X.rs` / `X/mod.rs`). The declaring attribute
+        is here, but the child file has no marker of its own, so the scanner needs
+        this to exclude it (the inline `mod X { .. }` case is handled by region
+        dropping)."""
+        files: list[str] = []
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.type == "mod_item" and self._is_test_annotated(node):
+                # external declaration = no `{ .. }` body
+                body = any(c.type == "declaration_list" for c in node.named_children)
+                name = node.child_by_field_name("name")
+                if not body and name is not None:
+                    files.extend(_submodule_files(ctx.path, node_text(name)))
+                continue
+            stack.extend(node.children)
+        return files
 
     # ---------------- inline test exclusion (#100) ----------------
 
