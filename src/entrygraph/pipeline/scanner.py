@@ -68,11 +68,6 @@ def index_repository(
     sink_registry = registry_for_repo(root)
 
     with Session(engine) as session:
-        # Defer FK enforcement to COMMIT (checked once) instead of per-insert.
-        # Integrity is guaranteed by construction — ids are app-assigned and rows
-        # are written parents-first — so per-row FK probes are pure overhead on a
-        # bulk load. Auto-resets at commit, so read sessions keep immediate FKs.
-        session.execute(text("PRAGMA defer_foreign_keys=ON"))
         repo = _load_or_create_repo(session, root, incremental)
         known = _known_file_states(session, repo.id) if incremental else {}
         diff = diff_files(walked, known, paranoid=paranoid)
@@ -105,6 +100,17 @@ def index_repository(
             _wipe_repo_graph(session, repo.id)
             deleted = 0
         session.flush()
+
+        # Defer FK enforcement to COMMIT (checked once) instead of per-insert: a bulk
+        # load writes rows in dependency order by construction, so per-row FK probes
+        # are pure overhead, and cross-batch/self-referential ordering (a symbol whose
+        # parent module has a deeper qname — e.g. C#) can't be guaranteed at insert
+        # time. This MUST run after a transaction is already open (the flush above);
+        # pysqlite executes a PRAGMA in autocommit otherwise, so it would silently
+        # apply to a throwaway transaction and leave the bulk writes checking FKs
+        # immediately (#116 QA: FK-constraint crash indexing large C# repos). Resets
+        # at commit, so read sessions keep immediate FKs.
+        session.execute(text("PRAGMA defer_foreign_keys=ON"))
 
         alloc = IdAllocator(session)
         table = SymbolTable()
@@ -612,8 +618,11 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table, repo_id)
                     parent_q
                 )
             row["parent_id"] = parent
-    # A row's parent has one fewer qname segment, so inserting shallowest-first
-    # guarantees the self-referential parent_id FK is satisfied within the batch.
+    # Insert shallowest-qname-first so a symbol's parent usually precedes it. This is
+    # only best-effort: a symbol whose parent is its file's *module* can have a parent
+    # whose qname is deeper than its own (e.g. C#, where the class qname prefix is the
+    # namespace, not the file-path module), which this sort can't order. FK checks are
+    # deferred to COMMIT (see index_repository), so cross-batch insert order is safe.
     symbol_rows.sort(key=lambda r: r["qname"].count("."))
     bulk_insert(session, Symbol, symbol_rows)
     return symbol_id_by_qname, module_ids, handler_ids_by_path
