@@ -200,7 +200,21 @@ FRAMEWORKS: list[FrameworkSpec] = [
         "ruby",
         (
             FrameworkSignal("manifest_dep", "rails", 0.8),
+            # component gems: the rails monorepo (and apps depending on a subset) has
+            # no top-level `rails` dep, but does depend on/require these.
+            FrameworkSignal("manifest_dep", "railties", 0.7),
+            FrameworkSignal("manifest_dep", "actionpack", 0.6),
+            FrameworkSignal("manifest_dep", "activerecord", 0.6),
+            FrameworkSignal("import", "rails", 0.6),
+            FrameworkSignal("import", "action_controller*", 0.7),
+            FrameworkSignal("import", "active_record*", 0.7),
+            FrameworkSignal("import", "action_pack*", 0.6),
+            FrameworkSignal("import", "action_view*", 0.5),
+            # convention base classes present in every Rails app
+            FrameworkSignal("symbol_name", "ApplicationController", 0.7),
+            FrameworkSignal("symbol_name", "ApplicationRecord", 0.6),
             FrameworkSignal("file_presence", "config/routes.rb", 0.5),
+            FrameworkSignal("file_presence", "config/application.rb", 0.5),
         ),
     ),
     FrameworkSpec(

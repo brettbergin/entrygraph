@@ -339,6 +339,11 @@ def _wipe_files(session: Session, repo_id: int, paths: list[str]) -> int:
     return len(file_ids)
 
 
+# Confidence-tie preference for frameworks that share a route decorator shape.
+# Only frameworks listed here get a nudge; everyone else stays at 0 (first-seen).
+_FRAMEWORK_TIEBREAK = {"fastapi": 1}
+
+
 def _dedup_entrypoint_hints(
     hints: list[EntrypointHint], fw_confidence: dict[str, float] | None = None
 ) -> list[EntrypointHint]:
@@ -348,9 +353,18 @@ def _dedup_entrypoint_hints(
     when their framework is detected, emitting the same registration once per
     framework. Hints identical in those fields are the same physical route; keep
     the one whose framework has the highest detection confidence (so a real
-    framework wins over a spuriously-detected one), preserving first-seen order.
+    framework wins over a spuriously-detected one). Confidence ties break by a
+    small framework preference, then first-seen order.
     """
     conf = fw_confidence or {}
+
+    def rank(fw: str | None) -> tuple[float, int]:
+        # On a detection-confidence tie, prefer the framework whose *primary* syntax
+        # matches the collision. `@app.get`-style verb routes are FastAPI's primary
+        # form but only Flask's secondary form (its primary is `@app.route`), so a
+        # verb route shared with Flask should read as FastAPI, not flask (#116 QA).
+        return (conf.get(fw or "", 0.0), _FRAMEWORK_TIEBREAK.get(fw or "", 0))
+
     best: dict[tuple, EntrypointHint] = {}
     order: list[tuple] = []
     for h in hints:
@@ -358,7 +372,7 @@ def _dedup_entrypoint_hints(
         if key not in best:
             best[key] = h
             order.append(key)
-        elif conf.get(h.framework or "", 0.0) > conf.get(best[key].framework or "", 0.0):
+        elif rank(h.framework) > rank(best[key].framework):
             best[key] = h
     return [best[k] for k in order]
 
