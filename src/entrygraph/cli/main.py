@@ -946,6 +946,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--commit", help="commit sha to record on the baseline")
     p.set_defaults(func=cmd_baseline)
 
+    # Sentinel service ops (#126); registered lazily — the module is light and its
+    # heavy imports (fastapi/arq/store) stay inside the command handlers.
+    from entrygraph.sentinel.cli import register as register_sentinel
+
+    register_sentinel(sub)
+
     return parser
 
 

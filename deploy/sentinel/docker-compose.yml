@@ -11,16 +11,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/sentinel/Dockerfile
-    command:
-      [
-        "uvicorn",
-        "entrygraph.sentinel.app:build_from_env",
-        "--factory",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "8000",
-      ]
+    command: ["entrygraph", "sentinel", "serve", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       SENTINEL_DATABASE_URL: postgresql+psycopg://sentinel:sentinel@postgres/sentinel
       SENTINEL_REDIS_URL: redis://redis:6379
@@ -43,7 +34,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/sentinel/Dockerfile
-    command: ["arq", "entrygraph.sentinel.queue.WorkerSettings"]
+    command: ["entrygraph", "sentinel", "worker"]
     environment:
       SENTINEL_DATABASE_URL: postgresql+psycopg://sentinel:sentinel@postgres/sentinel
       SENTINEL_REDIS_URL: redis://redis:6379
