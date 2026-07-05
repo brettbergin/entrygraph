@@ -292,6 +292,12 @@ upload and manages the baseline across runs — see
     mode: block # or "warn"
 ```
 
+For teams that would rather run the gate as a service than wire the Action into
+every repo, **Sentinel** is a self-hostable GitHub App that runs the same gate on
+PR webhooks, keeps baselines centrally, and posts a Check Run + SARIF. It ships
+behind the `entrygraph[sentinel]` extra (FastAPI + arq/Redis + Postgres) — see
+[docs/sentinel.md](docs/sentinel.md).
+
 ## Python API
 
 ```python

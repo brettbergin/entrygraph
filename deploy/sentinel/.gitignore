@@ -1,0 +1,3 @@
+# mounted GitHub App private key (provide your own; never commit)
+app_private_key.pem
+.env

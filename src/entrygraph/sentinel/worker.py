@@ -99,11 +99,29 @@ def build_check_run(result: GateResult) -> CheckRunSpec:
     return CheckRunSpec(name=_CHECK_RUN_NAME, conclusion=conclusion, title=title, summary=summary)
 
 
+# A hard cap on the fetched working tree, since Sentinel indexes untrusted PR
+# code. Bounds the parse/index cost of a pathological or hostile repo; entrygraph
+# never executes the code, so this is a resource guard, not a safety boundary.
+_DEFAULT_MAX_REPO_BYTES = 512 * 1024 * 1024  # 512 MiB
+
+
 @dataclass(frozen=True, slots=True)
 class ScanOutcome:
-    result: GateResult
+    result: GateResult | None
     check_run_id: int | None
     sarif_id: str | None = None
+    skipped_reason: str | None = None
+
+
+def _tree_size_bytes(root: Path) -> int:
+    total = 0
+    for path in root.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            try:
+                total += path.stat().st_size
+            except OSError:
+                continue
+    return total
 
 
 def run_scan(
@@ -113,13 +131,15 @@ def run_scan(
     fetcher: RepoFetcher,
     session_factory,
     now: datetime,
+    max_repo_bytes: int = _DEFAULT_MAX_REPO_BYTES,
 ) -> ScanOutcome:
     """Execute one PR scan end to end. Returns the gate result and the posted
     Check Run id.
 
     The graph is indexed into a throwaway SQLite DB in a temp dir and discarded;
     only the baseline diff and findings persist, in the central store keyed by the
-    installation-scoped repo id."""
+    installation-scoped repo id. A working tree over ``max_repo_bytes`` is skipped
+    with a neutral Check Run rather than indexed."""
     request = ScanRequest(**payload)
     token = github.installation_token(request.installation_id, now=now).token
 
@@ -132,6 +152,18 @@ def run_scan(
             token=token,
             dest=head_dir,
         )
+        if _tree_size_bytes(head_dir) > max_repo_bytes:
+            check_run_id = github.create_check_run(
+                token=token,
+                repo_full_name=request.repo_full_name,
+                head_sha=request.head_sha,
+                name=_CHECK_RUN_NAME,
+                conclusion="neutral",
+                title="Repository too large to scan",
+                summary=f"The checkout exceeds the {max_repo_bytes // (1024 * 1024)} MiB "
+                "scan cap; skipped.",
+            )
+            return ScanOutcome(result=None, check_run_id=check_run_id, skipped_reason="too_large")
         graph = CodeGraph.index(head_dir, db=Path(tmp) / "scan.db")
         try:
             with session_factory() as session:

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Engine, create_engine, delete, event, select
+from sqlalchemy import Engine, create_engine, delete, event, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from entrygraph.db import models
@@ -287,3 +287,35 @@ def set_policy(
         row.min_confidence = min_confidence
     session.commit()
     return row
+
+
+# ---------------- retention / purge (M5) ----------------
+
+
+def purge_scans(session: Session, repo_id: int, *, keep: int) -> int:
+    """Delete all but the ``keep`` most recent scan runs for a repo (cascades to
+    their findings). Returns the number deleted — the retention knob that keeps an
+    always-on installation's findings table bounded."""
+    if keep < 0:
+        keep = 0
+    keep_ids = [
+        s.id
+        for s in session.execute(
+            select(models.ScanRun.id)
+            .where(models.ScanRun.repo_id == repo_id)
+            .order_by(models.ScanRun.created_at.desc(), models.ScanRun.id.desc())
+            .limit(keep)
+        )
+    ]
+    stmt = delete(models.ScanRun).where(models.ScanRun.repo_id == repo_id)
+    if keep_ids:
+        stmt = stmt.where(models.ScanRun.id.not_in(keep_ids))
+    deleted = session.execute(
+        select(func.count()).select_from(models.ScanRun).where(models.ScanRun.repo_id == repo_id)
+    ).scalar_one()
+    session.execute(stmt)
+    session.commit()
+    remaining = session.execute(
+        select(func.count()).select_from(models.ScanRun).where(models.ScanRun.repo_id == repo_id)
+    ).scalar_one()
+    return deleted - remaining

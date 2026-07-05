@@ -1,0 +1,79 @@
+# Self-hostable Sentinel stack (#126): web (webhook + REST API), a scan worker,
+# Postgres (findings store), and Redis (job queue). Secrets come from the
+# environment / a secret manager — never bake them into the image.
+#
+# Required env (e.g. via a .env file, kept out of version control):
+#   SENTINEL_GITHUB_APP_ID, SENTINEL_WEBHOOK_SECRET, SENTINEL_API_TOKEN,
+#   SENTINEL_GITHUB_PRIVATE_KEY_FILE (mounted PEM path)
+
+services:
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/sentinel/Dockerfile
+    command:
+      [
+        "uvicorn",
+        "entrygraph.sentinel.app:build_from_env",
+        "--factory",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+      ]
+    environment:
+      SENTINEL_DATABASE_URL: postgresql+psycopg://sentinel:sentinel@postgres/sentinel
+      SENTINEL_REDIS_URL: redis://redis:6379
+      SENTINEL_GITHUB_APP_ID: ${SENTINEL_GITHUB_APP_ID}
+      SENTINEL_WEBHOOK_SECRET: ${SENTINEL_WEBHOOK_SECRET}
+      SENTINEL_API_TOKEN: ${SENTINEL_API_TOKEN}
+      SENTINEL_GITHUB_PRIVATE_KEY_FILE: /run/secrets/app_private_key.pem
+    secrets:
+      - app_private_key.pem
+    read_only: true
+    tmpfs:
+      - /tmp
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: deploy/sentinel/Dockerfile
+    command: ["arq", "entrygraph.sentinel.queue.WorkerSettings"]
+    environment:
+      SENTINEL_DATABASE_URL: postgresql+psycopg://sentinel:sentinel@postgres/sentinel
+      SENTINEL_REDIS_URL: redis://redis:6379
+      SENTINEL_GITHUB_APP_ID: ${SENTINEL_GITHUB_APP_ID}
+      SENTINEL_WEBHOOK_SECRET: ${SENTINEL_WEBHOOK_SECRET}
+      SENTINEL_GITHUB_PRIVATE_KEY_FILE: /run/secrets/app_private_key.pem
+    secrets:
+      - app_private_key.pem
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinel
+      POSTGRES_DB: sentinel
+    volumes:
+      - sentinel_pg:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+
+secrets:
+  app_private_key.pem:
+    file: ./app_private_key.pem
+
+volumes:
+  sentinel_pg:

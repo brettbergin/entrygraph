@@ -56,7 +56,8 @@ async def scan_pull_request(ctx: dict[str, Any], payload: dict[str, Any]) -> dic
         session_factory=session_factory,
         now=datetime.now(UTC),
     )
-    return {"status": outcome.result.status, "check_run_id": outcome.check_run_id}
+    status = outcome.result.status if outcome.result is not None else outcome.skipped_reason
+    return {"status": status, "check_run_id": outcome.check_run_id}
 
 
 # arq dispatches by function __name__, so these coroutine names must match the
