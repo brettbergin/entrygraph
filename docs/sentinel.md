@@ -27,10 +27,10 @@ GitHub --pull_request/push--> web (webhook, HMAC verify + dedupe) --> Redis (arq
    REST API (token-guarded) ------------------------> Postgres
 ```
 
-- **web** — `entrygraph.sentinel.app:build_from_env` (uvicorn): the webhook
-  receiver at `/` and the REST API at `/api`.
-- **worker** — `arq entrygraph.sentinel.queue.WorkerSettings`: consumes scan and
-  baseline-refresh jobs.
+- **web** — `entrygraph sentinel serve`: the webhook receiver at `/`, the REST API
+  at `/api`, and the dashboard at `/ui`.
+- **worker** — `entrygraph sentinel worker`: consumes scan and baseline-refresh
+  jobs.
 - **Postgres** — findings store (baselines, scan runs, findings, suppressions,
   policy, installations).
 - **Redis** — the job queue.
@@ -109,6 +109,23 @@ database or logs. `SentinelConfig.redacted()` is the log-safe view.
 Findings grow with every scan. `entrygraph.sentinel.store.purge_scans(session, repo_id, keep=N)` deletes all but the newest `N` scan runs for a repo (cascading
 their findings), keeping the store bounded on always-on installations. Wire it
 into a periodic maintenance job for your retention policy.
+
+## CLI
+
+`entrygraph sentinel` operates a deployment:
+
+| Command                                                                   | Purpose                                                                                           |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `entrygraph sentinel serve`                                               | Run the web process (webhook + REST API + dashboard).                                             |
+| `entrygraph sentinel worker`                                              | Run the scan worker.                                                                              |
+| `entrygraph sentinel config`                                              | Print the resolved config with secrets redacted.                                                  |
+| `entrygraph sentinel installations`                                       | List installations in the store (`--json` for machine output).                                    |
+| `entrygraph sentinel purge --keep N`                                      | Delete all but the newest N scan runs per repo (`--installation` to scope).                       |
+| `entrygraph sentinel baseline <path> --installation ID --repo owner/name` | Cut a repo's baseline from a local checkout — seed one without waiting for a default-branch push. |
+
+`serve` and `worker` need the `sentinel` extra (uvicorn / arq); the store commands
+(`config` aside) need only the core dependencies and take `--database-url` (or
+`SENTINEL_DATABASE_URL`).
 
 ## Dashboard
 

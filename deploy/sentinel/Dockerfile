@@ -27,5 +27,5 @@ RUN pip install --no-cache-dir "/src[sentinel]" && rm -rf /src
 USER sentinel
 
 # web process (serves the dashboard at /ui); the worker overrides this in compose
-# with: arq entrygraph.sentinel.queue.WorkerSettings
-CMD ["uvicorn", "entrygraph.sentinel.app:build_from_env", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+# with: entrygraph sentinel worker
+CMD ["entrygraph", "sentinel", "serve", "--host", "0.0.0.0", "--port", "8000"]
