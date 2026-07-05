@@ -914,9 +914,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--taint-hops",
         dest="taint_hops",
         type=int,
-        default=3,
+        default=5,
         help="max interior call hops the taint reaching check follows "
-        "(0 = same-function only; default 3)",
+        "(0 = same-function only; default 5)",
     )
     p.set_defaults(func=cmd_paths)
 

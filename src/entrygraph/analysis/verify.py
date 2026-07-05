@@ -60,7 +60,7 @@ def verify_path(
     source_channel_lines: set[int],
     file_hashes: dict[str, str],
     cache: FileFactCache,
-    hop_limit: int = 3,
+    hop_limit: int = 5,
 ) -> bool | None:
     """Tri-state: does a request value reach the sink across the path's functions?
 

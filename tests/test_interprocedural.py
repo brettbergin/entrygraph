@@ -68,18 +68,19 @@ def test_deep_chain_exceeding_limit_is_unverified(tmp_path):
         "def a(v): return b(v)\n"
         "def b(v): return c(v)\n"
         "def c(v): return d(v)\n"
-        "def d(v): subprocess.run(v)\n"  # 4 interior hops > default 3
+        "def d(v): subprocess.run(v)\n"  # 4 interior hops
     )
     g = _index(tmp_path, src)
     try:
-        paths = g.paths(source_category="http_input", sink_category="command_exec")
+        # below the limit (taint_hops=2 < 4 interior hops): no verdict
+        paths = g.paths(source_category="http_input", sink_category="command_exec", taint_hops=2)
         deep = [p for p in paths if p.symbols[0].qname == "app.h"]
         assert deep
         assert all(p.taint_verified is None for p in deep)  # beyond hop limit
-        # raising the limit lets it verify
-        paths5 = g.paths(source_category="http_input", sink_category="command_exec", taint_hops=5)
-        deep5 = [p for p in paths5 if p.symbols[0].qname == "app.h"]
-        assert any(p.taint_verified is True for p in deep5)
+        # the default limit (5) covers 4 interior hops, so it verifies
+        paths_default = g.paths(source_category="http_input", sink_category="command_exec")
+        deep_default = [p for p in paths_default if p.symbols[0].qname == "app.h"]
+        assert any(p.taint_verified is True for p in deep_default)
     finally:
         g.close()
 

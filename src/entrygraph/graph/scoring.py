@@ -26,6 +26,16 @@ _CONFIDENCE_WEIGHT = {
 
 _SPECULATIVE_VIA = {"cha", "dynamic"}
 _LENGTH_DECAY = 0.97
+# Per-speculative-hop discount (#136). A "speculative hop" is one the traversal
+# only kept because it lowered its standards. Its cost compounds, so a multi-hop
+# stitched chain — the Laravel-style cross-component chain where a fuzzy method-
+# dispatch bridges unrelated files into a wildcard sink — sinks well below a
+# single-guess lead. A class-hierarchy/dynamic guess and an unresolved wildcard
+# are weaker evidence than a unique-name fuzzy bind (usually correct), so they
+# cost more.
+_SPECULATIVE_DECAY = 0.8
+_SPECULATIVE_COST_STRONG = 1.5  # cha/dynamic guess, unresolved wildcard
+_SPECULATIVE_COST_FUZZY = 1.0  # unique-name fuzzy bind
 
 # Source-provenance weight (#96 Phase 1). `explicit` (a demonstrable request-
 # accessor call) and `spec` (the user named this source) preserve the pre-split
@@ -113,7 +123,18 @@ def score_path(
     conf = confidence_factor(hop_confidences)
     hops = max(len(hop_confidences), 1)
     length_decay = _LENGTH_DECAY ** (hops - 1)
-    speculative = 0.85 if any(v in _SPECULATIVE_VIA for v in hop_vias) else 1.0
+    # Sum a per-hop speculative cost and compound the discount, so a multi-hop
+    # stitched chain sinks well below a single-guess lead. A fully-resolved path
+    # (all EXACT/IMPORT, no speculative via) has zero cost and is unchanged (#136).
+    fuzzy_threshold = int(Confidence.FUZZY)
+    unresolved_threshold = int(Confidence.UNRESOLVED)
+    speculative_cost = 0.0
+    for c, v in zip(hop_confidences, hop_vias):
+        if v in _SPECULATIVE_VIA or c <= unresolved_threshold:
+            speculative_cost += _SPECULATIVE_COST_STRONG
+        elif c <= fuzzy_threshold:
+            speculative_cost += _SPECULATIVE_COST_FUZZY
+    speculative = _SPECULATIVE_DECAY**speculative_cost
     if sanitized_effect == "neutralizes":
         sanitizer_factor = 0.0
     elif sanitized_effect == "reduces":
