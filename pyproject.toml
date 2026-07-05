@@ -28,6 +28,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Explorer: a read-only web UI over an entrygraph index (symbols, entrypoints,
+# callers/callees, source->sink paths, call-graph). FastAPI is already in `dev`,
+# so CI unit-tests the API; uvicorn is only needed to actually serve it.
+explore = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
 # Sentinel: the self-hostable GitHub App + service layer around the gate (#126).
 # Kept out of the core so the CLI stays dependency-lean; a deployment installs
 # `entrygraph[sentinel]`. arq/redis and the Postgres driver are only needed at

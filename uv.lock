@@ -302,6 +302,10 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+explore = [
+    { name = "fastapi" },
+    { name = "uvicorn" },
+]
 sentinel = [
     { name = "arq" },
     { name = "dulwich" },
@@ -320,6 +324,7 @@ requires-dist = [
     { name = "dulwich", marker = "extra == 'dev'", specifier = ">=0.22" },
     { name = "dulwich", marker = "extra == 'sentinel'", specifier = ">=0.22" },
     { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.110" },
+    { name = "fastapi", marker = "extra == 'explore'", specifier = ">=0.110" },
     { name = "fastapi", marker = "extra == 'sentinel'", specifier = ">=0.110" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'sentinel'", specifier = ">=0.27" },
@@ -338,9 +343,10 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.30,<3.0" },
     { name = "tree-sitter", specifier = ">=0.25,<0.26" },
     { name = "tree-sitter-language-pack", specifier = ">=1.10" },
+    { name = "uvicorn", marker = "extra == 'explore'", specifier = ">=0.29" },
     { name = "uvicorn", marker = "extra == 'sentinel'", specifier = ">=0.29" },
 ]
-provides-extras = ["dev", "sentinel"]
+provides-extras = ["dev", "explore", "sentinel"]
 
 [[package]]
 name = "fastapi"
