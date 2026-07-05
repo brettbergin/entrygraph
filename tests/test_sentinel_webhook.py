@@ -219,3 +219,40 @@ def test_installation_event_ignored_without_store():
     resp = _post(_client(), _install_payload("created"), event="installation", delivery="i3")
     assert resp.status_code == 202
     assert resp.json()["status"] == "installation"
+
+
+# ---------------- push -> baseline refresh (M3) ----------------
+
+
+def _push_payload(ref="refs/heads/main", after="a" * 40):
+    return {
+        "ref": ref,
+        "after": after,
+        "deleted": False,
+        "installation": {"id": 42},
+        "repository": {
+            "full_name": "octo/app",
+            "clone_url": "https://github.com/octo/app.git",
+            "default_branch": "main",
+        },
+    }
+
+
+def test_push_to_default_enqueues_refresh():
+    queue = InMemoryScanQueue()
+    resp = _post(_client(queue), _push_payload(), event="push", delivery="p1")
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "refresh"
+    assert len(queue.jobs) == 1
+    job, payload = queue.jobs[0]
+    assert job == "refresh_baseline"
+    assert payload["branch"] == "main"
+    assert payload["head_sha"] == "a" * 40
+
+
+def test_push_to_feature_branch_does_not_refresh():
+    queue = InMemoryScanQueue()
+    resp = _post(_client(queue), _push_payload(ref="refs/heads/wip"), event="push", delivery="p2")
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "skipped"
+    assert queue.jobs == []

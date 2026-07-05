@@ -94,6 +94,9 @@ class _FakeGitHub:
         self.check_runs.append(kwargs)
         return 4242
 
+    def upload_sarif(self, **kwargs):
+        return "sarif-x"
+
 
 def _payload(**over):
     base = {
