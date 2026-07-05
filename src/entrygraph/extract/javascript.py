@@ -314,8 +314,44 @@ class JavaScriptExtractor:
                 signature=self._signature(node),
                 decorators=self._decorators(node),
                 is_exported=self._exported(node),
+                return_type_text=self._return_type_text(node),
             )
         )
+
+    # value-preserving generic wrappers: `Promise<T>` (awaited) and `Awaited<T>`
+    # still denote a T; `Array<T>`/`Readonly<T>` do not, so they don't unwrap.
+    _RETURN_TYPE_UNWRAP = frozenset({"Promise", "Awaited"})
+
+    def _return_type_text(self, node):
+        """Single resolvable type of a TS return annotation (`function f(): T`,
+        `method(): T`, `(): T =>`), or None. JS has no return types, so the field
+        is absent and this yields None (#132)."""
+        target = node
+        if node.child_by_field_name("return_type") is None:
+            value = node.child_by_field_name("value")
+            if value is not None:  # `const f = (): T => ...`: annotation on the arrow
+                target = value
+        annotation = target.child_by_field_name("return_type")
+        if annotation is None:
+            return None
+        inner = annotation.named_children[0] if annotation.named_children else None
+        return self._ts_type_name(inner) if inner is not None else None
+
+    def _ts_type_name(self, n):
+        t = n.type
+        if t in ("type_identifier", "nested_type_identifier"):
+            return node_text(n)
+        if t == "generic_type":
+            base = n.named_children[0] if n.named_children else None
+            if base is None or node_text(base) not in self._RETURN_TYPE_UNWRAP:
+                return None
+            args = next((c for c in n.named_children if c.type == "type_arguments"), None)
+            for arg in args.named_children if args is not None else ():
+                name = self._ts_type_name(arg)
+                if name:
+                    return name
+            return None
+        return None  # predefined_type (number/string/void), union, etc.
 
     # ---------------- imports ----------------
 

@@ -343,3 +343,26 @@ def test_route_reaches_command_exec_sink(indexed):
     assert "com.example.ReportService.buildReport" in qnames
     assert "com.example.ReportRunner.executeShell" in qnames
     assert qnames[-1] == "java:*.exec"
+
+
+def test_return_type_text():
+    # method return types feed type_ref / call_result typing (#132); Optional<T>
+    # unwraps, List<T> keeps its base, primitives/void yield nothing
+    x = extract(
+        "package com.example;\n"
+        "class Repo {\n"
+        "  Recipe find() { return null; }\n"
+        "  Optional<User> get() { return null; }\n"
+        "  List<User> all() { return null; }\n"
+        "  int count() { return 0; }\n"
+        "  void save() { }\n"
+        "  com.example.Conn conn() { return null; }\n"
+        "}\n"
+    )
+    ret = {s.qualified_name: s.return_type_text for s in x.symbols if s.kind is SymbolKind.METHOD}
+    assert ret["com.example.Mod.Repo.find"] == "Recipe"
+    assert ret["com.example.Mod.Repo.get"] == "User"  # Optional<T> -> T
+    assert ret["com.example.Mod.Repo.all"] == "List"  # base of List<User>
+    assert ret["com.example.Mod.Repo.count"] is None  # primitive
+    assert ret["com.example.Mod.Repo.save"] is None  # void
+    assert ret["com.example.Mod.Repo.conn"] == "com.example.Conn"
