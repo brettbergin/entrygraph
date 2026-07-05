@@ -6,6 +6,23 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
       "port": 5173
+    },
+    {
+      "name": "explorer",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": [
+        "run",
+        "--extra",
+        "dev",
+        "entrygraph",
+        "explore",
+        "serve",
+        "--db",
+        "/tmp/explore.db",
+        "--port",
+        "8100"
+      ],
+      "port": 8100
     }
   ]
 }
