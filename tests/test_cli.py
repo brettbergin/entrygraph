@@ -245,8 +245,18 @@ def test_stats_shows_coverage_line(db, capsys):
     assert "python full" in out
 
 
-def test_paths_thin_coverage_caveat(tmp_path, capsys):
-    # a rust repo (minimal tier) with a low path count gets the coverage note
+def test_paths_thin_coverage_caveat(tmp_path, capsys, monkeypatch):
+    # a repo whose dominant language has thin (non-full) coverage and a low path
+    # count gets the coverage note. All shipped languages are `full` (#135), so
+    # simulate a minimal-tier catalog to exercise the caveat itself.
+    from entrygraph.cli import main as cli_main
+    from entrygraph.detect.taint import CatalogCoverage
+
+    thin = CatalogCoverage(
+        sinks=4, sources=1, sanitizers=0, sink_categories=("command_exec",), tier="minimal"
+    )
+    monkeypatch.setattr(cli_main, "_catalog_coverage", lambda: {"rust": thin})
+
     repo = tmp_path / "rustapp"
     repo.mkdir()
     (repo / "main.rs").write_text(

@@ -184,8 +184,9 @@ def test_catalog_coverage_counts_and_tiers():
     assert cov["python"].tier == "full"
     # javascript moved partial -> full when #86 added its cli_arg source pattern
     assert cov["javascript"].tier == "full"
-    assert cov["go"].tier == "partial"  # 9 sinks
-    assert cov["rust"].tier == "minimal"
+    # go and rust lifted to full coverage in #135
+    assert cov["go"].tier == "full"
+    assert cov["rust"].tier == "full"
 
 
 def test_every_extractable_language_has_catalog_entries():

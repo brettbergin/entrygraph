@@ -55,6 +55,48 @@ severity = "medium"
 callee = "rs:{bincode.deserialize,serde_yaml.from_str}"
 description = "Deserialization of untrusted input"
 
+# --- coverage lift to `full` tier (#135) ---
+# tokio::process::Command::new is already caught by the `*.Command.new` glob on
+# rust.command-exec; the new entries below add genuinely-uncovered surface.
+[[sink]]
+id = "rust.path-traversal.tokio"
+category = "path_traversal"
+severity = "medium"
+callee = "rs:tokio.fs.{read,read_to_string,write,remove_file,remove_dir_all,copy,rename}"
+description = "Async filesystem access via tokio::fs (verify the path is not attacker-controlled)"
+
+[[sink]]
+id = "rust.file-write"
+category = "file_write"
+severity = "low"
+callee = "rs:{std.fs.{File.create,OpenOptions.new,create_dir,create_dir_all},fs.{File.create,OpenOptions.new,create_dir,create_dir_all},File.create,OpenOptions.new}"
+description = "Filesystem mutation (create/open-for-write via std::fs)"
+
+[[sink]]
+id = "rust.network-out"
+category = "network_out"
+severity = "low"
+callee = "rs:{reqwest.Client.{get,post,put,patch,delete,request},reqwest.blocking.Client.{get,post,request},ureq.{get,post,put,delete,request}}"
+description = "Outbound HTTP request (reqwest client / ureq)"
+
+[[sink]]
+id = "rust.sql-raw"
+category = "sql"
+severity = "medium"
+# receiver-agnostic DB driver calls (rusqlite/postgres/tokio-postgres/mysql) —
+# gated on a dynamic-argument hint so a constant/parameterized query is not
+# flagged, mirroring the Go SQL sink.
+callee = "rs:*.{execute,execute_batch,batch_execute,query,query_one,query_opt,query_raw}"
+require_arg_hint = "format!|\\+|push_str"
+description = "Raw SQL execution with a dynamically-built query (rusqlite/postgres/mysql)"
+
+[[sink]]
+id = "rust.deserialization.msgpack"
+category = "deserialization"
+severity = "medium"
+callee = "rs:{rmp_serde.{from_slice,from_read},serde_cbor.{from_slice,from_reader},serde_pickle.from_slice}"
+description = "Deserialization of untrusted input (msgpack/cbor/pickle)"
+
 [[source]]
 id = "rust.env"
 category = "env_input"
