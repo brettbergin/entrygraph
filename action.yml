@@ -1,0 +1,111 @@
+name: "entrygraph reachability gate"
+description: >-
+  Fail a pull request that introduces a NEW reachable source->sink path, diffed
+  against a baseline cut from your default branch. Never executes your code.
+author: "entrygraph"
+branding:
+  icon: "git-merge"
+  color: "purple"
+
+inputs:
+  path:
+    description: "Directory to index (the repo checkout)."
+    default: "."
+  default-branch:
+    description: "Branch the baseline represents; also the branch that refreshes it."
+    default: "main"
+  threshold:
+    description: "Risk floor (0..1) a NEW path must clear to fail the gate. Blank = policy/default."
+    default: ""
+  mode:
+    description: "block (fail on new gated paths) or warn (report only)."
+    default: "block"
+  sarif:
+    description: "Path to write SARIF 2.1.0 findings to (uploaded to code scanning)."
+    default: "entrygraph.sarif"
+  upload-sarif:
+    description: "Upload the SARIF file to GitHub code scanning."
+    default: "true"
+  entrygraph-version:
+    description: >-
+      Version spec installed with pip, e.g. 'entrygraph' (latest),
+      'entrygraph==1.2.3', or 'git+https://github.com/brettbergin/entrygraph'.
+    default: "entrygraph"
+  python-version:
+    description: "Python used to run entrygraph."
+    default: "3.13"
+
+outputs:
+  status:
+    description: "passed | failed | warned | no-baseline (from the gate run)."
+    value: ${{ steps.gate.outputs.status }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    # The gate stores its baseline in ~/.entrygraph; restore the newest one cut on
+    # the default branch. A unique key writes a fresh entry each run; restore-keys
+    # matches the latest by prefix. First-ever run misses -> bootstrap (no baseline,
+    # the gate passes and asks you to cut one).
+    - name: Restore gate baseline
+      uses: actions/cache@v4
+      with:
+        path: ~/.entrygraph
+        key: entrygraph-gate-${{ inputs.default-branch }}-${{ github.run_id }}
+        restore-keys: |
+          entrygraph-gate-${{ inputs.default-branch }}-
+
+    - name: Install entrygraph
+      shell: bash
+      run: |
+        uv tool install "${{ inputs.entrygraph-version }}"
+        # uv installs tool executables to ~/.local/bin; make it available to the
+        # index/gate steps that follow.
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Index
+      shell: bash
+      run: entrygraph index "${{ inputs.path }}"
+
+    # On the default branch, (re)cut the baseline so future PRs diff against it.
+    - name: Update baseline (default branch)
+      if: github.ref_name == inputs.default-branch
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: entrygraph baseline update --branch "${{ inputs.default-branch }}"
+
+    # On any other ref (a PR), gate: fail if a new reachable dangerous path appears.
+    - name: Gate (pull request)
+      id: gate
+      if: github.ref_name != inputs.default-branch
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: |
+        flags=(--branch "${{ inputs.default-branch }}" --sarif "${{ inputs.sarif }}")
+        [ -n "${{ inputs.threshold }}" ] && flags+=(--threshold "${{ inputs.threshold }}")
+        [ "${{ inputs.mode }}" = "warn" ] && flags+=(--warn)
+        # one run does everything: writes SARIF, prints the JSON verdict, and exits
+        # non-zero on a new gated path. Capture the code so we can set the output,
+        # then re-raise it to fail the step.
+        set +e
+        out="$(entrygraph gate "${flags[@]}" --json)"
+        code=$?
+        set -e
+        echo "$out"
+        status="$(printf '%s' "$out" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status","error"))' 2>/dev/null || echo error)"
+        echo "status=${status}" >> "$GITHUB_OUTPUT"
+        exit "${code}"
+
+    - name: Upload SARIF to code scanning
+      if: >-
+        always() && inputs.upload-sarif == 'true'
+        && github.ref_name != inputs.default-branch
+        && hashFiles(format('{0}/{1}', inputs.path, inputs.sarif)) != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.path }}/${{ inputs.sarif }}
