@@ -97,6 +97,42 @@ class GitHubApp:
             expires_at=_parse_expiry(body.get("expires_at")),
         )
 
+    def create_check_run(
+        self,
+        *,
+        token: str,
+        repo_full_name: str,
+        head_sha: str,
+        name: str,
+        conclusion: str,
+        title: str,
+        summary: str,
+    ) -> int:
+        """Create a completed Check Run on ``head_sha`` with the gate verdict.
+
+        Authenticated with the installation ``token`` (not the App JWT). Returns
+        the created check-run id."""
+        resp = self._client.post(
+            f"{self._api}/repos/{repo_full_name}/check-runs",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json={
+                "name": name,
+                "head_sha": head_sha,
+                "status": "completed",
+                "conclusion": conclusion,
+                "output": {"title": title, "summary": summary},
+            },
+        )
+        if resp.status_code not in (200, 201):
+            raise GitHubAuthError(
+                f"check-run creation failed ({resp.status_code}) for {repo_full_name}@{head_sha}"
+            )
+        return int(resp.json().get("id", 0))
+
 
 def _parse_expiry(value: str | None) -> datetime:
     if not value:

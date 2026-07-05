@@ -147,15 +147,40 @@ def parse_pull_request_event(payload: dict[str, Any]) -> ScanRequest | None:
     )
 
 
+def _handle_installation_event(payload: dict[str, Any], session_factory) -> None:
+    """Apply an ``installation`` lifecycle event to the store: created/unsuspend
+    upsert the row, suspend flags it, deleted hard-deletes all of its data."""
+    from datetime import UTC, datetime
+
+    from entrygraph.sentinel import store
+
+    action = payload.get("action")
+    inst = payload.get("installation") or {}
+    inst_id = inst.get("id")
+    if inst_id is None:
+        return
+    login = (inst.get("account") or {}).get("login", "")
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        if action == "deleted":
+            store.delete_installation(session, int(inst_id))
+        elif action == "suspend":
+            store.set_suspended(session, int(inst_id), True)
+        elif action in ("created", "unsuspend", "new_permissions_accepted"):
+            store.upsert_installation(session, int(inst_id), str(login), now=now)
+
+
 def create_app(
     config: SentinelConfig,
     *,
     queue: ScanQueue | None = None,
     delivery_log: DeliveryLog | None = None,
+    session_factory=None,
 ) -> FastAPI:
     """Build the Sentinel FastAPI app. ``queue`` and ``delivery_log`` default to
     the in-memory implementations; a deployment injects the arq/store-backed
-    versions."""
+    versions. ``session_factory`` (when provided) enables ``installation``
+    lifecycle handling — including hard-delete on uninstall."""
     app = FastAPI(title="entrygraph Sentinel", version="1")
     scan_queue = queue or InMemoryScanQueue()
     deliveries = delivery_log or InMemoryDeliveryLog()
@@ -182,7 +207,7 @@ def create_app(
             return Response(status_code=200, content=b'{"status":"duplicate"}')
         if x_github_event == "ping":
             return Response(status_code=200, content=b'{"status":"pong"}')
-        if x_github_event != "pull_request":
+        if x_github_event not in ("pull_request", "installation"):
             return Response(status_code=202, content=b'{"status":"ignored"}')
         import json
 
@@ -190,6 +215,10 @@ def create_app(
             payload = json.loads(body)
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=400, detail="invalid JSON body") from exc
+        if x_github_event == "installation":
+            if session_factory is not None:
+                _handle_installation_event(payload, session_factory)
+            return Response(status_code=202, content=b'{"status":"installation"}')
         scan = parse_pull_request_event(payload)
         if scan is None:
             return Response(status_code=202, content=b'{"status":"skipped"}')
