@@ -1,7 +1,13 @@
 // API response shapes — the /api/v1 contract (see server/routes/serializers.py).
 
 export interface Me {
-  user: { id: number | null; name: string; role: "admin" | "viewer"; via: string };
+  user: {
+    id: number | null;
+    name: string;
+    email?: string | null;
+    role: "admin" | "viewer";
+    via: string;
+  };
   auth_mode: "none" | "oidc";
   auth_disabled: boolean;
   sentinel_enabled: boolean;

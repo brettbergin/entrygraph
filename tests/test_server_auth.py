@@ -122,7 +122,10 @@ def test_callback_creates_user_session_and_cookie(oidc_client):
     assert raw
 
     me = oidc_client.get("/api/v1/me").json()
-    assert me["user"]["name"] == "ak-user-1"
+    # /me returns the human display name + email, NOT the (possibly hashed) sub
+    assert me["user"]["name"] == "Brett"
+    assert me["user"]["name"] != "ak-user-1"  # regression: don't leak the sub as the name
+    assert me["user"]["email"] == "brett@example.com"
     assert me["user"]["role"] == "admin"
     assert me["user"]["via"] == "session"
     assert me["auth_disabled"] is False
@@ -135,6 +138,15 @@ def test_callback_creates_user_session_and_cookie(oidc_client):
         user = s.execute(select(User)).scalar_one()
         assert user.email == "brett@example.com"
         assert user.role == "admin"
+
+
+def test_me_falls_back_to_email_when_no_name_claim(oidc_client):
+    # VIEWER_CLAIMS has no `name`; the display name should fall back to email,
+    # never the sub.
+    _login_as(oidc_client, VIEWER_CLAIMS)
+    me = oidc_client.get("/api/v1/me").json()
+    assert me["user"]["name"] == "v@example.com"
+    assert me["user"]["name"] != "ak-user-2"
 
 
 def test_group_denial_is_403(tmp_path):
