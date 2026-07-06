@@ -22,6 +22,7 @@ import { SymbolsTab } from "./features/explore/SymbolsTab";
 import { EntrypointsTab } from "./features/explore/EntrypointsTab";
 import { CallGraphTab } from "./features/explore/graph/CallGraphTab";
 import { ReachabilityTab } from "./features/explore/reachability/ReachabilityTab";
+import { SecurityTab } from "./features/security/SecurityTab";
 import { EmptyState } from "./components/EmptyState";
 
 function Shell() {
@@ -118,6 +119,7 @@ export function App() {
           <Route path="entrypoints" element={<EntrypointsTab />} />
           <Route path="graph" element={<CallGraphTab />} />
           <Route path="reachability" element={<ReachabilityTab />} />
+          <Route path="security" element={<SecurityTab />} />
         </Route>
         <Route
           path="*"

@@ -11,6 +11,7 @@ const TABS = [
   { path: "entrypoints", label: "Entrypoints" },
   { path: "graph", label: "Call graph" },
   { path: "reachability", label: "Reachability" },
+  { path: "security", label: "Security" },
 ];
 
 export function useRepoId(): number {

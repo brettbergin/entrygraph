@@ -3,16 +3,22 @@
 
 import { qs, request } from "./client";
 import type {
+  BaselineInfo,
   Detection,
   Entrypoint,
+  GateResult,
   Job,
   Me,
   Neighborhood,
   PathsQuery,
   PathsResponse,
+  PolicyData,
   RegisterRepoRequest,
   Repo,
+  Scan,
+  ScanFinding,
   Stats,
+  Suppression,
   SymbolDetail,
   Symbol as Sym,
 } from "./types";
@@ -35,6 +41,12 @@ export const keys = {
   jobs: (params: Record<string, string>) => ["jobs", params] as const,
   job: (id: string) => ["job", id] as const,
   activeJobs: ["jobs", "active"] as const,
+  scans: (id: number) => ["repo", id, "scans"] as const,
+  scanFindings: (id: number, scanId: number, status: string) =>
+    ["repo", id, "scans", scanId, "findings", status] as const,
+  baseline: (id: number, branch: string) => ["repo", id, "baseline", branch] as const,
+  policy: (id: number) => ["repo", id, "policy"] as const,
+  suppressions: (id: number) => ["repo", id, "suppressions"] as const,
 };
 
 export const api = {
@@ -77,6 +89,50 @@ export const api = {
   job: (id: string) => request<{ job: Job }>(`${V1}/jobs/${id}`).then((r) => r.job),
   cancelJob: (id: string) =>
     request<{ status: string }>(`${V1}/jobs/${id}/cancel`, { method: "POST" }),
+  runGate: (id: number, body: { branch?: string; threshold?: number; warn?: boolean }) =>
+    request<GateResult>(`${V1}/repos/${id}/gate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  scans: (id: number) => request<{ scans: Scan[] }>(`${V1}/repos/${id}/scans`).then((r) => r.scans),
+  scanFindings: (id: number, scanId: number, status?: string) =>
+    request<{ findings: ScanFinding[] }>(
+      `${V1}/repos/${id}/scans/${scanId}/findings${qs({ status })}`,
+    ).then((r) => r.findings),
+  baseline: (id: number, branch: string) =>
+    request<{ baseline: BaselineInfo | null }>(`${V1}/repos/${id}/baseline${qs({ branch })}`).then(
+      (r) => r.baseline,
+    ),
+  cutBaseline: (id: number, body: { branch?: string; commit?: string }) =>
+    request<{ branch: string; paths: number }>(`${V1}/repos/${id}/baseline`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  policy: (id: number) =>
+    request<{ policy: PolicyData }>(`${V1}/repos/${id}/policy`).then((r) => r.policy),
+  putPolicy: (id: number, body: Partial<PolicyData>) =>
+    request<{ policy: PolicyData }>(`${V1}/repos/${id}/policy`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => r.policy),
+  suppressions: (id: number) =>
+    request<{ suppressions: Suppression[] }>(`${V1}/repos/${id}/suppressions`).then(
+      (r) => r.suppressions,
+    ),
+  addSuppression: (id: number, body: { fingerprint: string; reason?: string }) =>
+    request<{ fingerprint: string }>(`${V1}/repos/${id}/suppressions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  removeSuppression: (id: number, fingerprint: string) =>
+    request<{ removed: string }>(
+      `${V1}/repos/${id}/suppressions/${encodeURIComponent(fingerprint)}`,
+      { method: "DELETE" },
+    ),
 };
 
 export function isTerminal(status: Job["status"] | undefined): boolean {
