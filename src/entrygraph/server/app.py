@@ -27,6 +27,7 @@ from entrygraph.server.auth import oidc as auth_routes
 from entrygraph.server.auth.csrf import OriginCheckMiddleware
 from entrygraph.server.config import ServerConfig, origin_of
 from entrygraph.server.jobs.runner import JobRunner
+from entrygraph.server.routes import gate as gate_routes
 from entrygraph.server.routes import graph as graph_routes
 from entrygraph.server.routes import jobs as jobs_routes
 from entrygraph.server.routes import meta as meta_routes
@@ -106,6 +107,7 @@ def create_app(config: ServerConfig, *, serve_ui: bool = True) -> FastAPI:
     app.include_router(meta_routes.router, prefix=api_prefix)
     app.include_router(repos_routes.router, prefix=api_prefix)
     app.include_router(jobs_routes.router, prefix=api_prefix)
+    app.include_router(gate_routes.router, prefix=api_prefix)
     app.include_router(graph_routes.router, prefix=api_prefix)
 
     if serve_ui:

@@ -175,6 +175,71 @@ export interface RegisterRepoRequest {
   include_tests?: boolean;
 }
 
+export interface GateFinding {
+  fingerprint: string;
+  endpoint_fingerprint: string;
+  source_category: string | null;
+  sink_id: string | null;
+  sink_category: string | null;
+  risk: number;
+  hops: Array<{ qname: string; file: string | null; line: number | null }>;
+}
+
+export interface GateResult {
+  status: "passed" | "failed" | "warned" | "no-baseline";
+  passed: boolean;
+  mode: "block" | "warn";
+  has_baseline: boolean;
+  scan_id: number | null;
+  counts: { new: number; known: number; fixed: number; suppressed: number };
+  new: GateFinding[];
+  gating: GateFinding[];
+  fixed: GateFinding[];
+}
+
+export interface Scan {
+  id: number;
+  status: string;
+  pr_number: number | null;
+  head_sha: string | null;
+  counts: { new: number; known: number; fixed: number; suppressed: number };
+  created_at: string | null;
+}
+
+export interface ScanFinding {
+  id: number;
+  fingerprint: string;
+  status: "new" | "known" | "fixed" | "suppressed";
+  source_category: string | null;
+  sink_id: string | null;
+  risk: number;
+  path: {
+    sink_category: string | null;
+    hops: Array<{ qname: string; file: string | null; line: number | null }>;
+  } | null;
+}
+
+export interface BaselineInfo {
+  branch: string;
+  commit_sha: string | null;
+  created_at: string | null;
+  paths: GateFinding[];
+}
+
+export interface PolicyData {
+  risk_threshold: number;
+  gated_categories: string[] | null;
+  mode: "block" | "warn";
+  min_confidence: "exact" | "import" | "fuzzy" | "unresolved";
+}
+
+export interface Suppression {
+  fingerprint: string;
+  reason: string | null;
+  created_by: string | null;
+  expires_at: string | null;
+}
+
 export interface PathsQuery {
   source_category?: string;
   sink_category?: string;
