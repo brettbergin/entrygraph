@@ -18,6 +18,9 @@ lib/
 lib64/
 parts/
 sdist/
+# The Python `lib/` ignore above also swallows the webapp's src/lib/ source dir
+# (glossary, etc.) — a clean-clone build fails without it. Keep it tracked.
+!webapp/src/lib/
 var/
 wheels/
 share/python-wheels/
