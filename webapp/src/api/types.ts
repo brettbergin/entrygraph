@@ -136,6 +136,45 @@ export interface PathsResponse {
   truncated: boolean;
 }
 
+export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+export interface IndexStats {
+  files_scanned: number;
+  files_indexed: number;
+  files_skipped: number;
+  files_deleted: number;
+  symbols: number;
+  edges: number;
+  entrypoints: number;
+  duration_seconds: number;
+}
+
+export interface Job {
+  id: string;
+  type: string;
+  status: JobStatus;
+  params: Record<string, unknown>;
+  repo_root: string | null;
+  repo_id: number | null;
+  progress: number;
+  phase: string | null;
+  message: string | null;
+  error: string | null;
+  stats: IndexStats | null;
+  created_by: string | null;
+  cancel_requested: boolean;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface RegisterRepoRequest {
+  source: string;
+  ref?: string;
+  depth?: number;
+  include_tests?: boolean;
+}
+
 export interface PathsQuery {
   source_category?: string;
   sink_category?: string;

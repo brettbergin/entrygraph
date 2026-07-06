@@ -1,9 +1,70 @@
-import { Label, ProgressBar, Text } from "@primer/react";
-import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router";
+import { Button, Label, ProgressBar, Text } from "@primer/react";
+import { SyncIcon, TrashIcon } from "@primer/octicons-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate } from "react-router";
 import { api, keys } from "../../api/queries";
+import { useAuth } from "../../auth/AuthProvider";
 import { ErrorFlash, Loading } from "../../components/ui";
+import { useJob } from "../jobs/useJob";
+import { JobProgress } from "../jobs/JobBadges";
+import { useState } from "react";
 import { useRepoId } from "./RepoLayout";
+
+function RepoActions() {
+  const repoId = useRepoId();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { me } = useAuth();
+  const [jobId, setJobId] = useState<string | null>(null);
+  const job = useJob(jobId);
+
+  const reindex = useMutation({
+    mutationFn: (full: boolean) => api.reindexRepo(repoId, { full }),
+    onSuccess: (r) => setJobId(r.job_id),
+  });
+  const remove = useMutation({
+    mutationFn: () => api.deleteRepo(repoId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: keys.repos });
+      navigate("/repos");
+    },
+  });
+
+  const isAdmin = me == null || me.auth_disabled || me.user.role === "admin";
+  if (!isAdmin) return null;
+  const busy = job != null && (job.status === "queued" || job.status === "running");
+
+  return (
+    <div className="row" style={{ marginBottom: 16 }}>
+      <Button
+        size="small"
+        leadingVisual={SyncIcon}
+        disabled={busy || reindex.isPending}
+        onClick={() => reindex.mutate(false)}
+      >
+        Re-index
+      </Button>
+      {busy && job && <JobProgress job={job} />}
+      <span className="spacer" />
+      <Button
+        size="small"
+        variant="danger"
+        leadingVisual={TrashIcon}
+        disabled={remove.isPending}
+        onClick={() => {
+          if (window.confirm("Delete this repository's graph? The source is not touched.")) {
+            remove.mutate();
+          }
+        }}
+      >
+        Delete index
+      </Button>
+      {(reindex.error || remove.error) && (
+        <ErrorFlash message={String(reindex.error ?? remove.error)} />
+      )}
+    </div>
+  );
+}
 
 export function OverviewTab() {
   const repoId = useRepoId();
@@ -26,6 +87,7 @@ export function OverviewTab() {
 
   return (
     <>
+      <RepoActions />
       <div className="stats">
         {tiles.map(([label, n, hint]) => (
           <div key={label} className="card stat" title={hint}>

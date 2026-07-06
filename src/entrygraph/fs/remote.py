@@ -96,6 +96,15 @@ def default_clone_dir(url: str, base: Path | None = None) -> Path:
     return (base or Path.cwd()) / CLONE_SUBDIR / sub
 
 
+def clone_destination(url: str, root: Path) -> Path:
+    """Checkout location directly under an explicit workspace root:
+    ``<root>/<host>/<org>/<repo>`` (no ``.entrygraph/clones`` nesting — the
+    server's EG_CLONE_DIR *is* the clones directory)."""
+    host, segments = _parse_url(url)
+    sub = Path(host, *segments) if segments else Path(host)
+    return root / sub
+
+
 def _git_exe() -> str:
     git = shutil.which("git")
     if git is None:
