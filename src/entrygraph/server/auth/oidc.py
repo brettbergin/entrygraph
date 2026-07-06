@@ -79,7 +79,10 @@ def upsert_user(session_factory, config: ServerConfig, claims: dict) -> User | N
             user = User(sub=sub)
             session.add(user)
         user.email = claims.get("email")
-        user.name = claims.get("name") or claims.get("preferred_username") or sub
+        # display name only — leave it null (not the sub) when the IdP sends no
+        # name/preferred_username, so /me can fall back to email rather than a
+        # (possibly hashed) sub. The sub remains the stable identity in `sub`.
+        user.name = claims.get("name") or claims.get("preferred_username")
         user.groups_json = json.dumps(groups)
         user.role = role
         user.last_login_at = utcnow()
