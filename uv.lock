@@ -336,6 +336,7 @@ server = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "itsdangerous" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "uvicorn" },
 ]
 
@@ -361,6 +362,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11,<2" },
     { name = "pathspec", specifier = ">=0.12,<1.0" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'sentinel'", specifier = ">=3.1" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'server'", specifier = ">=3.1" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'dev'", specifier = ">=2.8" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'sentinel'", specifier = ">=2.8" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },

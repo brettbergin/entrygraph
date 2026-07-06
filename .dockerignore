@@ -1,0 +1,13 @@
+# Keep the build context lean and never copy host artifacts over image-built ones.
+.git
+.venv
+**/node_modules
+webapp/tsconfig.tsbuildinfo
+src/entrygraph/server/static
+dist
+*.egg-info
+__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache

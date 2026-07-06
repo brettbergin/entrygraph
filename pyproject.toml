@@ -53,12 +53,17 @@ sentinel = [
 # Unified web app: one server for the read API, repo management/indexing jobs,
 # Authentik OIDC auth, and the SPA. Authlib does OIDC discovery/code exchange;
 # itsdangerous signs the transient OIDC-state cookie (starlette SessionMiddleware).
+# psycopg is the Postgres driver for the durable app DB (EG_APP_DATABASE_URL) —
+# a self-hosted/HA deployment points the app DB at an external Postgres so users,
+# sessions, API keys, and jobs survive pod restarts (the graph DB stays SQLite,
+# a rebuildable local cache).
 server = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "authlib>=1.3",
     "itsdangerous>=2.1",
     "httpx>=0.27",
+    "psycopg[binary]>=3.1",
 ]
 dev = [
     "pytest>=8.0",
@@ -101,6 +106,9 @@ version-file = "src/entrygraph/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/entrygraph"]
+# The built SPA (webapp/ -> server/static) is gitignored, so force-include it in
+# the wheel; without this the packaged server would serve the API but 404 the UI.
+artifacts = ["src/entrygraph/server/static/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
