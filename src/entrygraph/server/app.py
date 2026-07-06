@@ -17,8 +17,15 @@ from fastapi.responses import FileResponse
 
 from entrygraph.db.engine import make_engine, make_session_factory
 from entrygraph.db.meta import create_schema, stored_schema_version
-from entrygraph.server.appdb import ensure_app_schema, make_app_engine, make_app_session_factory
-from entrygraph.server.config import ServerConfig
+from entrygraph.server.appdb import (
+    ensure_app_schema,
+    get_or_create_secret,
+    make_app_engine,
+    make_app_session_factory,
+)
+from entrygraph.server.auth import oidc as auth_routes
+from entrygraph.server.auth.csrf import OriginCheckMiddleware
+from entrygraph.server.config import ServerConfig, origin_of
 from entrygraph.server.jobs.runner import JobRunner
 from entrygraph.server.routes import graph as graph_routes
 from entrygraph.server.routes import jobs as jobs_routes
@@ -60,6 +67,7 @@ def create_app(config: ServerConfig, *, serve_ui: bool = True) -> FastAPI:
     app.state.app_session_factory = app_session_factory
     app.state.job_runner = runner
     app.state.sentinel_enabled = False
+    app.state.oauth = auth_routes.make_oauth(config) if config.auth_mode == "oidc" else None
 
     if config.cors_origins:
         from fastapi.middleware.cors import CORSMiddleware
@@ -72,6 +80,28 @@ def create_app(config: ServerConfig, *, serve_ui: bool = True) -> FastAPI:
             allow_headers=["*"],
         )
 
+    # Origin/Referer check on cookie-authed mutations (bearer requests exempt);
+    # allowed origins are the configured external URL + any CORS origins.
+    app.add_middleware(
+        OriginCheckMiddleware,
+        allowed_origins=frozenset(
+            {origin_of(config.base_url).lower(), *(o.lower() for o in config.cors_origins)}
+        ),
+    )
+    # Signed-cookie session used ONLY for the transient OIDC state/nonce during
+    # the login handshake (what Authlib expects); the real session is a DB row.
+    from starlette.middleware.sessions import SessionMiddleware
+
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=config.session_secret or get_or_create_secret(app_engine, "session_secret"),
+        session_cookie="eg_oidc_state",
+        max_age=600,
+        same_site="lax",
+        https_only=config.secure_cookies,
+    )
+
+    app.include_router(auth_routes.router)
     api_prefix = "/api/v1"
     app.include_router(meta_routes.router, prefix=api_prefix)
     app.include_router(repos_routes.router, prefix=api_prefix)
