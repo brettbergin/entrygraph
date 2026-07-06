@@ -1,8 +1,9 @@
-import { ActionMenu, ActionList, Avatar, NavList } from "@primer/react";
+import { ActionMenu, ActionList, NavList } from "@primer/react";
 import {
   GearIcon,
   GitBranchIcon,
   HomeIcon,
+  PersonIcon,
   RepoIcon,
   RocketIcon,
   ShieldCheckIcon,
@@ -87,7 +88,7 @@ function Shell() {
         <div style={{ marginTop: 16, paddingLeft: 8 }}>
           {me && !me.auth_disabled && (
             <ActionMenu>
-              <ActionMenu.Button variant="invisible" leadingVisual={() => <Avatar src="" square />}>
+              <ActionMenu.Button variant="invisible" leadingVisual={PersonIcon}>
                 {me.user.name}
               </ActionMenu.Button>
               <ActionMenu.Overlay>
