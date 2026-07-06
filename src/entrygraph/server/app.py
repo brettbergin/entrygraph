@@ -8,6 +8,8 @@ against tmp databases; ``build_from_env`` assembles production wiring.
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -17,7 +19,9 @@ from entrygraph.db.engine import make_engine, make_session_factory
 from entrygraph.db.meta import create_schema, stored_schema_version
 from entrygraph.server.appdb import ensure_app_schema, make_app_engine, make_app_session_factory
 from entrygraph.server.config import ServerConfig
+from entrygraph.server.jobs.runner import JobRunner
 from entrygraph.server.routes import graph as graph_routes
+from entrygraph.server.routes import jobs as jobs_routes
 from entrygraph.server.routes import meta as meta_routes
 from entrygraph.server.routes import repos as repos_routes
 
@@ -36,12 +40,25 @@ def create_app(config: ServerConfig, *, serve_ui: bool = True) -> FastAPI:
     app_engine = make_app_engine(config.app_db_url)
     ensure_app_schema(app_engine)
 
-    app = FastAPI(title="entrygraph", version="1")
+    app_session_factory = make_app_session_factory(app_engine)
+    runner = JobRunner(config, app_session_factory)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        loop_task = asyncio.create_task(runner.run())
+        try:
+            yield
+        finally:
+            await runner.stop()
+            loop_task.cancel()
+
+    app = FastAPI(title="entrygraph", version="1", lifespan=lifespan)
     app.state.config = config
     app.state.graph_engine = graph_engine
     app.state.graph_session_factory = make_session_factory(graph_engine)
     app.state.app_engine = app_engine
-    app.state.app_session_factory = make_app_session_factory(app_engine)
+    app.state.app_session_factory = app_session_factory
+    app.state.job_runner = runner
     app.state.sentinel_enabled = False
 
     if config.cors_origins:
@@ -58,6 +75,7 @@ def create_app(config: ServerConfig, *, serve_ui: bool = True) -> FastAPI:
     api_prefix = "/api/v1"
     app.include_router(meta_routes.router, prefix=api_prefix)
     app.include_router(repos_routes.router, prefix=api_prefix)
+    app.include_router(jobs_routes.router, prefix=api_prefix)
     app.include_router(graph_routes.router, prefix=api_prefix)
 
     if serve_ui:

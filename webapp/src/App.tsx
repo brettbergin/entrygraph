@@ -3,6 +3,7 @@ import {
   GitBranchIcon,
   HomeIcon,
   RepoIcon,
+  RocketIcon,
   ShieldCheckIcon,
   SignOutIcon,
   UnlockIcon,
@@ -12,6 +13,9 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginPage } from "./auth/LoginPage";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { RepoListPage } from "./features/repos/RepoListPage";
+import { AddRepoWizard } from "./features/repos/AddRepoWizard";
+import { JobDetailPage, JobsPage } from "./features/jobs/JobsPage";
+import { JobToaster } from "./features/jobs/JobToaster";
 import { RepoLayout } from "./features/explore/RepoLayout";
 import { OverviewTab } from "./features/explore/OverviewTab";
 import { SymbolsTab } from "./features/explore/SymbolsTab";
@@ -51,6 +55,12 @@ function Shell() {
             </NavList.LeadingVisual>
             Repositories
           </NavList.Item>
+          <NavList.Item as={Link} to="/jobs" aria-current={here("/jobs") ? "page" : undefined}>
+            <NavList.LeadingVisual>
+              <RocketIcon />
+            </NavList.LeadingVisual>
+            Jobs
+          </NavList.Item>
           {me?.sentinel_enabled && (
             <NavList.Item
               as={Link}
@@ -87,6 +97,7 @@ function Shell() {
       <main className="content">
         <Outlet />
       </main>
+      <JobToaster />
     </div>
   );
 }
@@ -98,6 +109,9 @@ export function App() {
       <Route element={<Shell />}>
         <Route index element={<DashboardPage />} />
         <Route path="repos" element={<RepoListPage />} />
+        <Route path="repos/new" element={<AddRepoWizard />} />
+        <Route path="jobs" element={<JobsPage />} />
+        <Route path="jobs/:jobId" element={<JobDetailPage />} />
         <Route path="repos/:repoId" element={<RepoLayout />}>
           <Route index element={<OverviewTab />} />
           <Route path="symbols" element={<SymbolsTab />} />

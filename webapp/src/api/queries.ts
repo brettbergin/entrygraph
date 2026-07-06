@@ -5,10 +5,12 @@ import { qs, request } from "./client";
 import type {
   Detection,
   Entrypoint,
+  Job,
   Me,
   Neighborhood,
   PathsQuery,
   PathsResponse,
+  RegisterRepoRequest,
   Repo,
   Stats,
   SymbolDetail,
@@ -30,6 +32,9 @@ export const keys = {
     ["repo", id, "entrypoints", params] as const,
   neighborhood: (id: number, qname: string) => ["repo", id, "graph", qname] as const,
   paths: (id: number, params: PathsQuery) => ["repo", id, "paths", params] as const,
+  jobs: (params: Record<string, string>) => ["jobs", params] as const,
+  job: (id: string) => ["job", id] as const,
+  activeJobs: ["jobs", "active"] as const,
 };
 
 export const api = {
@@ -53,4 +58,27 @@ export const api = {
       `${V1}/repos/${id}/paths${qs(params as Record<string, string | number | boolean | undefined>)}`,
     ),
   logout: () => request<unknown>("/auth/logout", { method: "POST" }),
+  registerRepo: (body: RegisterRepoRequest) =>
+    request<{ job_id: string }>(`${V1}/repos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  reindexRepo: (id: number, body: { full?: boolean }) =>
+    request<{ job_id: string }>(`${V1}/repos/${id}/index`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  deleteRepo: (id: number) =>
+    request<{ deleted: string }>(`${V1}/repos/${id}`, { method: "DELETE" }),
+  jobs: (params: Record<string, string>) =>
+    request<{ jobs: Job[] }>(`${V1}/jobs${qs(params)}`).then((r) => r.jobs),
+  job: (id: string) => request<{ job: Job }>(`${V1}/jobs/${id}`).then((r) => r.job),
+  cancelJob: (id: string) =>
+    request<{ status: string }>(`${V1}/jobs/${id}/cancel`, { method: "POST" }),
 };
+
+export function isTerminal(status: Job["status"] | undefined): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}

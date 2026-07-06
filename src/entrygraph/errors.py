@@ -29,3 +29,8 @@ class UnsupportedLanguageError(EntrygraphError):
 
 class GitCloneError(EntrygraphError):
     """Cloning or updating a git URL failed (git missing, timeout, auth, bad ref)."""
+
+
+class IndexCancelledError(EntrygraphError):
+    """An index run was cancelled via its progress callback; the transaction was
+    rolled back, leaving the database in its prior state."""

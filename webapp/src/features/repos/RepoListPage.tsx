@@ -1,32 +1,48 @@
-import { Heading, Label } from "@primer/react";
-import { RepoIcon } from "@primer/octicons-react";
+import { Button, Heading, Label } from "@primer/react";
+import { PlusIcon, RepoIcon } from "@primer/octicons-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 import { api, keys } from "../../api/queries";
 import { EmptyState } from "../../components/EmptyState";
 import { ErrorFlash, Loading } from "../../components/ui";
+import { useActiveJobs } from "../jobs/useJob";
 
 export function RepoListPage() {
   const { data: repos, isPending, error } = useQuery({ queryKey: keys.repos, queryFn: api.repos });
+  const active = useActiveJobs();
 
   if (isPending) return <Loading label="Loading repositories…" />;
   if (error) return <ErrorFlash message={String(error)} />;
 
+  const indexing = new Set(
+    active.filter((j) => j.type === "index").map((j) => (j.params.source as string) ?? j.repo_root),
+  );
+
   return (
     <>
-      <Heading as="h1" style={{ fontSize: 28, marginBottom: 16 }}>
-        Repositories
-      </Heading>
+      <div className="row" style={{ marginBottom: 16 }}>
+        <Heading as="h1" style={{ fontSize: 28 }}>
+          Repositories
+        </Heading>
+        <span className="spacer" />
+        <Button as={Link} to="/repos/new" variant="primary" leadingVisual={PlusIcon}>
+          Add repository
+        </Button>
+      </div>
       {repos.length === 0 ? (
         <EmptyState
           icon={<RepoIcon size={24} />}
           title="No repositories indexed yet"
           body={
             <>
-              An indexed repository is the starting point for everything here.
-              Index one from a terminal:{" "}
-              <code className="mono">entrygraph index &lt;path-or-git-url&gt;</code>
+              An indexed repository is the starting point for everything here — point
+              entrygraph at a git URL or a local checkout and it builds the graph.
             </>
+          }
+          action={
+            <Button as={Link} to="/repos/new" variant="primary">
+              Add your first repository
+            </Button>
           }
         />
       ) : (
@@ -45,6 +61,11 @@ export function RepoListPage() {
                 {r.name}
               </Link>
               {r.sentinel && <Label size="small">sentinel</Label>}
+              {(indexing.has(r.root_path) || indexing.has(r.source?.url ?? "")) && (
+                <Label size="small" variant="accent">
+                  indexing…
+                </Label>
+              )}
               {r.source?.url && (
                 <span className="muted fs0 clip" title={r.source.url}>
                   {r.source.url}

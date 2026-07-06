@@ -14,6 +14,7 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from datetime import UTC, datetime
@@ -31,6 +32,7 @@ from entrygraph.detect.frameworks import detect_frameworks
 from entrygraph.detect.grpc_expand import expand_grpc
 from entrygraph.detect.manifests import parse_manifests
 from entrygraph.detect.taint import SinkRegistry, registry_for_repo
+from entrygraph.errors import IndexCancelledError
 from entrygraph.extract.ir import EntrypointHint, FileExtraction
 from entrygraph.fs.hashing import FileState, diff_files
 from entrygraph.fs.walker import RepoLanguageProfile, WalkedFile, walk_repo
@@ -47,6 +49,25 @@ from entrygraph.results import IndexStats
 _PARALLEL_THRESHOLD = 200  # files; below this the pool overhead isn't worth it
 _BATCH = 24
 
+# Progress callback: (phase, done, total) -> False requests cancellation.
+# Phases: "walking", "extracting", "resolving", "writing".
+ProgressCallback = Callable[[str, int, int], "bool | None"]
+
+
+def _report(on_progress, phase: str, done: int, total: int) -> None:
+    """Invoke the progress callback, translating a False return into
+    cancellation. A *throwing* callback must never corrupt an index run, so its
+    own exceptions are swallowed — only the explicit False triggers the
+    (transaction-rolling-back) IndexCancelledError."""
+    if on_progress is None:
+        return
+    try:
+        result = on_progress(phase, done, total)
+    except Exception:
+        return
+    if result is False:
+        raise IndexCancelledError(f"index cancelled during {phase}")
+
 
 def index_repository(
     root: str | Path,
@@ -56,6 +77,7 @@ def index_repository(
     paranoid: bool = False,
     max_workers: int | None = None,
     include_tests: bool = False,
+    on_progress: ProgressCallback | None = None,
 ) -> IndexStats:
     started = time.monotonic()
     root = Path(root).resolve()
@@ -64,6 +86,7 @@ def index_repository(
         incremental = False
 
     walked, profile = walk_repo(root, include_tests=include_tests)
+    _report(on_progress, "walking", len(walked), len(walked))
     manifests = parse_manifests(root)
     sink_registry = registry_for_repo(root)
 
@@ -118,7 +141,10 @@ def index_repository(
             _load_existing_symbols(session, repo.id, table)
 
         to_index = diff.to_index
-        extractions, worker_hashes = _parse_phase(to_index, max_workers, include_tests)
+        extractions, worker_hashes = _parse_phase(
+            to_index, max_workers, include_tests, on_progress=on_progress
+        )
+        _report(on_progress, "resolving", 0, 1)
         # the diff phase deferred hashing of parsed files to the worker; fold the
         # results back in so file rows get their content_hash.
         diff.hashes.update(worker_hashes)
@@ -199,6 +225,7 @@ def index_repository(
         # ---- detections ----
         _write_detections(session, repo, profile, frameworks, incremental=incremental)
 
+        _report(on_progress, "writing", 0, 1)
         repo.file_count = len(walked)
         repo.symbol_count = _count_symbols(session, repo.id)
         session.commit()
@@ -247,49 +274,60 @@ def _pool_context():
 
 
 def _extract_sequential(
-    to_index: list[WalkedFile], include_tests: bool = False
+    to_index: list[WalkedFile], include_tests: bool = False, on_progress=None
 ) -> list[tuple[str, FileExtraction, bool, str]]:
     results = []
-    for wf in to_index:
+    for i, wf in enumerate(to_index):
         result = extract_one(wf, include_tests)
         if result is not None:
             results.append(result)
+        if on_progress is not None and (i + 1) % _BATCH == 0:
+            _report(on_progress, "extracting", i + 1, len(to_index))
     return results
 
 
 def _collect_extractions(
-    to_index: list[WalkedFile], max_workers: int | None, include_tests: bool = False
+    to_index: list[WalkedFile],
+    max_workers: int | None,
+    include_tests: bool = False,
+    on_progress=None,
 ) -> list[tuple[str, FileExtraction, bool, str]]:
     if not to_index:
         return []
     workers = max_workers if max_workers is not None else (os.cpu_count() or 2)
     if len(to_index) < _PARALLEL_THRESHOLD or workers <= 1:
-        return _extract_sequential(to_index, include_tests)
+        return _extract_sequential(to_index, include_tests, on_progress)
 
     batches = [to_index[i : i + _BATCH] for i in range(0, len(to_index), _BATCH)]
     # a picklable partial carries the flag across the spawn/fork pool boundary
     worker = functools.partial(extract_batch, include_tests=include_tests)
     try:
         results = []
+        done = 0
         with ProcessPoolExecutor(max_workers=workers, mp_context=_pool_context()) as pool:
-            for batch_result in pool.map(worker, batches):
+            for i, batch_result in enumerate(pool.map(worker, batches)):
                 results.extend(batch_result)
+                done += len(batches[i])
+                _report(on_progress, "extracting", done, len(to_index))
         return results
     except BrokenProcessPool:
         # A worker pool couldn't start or died (e.g. an unguarded __main__ under
         # spawn, or a sandbox with no subprocess support). Degrade to correct,
         # single-threaded extraction rather than crashing the whole index.
-        return _extract_sequential(to_index, include_tests)
+        return _extract_sequential(to_index, include_tests, on_progress)
 
 
 def _parse_phase(
-    to_index: list[WalkedFile], max_workers: int | None, include_tests: bool = False
+    to_index: list[WalkedFile],
+    max_workers: int | None,
+    include_tests: bool = False,
+    on_progress=None,
 ) -> tuple[list[tuple[str, FileExtraction, bool]], dict[str, str]]:
     """Extract to_index files, returning (extractions, content hashes by path).
 
     The worker hashes each file it reads, so hashes flow back here instead of the
     diff phase reading every file a second time."""
-    raw = _collect_extractions(to_index, max_workers, include_tests)
+    raw = _collect_extractions(to_index, max_workers, include_tests, on_progress)
     extractions = [(path, x, pkg) for path, x, pkg, _h in raw]
     hashes = {path: h for path, _x, _pkg, h in raw}
     return extractions, hashes

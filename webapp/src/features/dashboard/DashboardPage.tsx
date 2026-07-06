@@ -1,4 +1,4 @@
-import { Heading, Text, Label } from "@primer/react";
+import { Button, Heading, Text, Label } from "@primer/react";
 import { RepoIcon, SearchIcon, ShieldCheckIcon, TelescopeIcon } from "@primer/octicons-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
@@ -24,11 +24,12 @@ function FirstRun() {
             symbols &amp; entrypoints &nbsp; 3. <ShieldCheckIcon size={14} /> Check source→sink
             reachability
           </span>
-          <br />
-          <br />
-          Index one from a terminal to get started:{" "}
-          <code className="mono">entrygraph index &lt;path-or-git-url&gt;</code>
         </>
+      }
+      action={
+        <Button as={Link} to="/repos/new" variant="primary" size="large">
+          Add your first repository
+        </Button>
       }
     />
   );
