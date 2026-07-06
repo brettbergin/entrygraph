@@ -1,5 +1,6 @@
 import { ActionMenu, ActionList, Avatar, NavList } from "@primer/react";
 import {
+  GearIcon,
   GitBranchIcon,
   HomeIcon,
   RepoIcon,
@@ -23,6 +24,8 @@ import { EntrypointsTab } from "./features/explore/EntrypointsTab";
 import { CallGraphTab } from "./features/explore/graph/CallGraphTab";
 import { ReachabilityTab } from "./features/explore/reachability/ReachabilityTab";
 import { SecurityTab } from "./features/security/SecurityTab";
+import { SettingsPage } from "./features/settings/SettingsPage";
+import { InstallationPage, SentinelPage } from "./features/sentinel/SentinelPage";
 import { EmptyState } from "./components/EmptyState";
 
 function Shell() {
@@ -74,6 +77,12 @@ function Shell() {
               Sentinel
             </NavList.Item>
           )}
+          <NavList.Item as={Link} to="/settings" aria-current={here("/settings") ? "page" : undefined}>
+            <NavList.LeadingVisual>
+              <GearIcon />
+            </NavList.LeadingVisual>
+            Settings
+          </NavList.Item>
         </NavList>
         <div style={{ marginTop: 16, paddingLeft: 8 }}>
           {me && !me.auth_disabled && (
@@ -113,6 +122,9 @@ export function App() {
         <Route path="repos/new" element={<AddRepoWizard />} />
         <Route path="jobs" element={<JobsPage />} />
         <Route path="jobs/:jobId" element={<JobDetailPage />} />
+        <Route path="settings" element={<SettingsPage />} />
+        <Route path="sentinel" element={<SentinelPage />} />
+        <Route path="sentinel/installations/:instId" element={<InstallationPage />} />
         <Route path="repos/:repoId" element={<RepoLayout />}>
           <Route index element={<OverviewTab />} />
           <Route path="symbols" element={<SymbolsTab />} />

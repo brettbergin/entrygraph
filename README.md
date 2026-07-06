@@ -330,12 +330,15 @@ and an interactive **call graph**:
 
 ```bash
 entrygraph index . --db /tmp/graph.db
-entrygraph explore serve --db /tmp/graph.db   # http://127.0.0.1:8100
+entrygraph serve --db /tmp/graph.db           # http://127.0.0.1:8100
 ```
 
-The index is a global multi-repo store, so one server can explore many repos (the
-UI has a repo picker). Build the UI once with `cd explorer && npm run build`; see
-[explorer/README.md](explorer/README.md).
+`entrygraph serve` runs the unified web app — one server for exploring the graph
+(symbols, entrypoints, D3 call graph, source→sink reachability), registering and
+indexing repositories from the UI, and the reachability-gate workflow (findings,
+baselines, policy, suppressions). It supports Authentik SSO (`EG_OIDC_*`), with a
+zero-setup local mode (no auth) on loopback by default. Build the UI once with
+`cd webapp && npm run build`; the build lands in the package and is served at `/`.
 
 ## Python API
 
