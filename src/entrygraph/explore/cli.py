@@ -42,6 +42,10 @@ def _serve(args) -> int:
     from entrygraph.explore.api import create_app
 
     app = create_app(args.db)
+    print(
+        "note: `entrygraph explore serve` is deprecated; the unified app "
+        "(`entrygraph serve`) supersedes it and will replace it in a future release"
+    )
     print(f"explorer on http://{args.host}:{args.port}  (index: {args.db})")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0

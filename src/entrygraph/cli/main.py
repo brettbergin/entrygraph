@@ -957,6 +957,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_explore(sub)
 
+    # Unified web app (API + SPA); same lazy-registration pattern.
+    from entrygraph.server.cli import register as register_server
+
+    register_server(sub)
+
     return parser
 
 

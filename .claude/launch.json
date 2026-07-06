@@ -2,6 +2,22 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "entrygraph-serve",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": [
+        "run",
+        "entrygraph",
+        "serve",
+        "--db",
+        "/private/tmp/claude-501/-Users-brettbergin-code-entrygraph/4c61c30a-1e6b-4fd2-9319-f5533b68ecb4/scratchpad/graph.db",
+        "--app-db",
+        "/private/tmp/claude-501/-Users-brettbergin-code-entrygraph/4c61c30a-1e6b-4fd2-9319-f5533b68ecb4/scratchpad/app.db",
+        "--port",
+        "8123"
+      ],
+      "port": 8123
+    },
+    {
       "name": "sentinel-dashboard",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
@@ -20,9 +36,9 @@
         "--db",
         "/tmp/explore.db",
         "--port",
-        "8100"
+        "8101"
       ],
-      "port": 8100
+      "port": 8101
     }
   ]
 }
