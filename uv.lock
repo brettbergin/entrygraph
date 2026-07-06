@@ -50,6 +50,19 @@ wheels = [
 ]
 
 [[package]]
+name = "authlib"
+version = "1.7.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "joserfc" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/36/98/7d93f30d029643c0275dbc0bd6d5a6f670661ee6c9a94d93af7ab4887600/authlib-1.7.2.tar.gz", hash = "sha256:2cea25fefcd4e7173bdf1372c0afc265c8034b23a8cd5dcb6a9164b826c64231", size = 176511, upload-time = "2026-05-06T08:10:23.116Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/95/adcb68e20c34162e9135f370d6e31737719c2b6f94bc953fe7ed1f10fe21/authlib-1.7.2-py2.py3-none-any.whl", hash = "sha256:3e1faedc9d87e7d56a164eca3ccb6ace0d61b94abe83e92242f8dc8bba9b4a9f", size = 259548, upload-time = "2026-05-06T08:10:21.436Z" },
+]
+
+[[package]]
 name = "bandit"
 version = "1.9.4"
 source = { registry = "https://pypi.org/simple" }
@@ -290,10 +303,12 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "authlib" },
     { name = "bandit" },
     { name = "dulwich" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "itsdangerous" },
     { name = "mdformat" },
     { name = "mdformat-gfm" },
     { name = "mypy" },
@@ -316,18 +331,31 @@ sentinel = [
     { name = "redis" },
     { name = "uvicorn" },
 ]
+server = [
+    { name = "authlib" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "itsdangerous" },
+    { name = "uvicorn" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "arq", marker = "extra == 'sentinel'", specifier = ">=0.26" },
+    { name = "authlib", marker = "extra == 'dev'", specifier = ">=1.3" },
+    { name = "authlib", marker = "extra == 'server'", specifier = ">=1.3" },
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.7" },
     { name = "dulwich", marker = "extra == 'dev'", specifier = ">=0.22" },
     { name = "dulwich", marker = "extra == 'sentinel'", specifier = ">=0.22" },
     { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.110" },
     { name = "fastapi", marker = "extra == 'explore'", specifier = ">=0.110" },
     { name = "fastapi", marker = "extra == 'sentinel'", specifier = ">=0.110" },
+    { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.110" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'sentinel'", specifier = ">=0.27" },
+    { name = "httpx", marker = "extra == 'server'", specifier = ">=0.27" },
+    { name = "itsdangerous", marker = "extra == 'dev'", specifier = ">=2.1" },
+    { name = "itsdangerous", marker = "extra == 'server'", specifier = ">=2.1" },
     { name = "mdformat", marker = "extra == 'dev'", specifier = ">=0.7" },
     { name = "mdformat-gfm", marker = "extra == 'dev'", specifier = ">=0.3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11,<2" },
@@ -345,8 +373,9 @@ requires-dist = [
     { name = "tree-sitter-language-pack", specifier = ">=1.10" },
     { name = "uvicorn", marker = "extra == 'explore'", specifier = ">=0.29" },
     { name = "uvicorn", marker = "extra == 'sentinel'", specifier = ">=0.29" },
+    { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.29" },
 ]
-provides-extras = ["dev", "explore", "sentinel"]
+provides-extras = ["dev", "explore", "sentinel", "server"]
 
 [[package]]
 name = "fastapi"
@@ -524,6 +553,27 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
+name = "itsdangerous"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/cb/8ac0172223afbccb63986cc25049b154ecfb5e85932587206f42317be31d/itsdangerous-2.2.0.tar.gz", hash = "sha256:e0050c0b7da1eea53ffaf149c0cfbb5c6e2e2b69c4bef22c81fa6eb73e5f6173", size = 54410, upload-time = "2024-04-16T21:28:15.614Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/96/92447566d16df59b2a776c0fb82dbc4d9e07cd95062562af01e408583fc4/itsdangerous-2.2.0-py3-none-any.whl", hash = "sha256:c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef", size = 16234, upload-time = "2024-04-16T21:28:14.499Z" },
+]
+
+[[package]]
+name = "joserfc"
+version = "1.7.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f1/26/abe1ad855eb334b5ebc9c6495d4798e12bee70e5e8e815d54570710b8312/joserfc-1.7.2.tar.gz", hash = "sha256:537ffb8888b2df039cb5b6d017d7cff6f09d521ce65d89cc9b8ab752b1cff947", size = 233183, upload-time = "2026-06-29T09:03:10.868Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/80/d1b30336582cced4dce0dae776508a6011723e32f907bc7a702c0b25890a/joserfc-1.7.2-py3-none-any.whl", hash = "sha256:ddd818c0ca9b4f17bbc2d72cb3966e6ded7502be089316c62c3cc64ae86132b5", size = 70426, upload-time = "2026-06-29T09:03:09.393Z" },
 ]
 
 [[package]]

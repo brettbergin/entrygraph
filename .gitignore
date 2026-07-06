@@ -231,3 +231,6 @@ src/entrygraph/sentinel/static/
 
 # Explorer UI build output (npm run build in explorer/)
 src/entrygraph/explore/static/
+src/entrygraph/server/static/
+webapp/node_modules/
+webapp/tsconfig.tsbuildinfo
