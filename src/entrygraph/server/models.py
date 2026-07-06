@@ -16,7 +16,9 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 def utcnow() -> datetime:
-    return datetime.now(UTC)
+    """Naive UTC now. The app DB stores naive-UTC datetimes so values compare
+    identically on SQLite (which strips tzinfo) and Postgres."""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class AppBase(DeclarativeBase):
@@ -42,8 +44,8 @@ class User(AppBase):
     groups_json: Mapped[str] = mapped_column(Text, default="[]")
     role: Mapped[str] = mapped_column(String(16), default="viewer")  # "admin" | "viewer"
     disabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime())
 
 
 class UserSession(AppBase):
@@ -52,12 +54,12 @@ class UserSession(AppBase):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)  # sha256 hex of cookie token
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime())
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime())
     ip: Mapped[str | None] = mapped_column(String(64))
     user_agent: Mapped[str | None] = mapped_column(String(255))
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime())
 
 
 class ApiKey(AppBase):
@@ -69,10 +71,10 @@ class ApiKey(AppBase):
     prefix: Mapped[str] = mapped_column(String(16))  # display: "egk_ab12…"
     key_hash: Mapped[str] = mapped_column(String(64), unique=True)  # sha256 of the full key
     role: Mapped[str] = mapped_column(String(16), default="viewer")  # capped at owner's role
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime())
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime())
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime())
 
 
 class Job(AppBase):
@@ -96,9 +98,9 @@ class Job(AppBase):
     created_by: Mapped[str | None] = mapped_column(String(255))
     worker_token: Mapped[str | None] = mapped_column(String(32))  # runner boot id (recovery)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime())
 
 
 class RepoSource(AppBase):
@@ -116,4 +118,4 @@ class RepoSource(AppBase):
     depth: Mapped[int] = mapped_column(Integer, default=1)
     include_tests: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by: Mapped[str | None] = mapped_column(String(255))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
