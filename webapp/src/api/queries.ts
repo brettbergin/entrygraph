@@ -3,10 +3,13 @@
 
 import { qs, request } from "./client";
 import type {
+  ApiKey,
   BaselineInfo,
   Detection,
   Entrypoint,
   GateResult,
+  Installation,
+  InstallationRepo,
   Job,
   Me,
   Neighborhood,
@@ -47,6 +50,9 @@ export const keys = {
   baseline: (id: number, branch: string) => ["repo", id, "baseline", branch] as const,
   policy: (id: number) => ["repo", id, "policy"] as const,
   suppressions: (id: number) => ["repo", id, "suppressions"] as const,
+  apiKeys: ["api-keys"] as const,
+  installations: ["sentinel", "installations"] as const,
+  installationRepos: (id: number) => ["sentinel", "installation", id, "repos"] as const,
 };
 
 export const api = {
@@ -133,6 +139,23 @@ export const api = {
       `${V1}/repos/${id}/suppressions/${encodeURIComponent(fingerprint)}`,
       { method: "DELETE" },
     ),
+  apiKeys: () => request<{ keys: ApiKey[] }>(`${V1}/api-keys`).then((r) => r.keys),
+  createApiKey: (body: { name: string; role: string }) =>
+    request<{ key: ApiKey; token: string }>(`${V1}/api-keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  revokeApiKey: (id: number) =>
+    request<{ revoked: number }>(`${V1}/api-keys/${id}`, { method: "DELETE" }),
+  installations: () =>
+    request<{ installations: Installation[] }>(`${V1}/sentinel/installations`).then(
+      (r) => r.installations,
+    ),
+  installationRepos: (id: number) =>
+    request<{ repos: InstallationRepo[] }>(
+      `${V1}/sentinel/installations/${id}/repos`,
+    ).then((r) => r.repos),
 };
 
 export function isTerminal(status: Job["status"] | undefined): boolean {

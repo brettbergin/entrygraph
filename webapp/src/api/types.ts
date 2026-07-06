@@ -240,6 +240,28 @@ export interface Suppression {
   expires_at: string | null;
 }
 
+export interface ApiKey {
+  id: number;
+  name: string;
+  prefix: string;
+  role: "admin" | "viewer";
+  created_at: string | null;
+  last_used_at: string | null;
+  expires_at: string | null;
+}
+
+export interface Installation {
+  id: number;
+  account_login: string;
+  suspended: boolean;
+  repo_count: number;
+}
+
+export interface InstallationRepo {
+  repo_id: number;
+  full_name: string;
+}
+
 export interface PathsQuery {
   source_category?: string;
   sink_category?: string;

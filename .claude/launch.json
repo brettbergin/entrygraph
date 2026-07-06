@@ -16,29 +16,6 @@
         "8123"
       ],
       "port": 8123
-    },
-    {
-      "name": "sentinel-dashboard",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
-      "port": 5173
-    },
-    {
-      "name": "explorer",
-      "runtimeExecutable": "uv",
-      "runtimeArgs": [
-        "run",
-        "--extra",
-        "dev",
-        "entrygraph",
-        "explore",
-        "serve",
-        "--db",
-        "/tmp/explore.db",
-        "--port",
-        "8101"
-      ],
-      "port": 8101
     }
   ]
 }
