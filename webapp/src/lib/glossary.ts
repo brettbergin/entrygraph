@@ -23,11 +23,6 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     short: "A dangerous API: shell execution, raw SQL, file paths, deserialization, outbound HTTP.",
     long: "Sinks are cataloged with a category and severity. A path that carries attacker input into a sink is a potential vulnerability (e.g. command injection).",
   },
-  sanitizer: {
-    title: "Sanitizer",
-    short: "A function that neutralizes dangerous input for a specific sink category (e.g. shlex.quote for shell commands).",
-    long: "A sanitizer seen on or near a path discounts its risk but never zeroes it — without full dataflow the tool can't prove the sanitized value is the one reaching the sink.",
-  },
   confidence: {
     title: "Edge confidence",
     short: "How certain the indexer is that a call edge is real: exact > import > fuzzy > unresolved.",
@@ -45,38 +40,6 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   taint_verified: {
     title: "Taint verification",
     short: "A bounded dataflow check of whether the tainted value actually flows to the sink.",
-    long: "Verified = flow observed; 'no flow proven' = the check found the value never reaches the sink (risk demoted ×0.25); unknown = the check couldn't decide.",
-  },
-  risk: {
-    title: "Risk score",
-    short: "Heuristic 0–1 ranking: edge confidence × source provenance × sink severity, discounted by sanitizers and constant arguments.",
-  },
-  fingerprint: {
-    title: "Fingerprint",
-    short: "A stable identity for a path (source + sink + hops) that survives line-number changes.",
-    long: "Baselines and suppressions are keyed by fingerprint, so accepted paths stay accepted across refactors that don't change the path itself.",
-  },
-  baseline: {
-    title: "Baseline",
-    short: "The accepted set of dangerous paths for a branch. The gate fails only on paths NOT in it.",
-    long: "Cut a baseline once ('these are known, tracked risks'), then every future gate run reports only newly introduced paths — a diff-aware security gate.",
-  },
-  gate: {
-    title: "Reachability gate",
-    short: "A CI check that fails when a change introduces a new source→sink path above the risk threshold.",
-    long: "Classification: new (not in baseline), known (in baseline), fixed (in baseline but no longer reachable), suppressed (waived). Only new paths ≥ threshold gate, and only in block mode.",
-  },
-  suppression: {
-    title: "Suppression",
-    short: "A reviewed waiver for one fingerprint — the gate reports it but never fails on it.",
-    long: "Suppressions can carry a reason and an expiry (so waivers don't rot). Use them for accepted risks; use the baseline for the pre-existing backlog.",
-  },
-  policy: {
-    title: "Gate policy",
-    short: "Per-repo knobs: risk threshold, which sink categories gate, block vs warn mode, minimum edge confidence.",
-  },
-  mode_widened: {
-    title: "Widened search",
-    short: "No high-confidence paths were found, so the search added speculative edges (CHA, unresolved calls). Treat results as leads.",
+    long: "Verified = flow observed; 'not observed' = the check found the value never reaches the sink; unknown = the check couldn't decide.",
   },
 };

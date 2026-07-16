@@ -298,28 +298,29 @@ def test_reachable_and_paths_agree_on_category_terminal(tmp_path, engine):
 
 
 def test_category_finding_survives_untagged_crowding(tmp_path):
-    # a real tainted path must not be crowded out of the candidate pool by many
-    # benign (untagged, constant-arg) arrivals at the same shared sink symbol
-    # (Bug 3). The terminal-edge filter runs inside the traversal, not after.
-    lines = ["import subprocess", "from flask import Flask, request", "app = Flask(__name__)"]
+    # Bug 3: many benign calls to a shared sink SYMBOL via UNTAGGED edges (the
+    # path_traversal open() sink is arg-hint-gated, so a constant-path open is not
+    # tagged) must not crowd the one real, tagged path out of the candidate pool.
+    # The terminal-edge filter runs inside the traversal, so untagged arrivals
+    # never enter the pool at all.
+    lines = ["from flask import Flask, request", "app = Flask(__name__)"]
     for i in range(80):
-        lines += [f'@app.route("/b{i}")', f"def b{i}():", '    subprocess.run("ls", shell=True)']
+        lines += [f'@app.route("/b{i}")', f"def b{i}():", '    return open("static.txt").read()']
     lines += [
         '@app.route("/vuln")',
         "def vuln():",
-        '    cmd = request.args.get("cmd")',
-        "    subprocess.run(cmd, shell=True)",
+        '    name = request.args.get("f")',
+        '    return open(name + ".log").read()',  # non-literal path -> tagged edge
     ]
     (tmp_path / "app.py").write_text("\n".join(lines) + "\n")
     graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
     try:
         paths = graph.paths(
-            source_category="http_input", sink_category="command_exec", max_paths=5
+            source_category="http_input", sink_category="path_traversal", max_paths=5
         )
         heads = [p.symbols[0].qname for p in paths]
-        assert "app.vuln" in heads
-        # the confirmed flow ranks first (confirmed > unchecked > refuted)
-        assert heads[0] == "app.vuln"
+        # only the tagged path is a candidate; the 80 untagged opens never qualify
+        assert heads == ["app.vuln"]
     finally:
         graph.close()
 

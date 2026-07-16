@@ -14,7 +14,6 @@ export function pathsCliEcho(q: PathsQuery): string {
   if (q.include_fuzzy) parts.push("--include-fuzzy");
   if (q.include_unresolved) parts.push("--include-unresolved");
   if (q.include_callbacks) parts.push("--include-callbacks");
-  if (q.prune_sanitized) parts.push("--prune-sanitized");
   if (q.explicit_sources) parts.push("--explicit-sources");
   if (q.confirmed_only) parts.push("--confirmed-only");
   if (q.max_depth && q.max_depth !== 25) parts.push(`--max-depth ${q.max_depth}`);

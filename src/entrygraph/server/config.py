@@ -1,8 +1,8 @@
 """Unified server runtime configuration.
 
-Follows the Sentinel precedent: everything comes from ``EG_*`` environment
-variables (or a mounted secret file), secrets are never logged, and
-``ServerConfig.redacted()`` is what any diagnostic should print.
+Everything comes from ``EG_*`` environment variables (or a mounted secret
+file), secrets are never logged, and ``ServerConfig.redacted()`` is what any
+diagnostic should print.
 """
 
 from __future__ import annotations

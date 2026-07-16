@@ -60,7 +60,6 @@ export function RepoListPage() {
               <Link to={`/repos/${r.id}`} style={{ fontWeight: 600 }}>
                 {r.name}
               </Link>
-              {r.sentinel && <Label size="small">sentinel</Label>}
               {(indexing.has(r.root_path) || indexing.has(r.source?.url ?? "")) && (
                 <Label size="small" variant="accent">
                   indexing…

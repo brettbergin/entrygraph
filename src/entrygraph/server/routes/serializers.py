@@ -12,7 +12,6 @@ from typing import Any
 
 
 def repo_name(root_path: str) -> str:
-    # sentinel:// synthetic roots and real paths both reduce to a readable name
     return root_path.rstrip("/").split("/")[-1] or root_path
 
 
