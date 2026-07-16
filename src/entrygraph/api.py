@@ -39,6 +39,7 @@ from entrygraph.results import (
     GraphStats,
     IndexStats,
     PathEdge,
+    RepoInfo,
     Symbol,
 )
 
@@ -288,6 +289,35 @@ class CodeGraph:
         engine = make_engine(db_path)
         check_schema(engine)
         return cls(engine, _lookup_repo_id(engine, Path(root).resolve() if root else None))
+
+    @staticmethod
+    def list_repos(db: str | Path) -> list[RepoInfo]:
+        """Every repository indexed in ``db``, ordered by root path. Unlike
+        :meth:`open`, this binds to no single repo — it's how a caller discovers
+        the repos in a global multi-repo DB (and what ``root`` values are valid)."""
+        db_path = Path(db)
+        if not db_path.exists():
+            raise DatabaseNotFoundError(f"no index database at {db_path}")
+        engine = make_engine(db_path)
+        check_schema(engine)
+        try:
+            with Session(engine) as session:
+                rows = session.execute(
+                    select(models.Repository).order_by(models.Repository.root_path)
+                ).scalars()
+                return [
+                    RepoInfo(
+                        id=r.id,
+                        root=r.root_path,
+                        name=Path(r.root_path).name or r.root_path,
+                        files=r.file_count,
+                        symbols=r.symbol_count,
+                        indexed_at=r.indexed_at.isoformat() if r.indexed_at else None,
+                    )
+                    for r in rows
+                ]
+        finally:
+            engine.dispose()
 
     def close(self) -> None:
         self._engine.dispose()

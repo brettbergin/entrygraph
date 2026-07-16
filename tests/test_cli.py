@@ -10,12 +10,22 @@ import pytest
 from entrygraph.cli.main import main
 
 FLASK_APP = Path(__file__).parent / "fixtures" / "python" / "flask_app"
+CLI_APP = Path(__file__).parent / "fixtures" / "python" / "cli_app"
 
 
 @pytest.fixture
 def db(tmp_path):
     path = tmp_path / "graph.db"
     assert main(["index", str(FLASK_APP), "--db", str(path)]) == 0
+    return str(path)
+
+
+@pytest.fixture
+def multi_db(tmp_path):
+    """A shared DB with two repos, exercising the global multi-repo store."""
+    path = tmp_path / "global.db"
+    assert main(["index", str(FLASK_APP), "--db", str(path)]) == 0
+    assert main(["index", str(CLI_APP), "--db", str(path)]) == 0
     return str(path)
 
 
@@ -239,6 +249,63 @@ def test_error_on_missing_db(tmp_path, capsys):
     rc = main(["stats", "--db", str(tmp_path / "nope.db")])
     assert rc == 2
     assert "error:" in capsys.readouterr().err
+
+
+# ---------------- multi-repo global DB ----------------
+
+
+def test_incremental_index_into_multi_repo_db(multi_db, capsys):
+    # #163: re-indexing a repo on the default (incremental) path into a global DB
+    # that holds >1 repo must not fail with "database holds multiple repositories".
+    capsys.readouterr()
+    rc = main(["index", str(FLASK_APP), "--db", multi_db, "--json"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["symbols"] > 0
+
+
+def test_incremental_index_of_a_new_repo_into_multi_repo_db(multi_db, tmp_path, capsys):
+    # first-time incremental index of a brand-new repo (its row doesn't exist yet)
+    # into an existing multi-repo DB must work — index_repository upserts the row.
+    new_repo = tmp_path / "svc"
+    new_repo.mkdir()
+    (new_repo / "m.py").write_text("import os\n\ndef run():\n    os.system('ls')\n")
+    capsys.readouterr()
+    rc = main(["index", str(new_repo), "--db", multi_db, "--json"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["symbols"] > 0
+
+
+def test_repos_lists_indexed_repositories(multi_db, capsys):
+    assert main(["repos", "--db", multi_db, "--json"]) == 0
+    repos = json.loads(capsys.readouterr().out)
+    assert {r["name"] for r in repos} == {"flask_app", "cli_app"}
+    assert all({"root", "files", "symbols"} <= set(r) for r in repos)
+
+
+def test_repos_on_absent_db_is_empty_not_error(tmp_path, capsys):
+    assert main(["repos", "--db", str(tmp_path / "nope.db"), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_repo_flag_scopes_query_by_name(multi_db, capsys):
+    # --repo picks the repo explicitly, independent of the working directory
+    assert main(["entrypoints", "--db", multi_db, "--repo", "flask_app", "--json"]) == 0
+    routes = {e["route"] for e in json.loads(capsys.readouterr().out)}
+    assert "/reports" in routes
+    # the cli_app repo has no /reports route
+    assert main(["entrypoints", "--db", multi_db, "--repo", "cli_app", "--json"]) == 0
+    assert "/reports" not in {e["route"] for e in json.loads(capsys.readouterr().out)}
+
+
+def test_repo_flag_accepts_full_path(multi_db, capsys):
+    assert main(["stats", "--db", multi_db, "--repo", str(FLASK_APP), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["symbols"] > 0
+
+
+def test_repo_flag_unknown_errors(multi_db, capsys):
+    rc = main(["symbols", "--db", multi_db, "--repo", "does-not-exist"])
+    assert rc == 2
+    assert "no indexed repository matching" in capsys.readouterr().err
 
 
 def test_detect_shows_taint_coverage(db, capsys):

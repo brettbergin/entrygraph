@@ -62,6 +62,18 @@ class FileInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class RepoInfo:
+    """One indexed repository in a (possibly multi-repo) database."""
+
+    id: int
+    root: str  # absolute root path, the repo's identity in the DB
+    name: str  # trailing path segment, a friendly label
+    files: int
+    symbols: int
+    indexed_at: str | None  # ISO-8601, or None if never completed
+
+
+@dataclass(frozen=True, slots=True)
 class PathEdge:
     kind: str
     line: int
