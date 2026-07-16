@@ -1,220 +1,62 @@
 # entrygraph
 
-Query your codebase like a graph. `entrygraph` indexes a repository into a
-SQLite database (through the SQLAlchemy ORM) and answers questions about
-**symbols**, **classes/methods**, **entrypoints** (HTTP routes, CLI commands,
-main functions, tasks, lambda handlers), the **call graph** (callers, callees,
-references), and **source → sink reachability** ("can any HTTP route reach
-`subprocess.run`?").
+`entrygraph` builds a queryable graph of your codebase. It indexes a repository
+into a local SQLite database, then answers questions about the code: what
+symbols and classes exist, what the entrypoints are (HTTP routes, CLI commands,
+`main`, tasks, lambdas), who calls what, and whether untrusted input can reach a
+dangerous function.
 
-Language-agnostic via [tree-sitter](https://tree-sitter.github.io/); first-class
-support for **Python, JavaScript/TypeScript, Go, Java, Ruby, C#, PHP, and
-Rust**, with language *and* framework detection.
-
-Entrypoints include decorator/attribute routes, call-based route registration,
-middleware, and config-file handlers (serverless, SAM, Procfile, Dockerfile).
-Reachability enumerates real call paths from a catalog taint source to a tagged
-sink and reports **checkable facts** about each — the sink's catalog severity,
-the weakest edge confidence, and a same-function reaching-defs verdict (`flow: confirmed` / `not observed`) — with class-hierarchy analysis to recover virtual
-dispatch. Every hop carries a `file:line` and the literal source and sink lines,
-so a finding is a lead you can open and verify, not a score to trust.
+It works across **Python, JavaScript/TypeScript, Go, Java, Ruby, C#, PHP, and
+Rust**, using [tree-sitter](https://tree-sitter.github.io/) to parse and
+per-language rules to detect frameworks and entrypoints.
 
 ## Install
 
 ```bash
-pip install entrygraph        # or: uv pip install entrygraph
+pip install entrygraph      # or: uv pip install entrygraph
 ```
 
-Requires Python ≥ 3.13. Installs the `entrygraph` command (you can also run it as
-`uv run entrygraph …` or `python -m entrygraph …`).
+Requires Python 3.13+. This installs the `entrygraph` command.
 
-## Quick start (CLI)
+## Quick start
 
-Index a repo once, then query it as often as you like:
+Index a repo, then query it:
 
 ```bash
-cd /path/to/acme-api
-entrygraph index .          # build the graph
-entrygraph entrypoints      # query it — no --db needed
-```
-
-**One global store, auto-scoped.** By default every `index` writes into a single
-shared database at `~/.entrygraph/.entrygraph.db`, keyed by repo root, and every
-query command scopes to the repository whose root is your working directory (or
-its nearest ancestor). So you index each repo once and just `cd` between them —
-no per-project file to track. To query a repo from outside its directory, pass
-`--repo <path-or-name>` (e.g. `--repo acme-api`); `entrygraph repos` lists every
-indexed repository and the names you can pass. `--db PATH` points any command at
-an isolated database instead (handy in CI), and every query command takes
-`--json` for machine-readable output.
-
-```
-$ entrygraph repos
-┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┓
-┃NAME      ┃ ROOT                  ┃ FILES ┃ SYMBOLS┃
-┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━┩
-│acme-api  │ /Users/you/acme-api   │    42 │    611 │
-│acme-web  │ /Users/you/acme-web   │   118 │   1930 │
-└──────────┴───────────────────────┴───────┴────────┘
-```
-
-### `index` — build the graph
-
-Walk the tree and extract symbols, imports, and calls into the index.
-Incremental by default (only changed files are reparsed); `--full` rebuilds,
-`--paranoid` re-hashes every file (skips the mtime fast path), and
-`--include-tests` indexes test files too (excluded by default; flipping it needs
-`--full`).
-
-```bash
+cd ~/code/my-app
 entrygraph index .
+entrygraph entrypoints
+entrygraph callers my_app.services.charge
 ```
 
-```
-╭───────────────── ✓ indexed acme-api ──────────────────╮
-│ files    5 indexed, 0 skipped, 0 deleted of 5 scanned │
-│ graph    32 symbols  34 edges  5 entrypoints          │
-│ db       /Users/you/.entrygraph/.entrygraph.db        │
-╰─────────────────────── 0.137s ────────────────────────╯
-```
+The index lives in `~/.entrygraph/.entrygraph.db` and holds every repo you
+index, keyed by path. Query commands automatically use the repo you're standing
+in; to query another repo, add `--repo <name>` (run `entrygraph repos` to see
+what's indexed). Add `--json` to any command for machine-readable output.
 
-The positional argument may also be a **git URL** — entrygraph clones it and
-indexes the checkout:
+## Commands
 
-```bash
-entrygraph index https://github.com/semgrep/semgrep     # or git@github.com:org/repo.git
-```
+| Command               | What it does                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------ |
+| `index <path\|url>`   | Build or update the graph. Incremental by default; `--full` rebuilds. A git URL is cloned first. |
+| `detect`              | Languages (by byte share) and detected frameworks.                                               |
+| `symbols`             | Search symbols by name, qualified name, kind, or file.                                           |
+| `entrypoints`         | Every route, command, `main`, task, and handler, with its framework and location.                |
+| `callers` / `callees` | Who calls a symbol / what it calls (`--depth N`).                                                |
+| `references`          | Every call site targeting a symbol, with file:line.                                              |
+| `paths`               | Source → sink reachability (see below).                                                          |
+| `stats`               | Counts for the current repo.                                                                     |
+| `repos`               | List the repositories in the database.                                                           |
+| `serve`               | Web UI over the index.                                                                           |
 
-The clone lands in a reused workspace (`./.entrygraph/clones/<host>/<org>/<repo>`)
-and the graph goes into the same global index (keyed by the checkout root), so
-follow-up queries run from that checkout directory or with `--db`. Re-running
-`index <url>` fetches and updates the existing checkout instead of re-cloning.
-The clone is hardened — shallow, repo hooks disabled, no interactive credential
-prompt, and a wall-clock timeout — and the indexed code is never executed.
+Run `entrygraph <command> --help` for the flags on each.
 
-| URL flag                     | Meaning                                                                          |
-| ---------------------------- | -------------------------------------------------------------------------------- |
-| `--ref REF`                  | branch, tag, or commit to check out (default: remote HEAD)                       |
-| `--depth N` / `--full-clone` | clone depth (default 1; `--full-clone` = full history)                           |
-| `--clone-dir DIR`            | where to place the checkout                                                      |
-| `--ephemeral`                | clone to a temp dir and delete it after indexing (no `paths` snippets afterward) |
-| `--timeout SECONDS`          | max clone/fetch wall-time (default 600)                                          |
+## Reachability (`paths`)
 
-Private repos work when the ambient git environment already authenticates (SSH
-agent, credential helper, or a token in the URL); entrygraph never prompts for or
-stores secrets.
-
-### `detect` — languages & frameworks
-
-Byte-share per language plus framework detections scored from manifest
-dependencies and code signals.
-
-```bash
-entrygraph detect
-```
-
-```
-Languages
-┏━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
-┃LANGUAGE ┃ FILES ┃ SHARE              ┃
-┡━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
-│python   │     5 │ ████████████ 100.0%│
-└─────────┴───────┴────────────────────┘
-Frameworks
-┏━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
-┃FRAMEWORK ┃ LANGUAGE ┃ CONFIDENCE     ┃
-┡━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
-│flask     │ python   │ █████████░ 0.94│
-│click     │ python   │ █████████░ 0.94│
-└──────────┴──────────┴────────────────┘
-```
-
-### `entrypoints` — your attack surface
-
-Every HTTP route, CLI command, task, lambda, middleware, and `main` — with its
-framework, method, route, and handler symbol, grouped by kind, framework, and
-route. Filter with `--kind`, `--framework`, or `--route`, and cap with `--limit`.
-
-```bash
-entrypoints --kind http_route      # or: --framework flask / --route '/api/*'
-```
-
-```
-┏━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃KIND        ┃ FRAMEWORK ┃ METHOD   ┃ ROUTE            ┃ HANDLER                 ┃
-┡━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│http_route  │ flask     │ GET      │ /users/<user_id> │ app.routes.get_user     │
-│http_route  │ flask     │ GET      │ /health          │ app.routes.health       │
-│http_route  │ flask     │ GET,POST │ /reports         │ app.routes.create_report│
-│cli_command │ click     │          │                  │ cli.report              │
-│main        │           │          │                  │ cli                     │
-└────────────┴───────────┴──────────┴──────────────────┴─────────────────────────┘
-5 entrypoint(s)
-```
-
-### `symbols`, `callers`, `callees`, `references` — search & walk the call graph
-
-`symbols` globs on `--name` or `--qname` (filter by `--kind`/`--file`, cap with
-`--limit`):
-
-```bash
-entrygraph symbols --kind class --name 'Report*'
-```
-
-```
-┏━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━┓
-┃KIND  ┃ QNAME                     ┃ FILE            ┃ LINE┃
-┡━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━┩
-│class │ app.services.ReportRunner │ app/services.py │   10│
-└──────┴───────────────────────────┴─────────────────┴─────┘
-```
-
-`callers`/`callees` walk the call graph (`--depth N`, default 1) and list the
-distinct symbols on the other end of an edge:
-
-```bash
-entrygraph callers app.services.run_report        # who calls it
-entrygraph callees app.services.run_report        # what it calls
-```
-
-```
-┏━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┓
-┃KIND     ┃ QNAME                    ┃ FILE         ┃
-┡━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━┩
-│function │ app.routes.create_report │ app/routes.py│
-│function │ cli.report               │ cli.py       │
-└─────────┴──────────────────────────┴──────────────┘
-```
-
-By default `callers`/`callees` list only *resolved* edges (exact/import and
-unique-name fuzzy binds). `--include-speculative` adds class-hierarchy guesses
-and unresolved wildcard/dynamic calls (lower confidence, noisier).
-
-`references` is the drill-down: instead of distinct caller symbols, it lists
-*every individual call site* targeting a symbol, each with its `file:line` and
-edge-resolution confidence — the checkable form you act on:
-
-```bash
-entrygraph references app.services.run_report
-```
-
-```
-┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
-┃CALLER                   ┃ LOCATION         ┃ CONFIDENCE┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
-│app.routes.create_report │ app/routes.py:20 │ import    │
-│cli.report               │ cli.py:11        │ import    │
-└─────────────────────────┴──────────────────┴───────────┘
-```
-
-### `paths` — source → sink reachability
-
-*Can anything reach a dangerous sink?* Paths are drawn as call cards, ordered by
-their facts — confirmed flows first, then by sink severity, then by the weakest
-edge confidence. Each hop shows its resolution confidence
-(`exact`/`import`/`fuzzy`/`unresolved`) and its `file:line`; the sink node is
-flagged (`⚡`), and the literal source and sink lines are printed so you can read
-the actual call.
+`paths` answers "can untrusted input reach a dangerous function?" — for example,
+can an HTTP request reach `subprocess.run`. It traces call paths from a
+**source** (where input enters) to a **sink** (a risky API), using a built-in
+catalog of both.
 
 ```bash
 entrygraph paths --source-category http_input --sink-category command_exec
@@ -227,240 +69,72 @@ entrygraph paths --source-category http_input --sink-category command_exec
   source  create_report   app/routes.py:12  (http_input · explicit · query "cmd")
           cmd = request.args.get("cmd")
     ↓     run_report      app/routes.py:20  import
-    ↓     start           app/services.py:27  fuzzy
   sink    subprocess.run  app/services.py:22  ⚡ py.command-exec.subprocess  import
           subprocess.run(cmd, shell=True)
-       flow: confirmed (2 hops)
+       flow: confirmed (1 hop)
 ```
 
-- **Reachability check**: `paths` exits `0` when a path is found, `1` when none —
-  `entrygraph paths --source-category http_input --sink-category command_exec && echo reachable`.
+Each path reports facts you can verify by opening the code:
 
-- **Sources & sinks**: use `--source-category`/`--sink-category` to start from
-  every registered taint source and end at every tagged sink of a category, or
-  name an exact `--source`/`--sink` (the language prefix is optional —
-  `--sink subprocess.run` resolves to `py:subprocess.run`). Combine a `--source`
-  glob with a category to union both. `paths --list-categories` prints the valid
-  category names for the index; an unknown category is a hard error, never a
-  silent empty result:
+- **severity** — the sink's catalog severity (critical/high/medium/low).
+- **confidence** — how sure the resolver is of the weakest call in the chain.
+  `exact` and `import` are solid; `fuzzy` and `unresolved` are guesses.
+- **flow** — `confirmed` if a source value actually reaches the sink,
+  `not observed` if it provably doesn't.
 
-  ```bash
-  entrygraph paths --list-categories
-  # source categories  cli_arg, env_input, http_input, stdin_input, user_input
-  # sink categories    code_eval, command_exec, deserialization, path_traversal, sql, ssrf, …
-  ```
+Paths are ordered best first (confirmed flows, then by severity and confidence).
+A finding is a lead to review, not proof of a bug.
 
-- **Precision/recall dial**: by default the search is adaptive — it tries only
-  high-confidence (resolved) edges first and automatically widens to the
-  speculative frontier if that finds nothing. `--strict` disables the widening
-  (resolved edges only). To force a specific frontier for one run: widen with
-  `--include-unresolved` (wildcard `py:*.execute` sinks + dynamic calls),
-  `--include-fuzzy` (speculative class-hierarchy edges), or `--include-callbacks`
-  (function/method values passed as arguments — handler registrations like
-  `http.HandleFunc("/", handler)` or `this::handle`); `--min-confidence N` sets an
-  explicit floor. Bound the search with `--max-depth` (default 25) and
-  `--max-paths` (default 10).
+Useful options:
 
-- **Source provenance**: an `http_input`/`cli_arg` source is labeled `· explicit`
-  when the handler demonstrably reads request input (a catalog accessor call like
-  `request.args.get("q")`) or `· handler` when the handler is merely shaped like a
-  source and reaches the sink without a proven read. `--explicit-sources` drops
-  the handler-only seeds entirely (at the cost of property-read frameworks like
-  Express `req.body`).
+- `--source` / `--sink` name an exact symbol instead of a category (the language
+  prefix is optional: `--sink subprocess.run`).
+- `--list-categories` prints the valid source and sink categories.
+- `--confirmed-only` keeps only paths with a confirmed flow.
+- `--strict` reports only high-confidence paths; otherwise the search widens
+  automatically when it finds nothing.
 
-- **Flow verification**: a bounded reaching-defs check labels each path with
-  whether a source value actually flows to the sink — `flow: confirmed` when it
-  does, `flow: not observed` when it provably doesn't. It follows up to
-  `--taint-hops` interior call hops (default 5; `0` = same-function only) and is
-  conservative: anything it can't analyze stays unlabeled. `--confirmed-only`
-  keeps just the confirmed paths.
-
-**What a finding means.** A path is a *reachability lead to triage*, not a
-confirmed dataflow: it says a source-bearing symbol can reach a sink-bearing
-symbol through the call graph. Every field is a checkable fact — open the
-`file:line`s and read the code. The `severity` is the tagged sink's catalog
-severity; the per-hop confidence tags (`exact`/`fuzzy`/`unresolved`) are
-*edge-resolution* confidence, not taint confidence; the `flow:` label is the
-reaching-defs verdict where the check can see the code. There is no blended
-"risk" number to trust — the ordering surfaces confirmed, higher-severity,
-better-resolved paths first so you triage the list top-down.
-
-### `stats` & `--json`
+## Web UI
 
 ```bash
-entrygraph stats
-entrygraph --help          # every command and flag
+entrygraph serve
 ```
 
-```
-╭──────────────── index stats ────────────────╮
-│ ┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓ │
-│ ┃metric           ┃                 value┃ │
-│ ┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩ │
-│ │repo_root        │ /path/to/acme-api    │ │
-│ │index_generation │                     1│ │
-│ │files            │                     5│ │
-│ │symbols          │                    32│ │
-│ │edges            │                    34│ │
-│ │resolved_edges   │                    34│ │
-│ │entrypoints      │                     5│ │
-│ │sink_edges       │                     2│ │
-│ │source_edges     │                     1│ │
-│ └─────────────────┴──────────────────────┘ │
-╰──────────────────────────────────────────────╯
-taint catalog: python full
-```
-
-Add `--json` to any query command for machine-readable output. Each path carries
-its `severity`, `min_confidence` (the weakest edge confidence, 0 unresolved →
-3 exact), `taint_verified` (the flow verdict), source provenance, the symbol
-chain, and the literal source/sink lines:
-
-```json
-[
-  {
-    "length": 5,
-    "min_confidence": 2,
-    "severity": "high",
-    "may_continue": false,
-    "source_kind": "explicit",
-    "taint_verified": true,
-    "source_channel": "query",
-    "source_key": "name",
-    "symbols": [
-      "app.routes.create_report", "app.services.run_report",
-      "app.services.ReportRunner.start",
-      "app.services.ReportRunner.render_and_execute", "py:subprocess.run"
-    ],
-    "lines": [20, 27, 17, 22],
-    "source_line": "cmd = request.args.get(\"cmd\")",
-    "sink_line": "subprocess.run(cmd, shell=True)"
-  }
-]
-```
-
-> Colored tables, share/confidence bars, and severity highlighting render in a
-> real terminal; piped or `--json` output is plain text.
-
-### `serve` — a web UI over the index
-
-To browse an index visually rather than via the CLI, `entrygraph serve` runs a
-web app that walks a repo's **symbols**, **entrypoints/routes**,
-**callers/callees**, **source→sink paths**, and an interactive **call graph**,
-and can register and index repositories from the UI:
-
-```bash
-entrygraph index . --db /tmp/graph.db
-entrygraph serve --db /tmp/graph.db           # http://127.0.0.1:8100
-```
-
-It supports Authentik SSO (`EG_OIDC_*`), with a zero-setup local mode (no auth)
-on loopback by default, and ships behind the `entrygraph[server]` extra. Build
-the UI once with `cd webapp && npm run build`; the build lands in the package and
-is served at `/`.
+Browse symbols, entrypoints, the call graph, and reachability in the browser, and
+index repos from the UI. Runs locally with no auth by default; supports OIDC SSO
+for shared deployments. Ships in the `entrygraph[server]` extra — build the UI
+once with `cd webapp && npm run build`.
 
 ## Python API
+
+Every CLI command is a thin wrapper over the `CodeGraph` class:
 
 ```python
 from entrygraph import CodeGraph
 
-# Index a repo (creates <repo>/.entrygraph.db by default)
-graph = CodeGraph.index("/path/to/repo")
+graph = CodeGraph.index("/path/to/repo")     # or CodeGraph.open("index.db")
 
-# ...or open an existing index
-graph = CodeGraph.open("graph.db")
-
-# Symbols — glob on name or qualified name, filter by kind or file
-graph.symbols(kind="class", name="User*")
-graph.symbol("app.services.Runner.execute")        # exact; raises if missing
-
-# Detection
-report = graph.detect()
-report.languages      # -> [DetectedLanguage(name="python", percent=96.7, ...), ...]
-report.frameworks     # -> [DetectedFramework(name="flask", confidence=0.94, ...), ...]
-
-# Entrypoints
 graph.entrypoints(framework="flask")
-graph.entrypoints(kind="http_route", route="/api/*")
-
-# Call graph
-graph.callers("app.services.run_report")            # who calls it
-graph.callees("app.services.run_report", depth=3)   # what it (transitively) calls
-graph.references("app.models.CONST")                # inbound edges of any kind
-
-# Source -> sink reachability (ordered by facts: confirmed flows, severity, confidence)
-paths = graph.paths(source="app.routes.*", sink_category="command_exec")
-for p in paths:
-    print(p.severity, p.taint_verified, p.render(), "(+may continue)" if p.may_continue else "")
-    # high True  app.routes.create_report -> app.services.run_report (line 20)
-    #   -> ...ReportRunner.render_and_execute (line 17) -> py:subprocess.run (line 22)
-
-graph.reachable(source="app.routes.upload", sink="py:subprocess.run")   # -> bool
-
-# Valid category names (an unknown category raises UnknownCategoryError)
-graph.sink_categories()      # -> ["command_exec", "sql", "path_traversal", ...]
-graph.source_categories()    # -> ["http_input", "cli_arg", "env_input", ...]
-
-# Precision/recall dial. By default only EXACT/IMPORT and unique-name FUZZY
-# edges are traversed. Opt into wider (noisier) traversal:
-graph.paths(source="app.routes.*", sink_category="sql",
-            include_unresolved=True)   # follow py:*.execute wildcard-sink guesses
-graph.paths(source="app.routes.*", sink_category="command_exec",
-            include_fuzzy=True)        # follow speculative class-hierarchy (CHA) edges
-graph.paths(source="app.routes.*", sink_category="command_exec",
-            confirmed_only=True)       # keep only paths where a flow is confirmed
-
-# Incremental re-index (only changed/added/deleted files are reparsed)
-graph.refresh()
-
-# Escape hatches
-graph.session()               # raw SQLAlchemy Session
-graph.sql("SELECT ...")       # textual query -> list[dict]
+graph.callers("app.services.charge")
+graph.paths(source_category="http_input", sink_category="sql")
+graph.reachable(source="app.routes.upload", sink="py:subprocess.run")  # -> bool
 ```
 
-Every result is a frozen, immutable dataclass detached from the DB session, so
-results are safe to hold and trivial to serialize.
+Results are plain frozen dataclasses, safe to hold and easy to serialize.
 
 ## How it works
 
-1. **Walk** — `os.scandir` with hard-pruned junk dirs (`node_modules`, `.venv`,
-   …), `.gitignore` rules, and size/binary/minified gates. Every skip is recorded
-   with a reason.
-1. **Extract** — tree-sitter `.scm` queries harvest definitions/imports/calls;
-   small per-language "shaper" modules build qualified names, import maps, and
-   receiver info. Parsing runs across a process pool for large repos.
-1. **Resolve** — a two-pass resolver binds references to symbols with a
-   confidence level (`exact` / `import` / `fuzzy` / `unresolved`). External
-   callees (`subprocess.run`, `child_process.exec`, …) become placeholder nodes
-   so sinks are real graph terminals.
-1. **Detect** — frameworks are scored from manifest dependencies plus code
-   signals (noisy-or); entrypoint rules map framework patterns to route/command
-   records.
-1. **Store** — everything persists to SQLite via the SQLAlchemy 2.0 ORM with
-   bulk inserts and app-assigned keys. Re-indexing is incremental and
-   content-hash driven.
-1. **Query** — reachability runs over an in-memory adjacency cache (BFS/DFS with
-   cycle handling); a recursive-CTE SQL engine is available as a fallback
-   (`engine="sql"`).
+entrygraph walks the tree (skipping vendored and generated files), parses each
+file with tree-sitter, resolves references to their definitions with a confidence
+level, detects frameworks and entrypoints, and stores everything in SQLite.
+Re-indexing only reparses changed files. Reachability is a graph traversal over
+the stored call edges; the analyzed code is never executed.
 
 ## Extending
 
-- **Custom sinks/sources** — drop an `entrygraph.toml` in the repo root with
-  `[[sink]]` / `[[source]]` tables (same schema as the built-in
-  `data/sinks/*.toml`), or call `entrygraph.detect.taint.register_sink(...)` /
-  `register_source(...)`. Third-party wrapper libraries that reach a sink
-  internally are covered by `data/sinks/lib_*.toml` "library summaries" (same
-  schema, with a `library = "..."` tag).
-- **New frameworks / entrypoints** — register a `FrameworkSpec` and an
-  `EntrypointRule`; adding a framework is usually a few lines.
-- **New languages** — add a `<lang>/{definitions,imports,calls}.scm` query set
-  and a shaper implementing the `LanguageExtractor` protocol.
-
-## Releasing
-
-Merging to `main` auto-bumps the patch version (via a git tag) and publishes to
-PyPI through Trusted Publishing — see [RELEASING.md](RELEASING.md). The package
-version is derived from git tags by `hatch-vcs`, so it's never hand-edited.
+Add custom sinks and sources with an `entrygraph.toml` in the repo root (same
+format as the built-in catalogs under `data/sinks/`). New frameworks and
+languages are added with small rule and tree-sitter query modules.
 
 ## License
 
