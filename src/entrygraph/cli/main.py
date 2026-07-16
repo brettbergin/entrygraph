@@ -286,7 +286,9 @@ def cmd_symbols(args) -> int:
 
 def cmd_entrypoints(args) -> int:
     with _open(args) as graph:
-        rows = graph.entrypoints(kind=args.kind, framework=args.framework, route=args.route)
+        rows = graph.entrypoints(
+            kind=args.kind, framework=args.framework, route=args.route, limit=args.limit
+        )
     if args.json:
         print(to_json(rows))
         return 0
@@ -315,7 +317,9 @@ def cmd_entrypoints(args) -> int:
 
 def cmd_callers(args) -> int:
     with _open(args) as graph:
-        rows = graph.callers(args.qname, depth=args.depth)
+        rows = graph.callers(
+            args.qname, depth=args.depth, include_speculative=args.include_speculative
+        )
     if args.json:
         print(to_json(rows))
     else:
@@ -325,11 +329,36 @@ def cmd_callers(args) -> int:
 
 def cmd_callees(args) -> int:
     with _open(args) as graph:
-        rows = graph.callees(args.qname, depth=args.depth)
+        rows = graph.callees(
+            args.qname, depth=args.depth, include_speculative=args.include_speculative
+        )
     if args.json:
         print(to_json(rows))
     else:
         _print_symbol_table(rows, with_line=False)
+    return 0
+
+
+def cmd_references(args) -> int:
+    """Every call site targeting a symbol — the caller, its file:line, and the
+    edge confidence. Unlike `callers` (which lists distinct caller symbols), this
+    lists each individual reference with its location, so a result is checkable."""
+    with _open(args) as graph:
+        refs = graph.references(args.qname)
+    if args.json:
+        print(to_json(refs))
+        return 0
+    con = console()
+    if not refs:
+        con.print("[dim](no references)[/]")
+        return 0
+    tbl = render.table(caption=f"[dim]{len(refs)} reference(s)[/]")
+    tbl.add_column("CALLER", style="bold", overflow="fold")
+    tbl.add_column("LOCATION", style="cyan", no_wrap=True)
+    tbl.add_column("CONFIDENCE", no_wrap=True)
+    for r in sorted(refs, key=lambda e: (e.src_qname, e.line)):
+        tbl.add_row(r.src_qname, _loc(r.file, r.line) or "?", confidence_text(r.confidence))
+    con.print(tbl)
     return 0
 
 
@@ -700,19 +729,41 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--kind")
     p.add_argument("--framework")
     p.add_argument("--route")
+    p.add_argument("--limit", type=int)
     p.set_defaults(func=cmd_entrypoints)
 
+    speculative_help = (
+        "also include speculative edges: class-hierarchy (CHA) guesses and "
+        "unresolved wildcard/dynamic calls (lower confidence, off by default)"
+    )
     p = sub.add_parser("callers", help="who calls this symbol")
     add_db(p)
     p.add_argument("qname")
     p.add_argument("--depth", type=int, default=1)
+    p.add_argument(
+        "--include-speculative",
+        dest="include_speculative",
+        action="store_true",
+        help=speculative_help,
+    )
     p.set_defaults(func=cmd_callers)
 
     p = sub.add_parser("callees", help="what this symbol calls")
     add_db(p)
     p.add_argument("qname")
     p.add_argument("--depth", type=int, default=1)
+    p.add_argument(
+        "--include-speculative",
+        dest="include_speculative",
+        action="store_true",
+        help=speculative_help,
+    )
     p.set_defaults(func=cmd_callees)
+
+    p = sub.add_parser("references", help="every call site targeting a symbol, with file:line")
+    add_db(p)
+    p.add_argument("qname")
+    p.set_defaults(func=cmd_references)
 
     p = sub.add_parser("paths", help="source -> sink call paths")
     add_db(p)

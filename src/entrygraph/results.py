@@ -58,7 +58,6 @@ class FileInfo:
     path: str
     language: str | None
     size_bytes: int
-    symbol_count: int = 0
     skip_reason: str | None = None
 
 

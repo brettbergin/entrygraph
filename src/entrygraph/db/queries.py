@@ -150,7 +150,14 @@ def select_entrypoints(
         .join(models.Symbol, models.Entrypoint.symbol_id == models.Symbol.id)
         .join(models.File, models.Symbol.file_id == models.File.id, isouter=True)
         .where(models.Entrypoint.repo_id == repo_id)
-        .order_by(models.Entrypoint.id)
+        # group related routes together (framework, then route) instead of raw
+        # insert order; id is the stable tiebreaker
+        .order_by(
+            models.Entrypoint.kind,
+            models.Entrypoint.framework,
+            models.Entrypoint.route,
+            models.Entrypoint.id,
+        )
     )
     if kind is not None:
         stmt = stmt.where(models.Entrypoint.kind == EntrypointKind(kind))

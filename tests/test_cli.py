@@ -221,6 +221,15 @@ def test_callers(db, capsys):
     assert "app.routes.create_report" in capsys.readouterr().out
 
 
+def test_references_shows_call_sites(db, capsys):
+    assert main(["references", "--db", db, "app.services.run_report", "--json"]) == 0
+    refs = json.loads(capsys.readouterr().out)
+    assert refs
+    # each reference carries a caller, a line, and a confidence — enough to check it
+    assert all({"src_qname", "line", "confidence"} <= set(r) for r in refs)
+    assert any(r["src_qname"] == "app.routes.create_report" for r in refs)
+
+
 def test_stats(db, capsys):
     assert main(["stats", "--db", db]) == 0
     assert "symbols" in capsys.readouterr().out

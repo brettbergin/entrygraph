@@ -405,14 +405,24 @@ class CodeGraph:
     # ---------------- traversal ----------------
 
     def callers(
-        self, target: SourceSpec, *, depth: int = 1, edge_kinds: tuple[str, ...] = ("calls",)
+        self,
+        target: SourceSpec,
+        *,
+        depth: int = 1,
+        edge_kinds: tuple[str, ...] = ("calls",),
+        include_speculative: bool = False,
     ) -> list[Symbol]:
-        return self._neighbors(target, depth, "in", edge_kinds)
+        return self._neighbors(target, depth, "in", edge_kinds, include_speculative)
 
     def callees(
-        self, target: SourceSpec, *, depth: int = 1, edge_kinds: tuple[str, ...] = ("calls",)
+        self,
+        target: SourceSpec,
+        *,
+        depth: int = 1,
+        edge_kinds: tuple[str, ...] = ("calls",),
+        include_speculative: bool = False,
     ) -> list[Symbol]:
-        return self._neighbors(target, depth, "out", edge_kinds)
+        return self._neighbors(target, depth, "out", edge_kinds, include_speculative)
 
     def references(self, target: SourceSpec) -> list[Edge]:
         """All inbound edges (any kind) to the matching symbols."""
@@ -934,14 +944,26 @@ class CodeGraph:
         return ids
 
     def _neighbors(
-        self, target, depth: int, direction: str, edge_kinds: tuple[str, ...]
+        self,
+        target,
+        depth: int,
+        direction: str,
+        edge_kinds: tuple[str, ...],
+        include_speculative: bool = False,
     ) -> list[Symbol]:
+        # Default to resolved edges only (EXACT/IMPORT/unique-name FUZZY), matching
+        # paths(): the speculative class-hierarchy fan-out and unresolved wildcard
+        # guesses are noise in a caller/callee listing that carries no confidence
+        # marker. include_speculative lowers the floor and admits CHA edges.
+        floor = 0 if include_speculative else int(Confidence.FUZZY)
         with self._session_factory() as session:
             ids = self._spec_to_ids(session, target)
             if not ids:
                 raise SymbolNotFoundError(f"no symbol matching {target!r}")
             cache = self._cache(session, edge_kinds)
-            found = cache.neighborhood(ids, depth, direction)
+            found = cache.neighborhood(
+                ids, depth, direction, min_confidence=floor, include_cha=include_speculative
+            )
             symbol_map = q.symbols_by_ids(session, self._repo_id, found)
         return sorted(symbol_map.values(), key=lambda s: s.qname)
 

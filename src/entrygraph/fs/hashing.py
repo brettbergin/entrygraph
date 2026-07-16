@@ -88,7 +88,16 @@ def diff_files(
             diff.hashes[wf.path] = prior.content_hash
             continue
         _finalize_skip(wf)
-        new_hash = hash_file(wf.abs_path) if not wf.skip_reason else prior.content_hash
+        if wf.skip_reason:
+            # The file changed (size/mtime differ) and now trips the content gate
+            # (grew past the cap, became minified/binary). It must NOT be classified
+            # unchanged off the carried-over hash — that would leave the symbols and
+            # edges from when it was indexed. Treat it as changed so its stale graph
+            # is wiped and the row records the new skip_reason.
+            diff.hashes[wf.path] = prior.content_hash
+            diff.changed.append(wf)
+            continue
+        new_hash = hash_file(wf.abs_path)
         diff.hashes[wf.path] = new_hash
         if new_hash == prior.content_hash:
             diff.unchanged.append(wf)

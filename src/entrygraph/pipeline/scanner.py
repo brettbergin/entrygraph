@@ -471,16 +471,15 @@ def _load_existing_symbols(session: Session, repo_id: int, table: SymbolTable) -
                 # call_result binding in a changed file can still type through an
                 # unchanged callee's return type on incremental re-index (#113)
                 table.return_types[qname] = type_ref
-    # class bases/parents of surviving classes, from inherit + implement edges.
-    # dst_qname is the already-resolved parent FQN, so it feeds both class_bases
-    # (raw text, legacy) and class_parents (the transitive ancestor walk).
+    # class parents of surviving classes, from inherit + implement edges.
+    # dst_qname is the already-resolved parent FQN; keep only project parents,
+    # which are the walkable ancestors for the transitive hierarchy.
     base_rows = session.execute(
         select(Symbol.qname, Edge.dst_qname)
         .join(Edge, Edge.src_symbol_id == Symbol.id)
         .where(Edge.repo_id == repo_id, Edge.kind.in_((EdgeKind.INHERITS, EdgeKind.IMPLEMENTS)))
     )
     for class_qname, base_qname in base_rows:
-        table.class_bases.setdefault(class_qname, []).append(base_qname)
         if base_qname in table.by_fqn:  # project parent -> walkable ancestor
             table.class_parents.setdefault(class_qname, []).append(base_qname)
 
@@ -645,8 +644,6 @@ def _write_symbols(session, extractions, file_id_by_path, alloc, table, repo_id)
                 x.language,
                 raw.parent_qualified_name,
             )
-            if raw.kind is SymbolKind.CLASS and raw.bases:
-                table.class_bases[raw.qualified_name] = raw.bases
             symbol_rows.append(
                 {
                     "id": symbol_id,

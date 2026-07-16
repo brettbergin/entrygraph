@@ -16,7 +16,6 @@ class SymbolTable:
         self.lang: dict[int, str] = {}  # symbol id -> source language (for fuzzy scoping)
         self.project_modules: set[str] = set()
         self.module_symbol_ids: dict[str, int] = {}  # module_path -> module symbol id
-        self.class_bases: dict[str, list[str]] = {}  # class fqn -> raw base texts
         # class fqn -> resolved parent FQNs (project or external), for the
         # transitive ancestor walk and class-hierarchy analysis (see hierarchy.py).
         self.class_parents: dict[str, list[str]] = {}
