@@ -830,8 +830,7 @@ class CodeGraph:
             valid = registry.sink_categories()
             if sink_category not in valid:
                 raise UnknownCategoryError(
-                    f"unknown sink category {sink_category!r}; valid: "
-                    f"{', '.join(valid)} (or 'all')"
+                    f"unknown sink category {sink_category!r}; valid: {', '.join(valid)} (or 'all')"
                 )
 
     def _spec_to_ids(self, session: Session, spec) -> set[int]:

@@ -262,9 +262,7 @@ def test_paths_thin_coverage_caveat(tmp_path, capsys, monkeypatch):
     from entrygraph.cli import main as cli_main
     from entrygraph.detect.taint import CatalogCoverage
 
-    thin = CatalogCoverage(
-        sinks=4, sources=1, sink_categories=("command_exec",), tier="minimal"
-    )
+    thin = CatalogCoverage(sinks=4, sources=1, sink_categories=("command_exec",), tier="minimal")
     monkeypatch.setattr(cli_main, "_catalog_coverage", lambda: {"rust": thin})
 
     repo = tmp_path / "rustapp"

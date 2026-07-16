@@ -41,5 +41,3 @@ def test_explicit_sources_flag_drops_implicit(graph):
     heads = {p.symbols[0].qname for p in paths}
     assert "app.explicit_handler" in heads
     assert "app.implicit_handler" not in heads
-
-

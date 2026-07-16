@@ -15,8 +15,7 @@ Entrypoints include decorator/attribute routes, call-based route registration,
 middleware, and config-file handlers (serverless, SAM, Procfile, Dockerfile).
 Reachability enumerates real call paths from a catalog taint source to a tagged
 sink and reports **checkable facts** about each — the sink's catalog severity,
-the weakest edge confidence, and a same-function reaching-defs verdict (`flow:
-confirmed` / `not observed`) — with class-hierarchy analysis to recover virtual
+the weakest edge confidence, and a same-function reaching-defs verdict (`flow: confirmed` / `not observed`) — with class-hierarchy analysis to recover virtual
 dispatch. Every hop carries a `file:line` and the literal source and sink lines,
 so a finding is a lead you can open and verify, not a score to trust.
 

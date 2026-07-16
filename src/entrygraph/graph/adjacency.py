@@ -84,9 +84,11 @@ def _terminal_ok(
     (``open_sink_ids``), which qualifies on its own."""
     if sink_edge_ids is None:
         return True
-    if hop is not None and hop.edge_id in sink_edge_ids:
+    if hop is None:
+        return False
+    if hop.edge_id in sink_edge_ids:
         return True
-    return bool(open_sink_ids) and hop is not None and hop.dst in open_sink_ids
+    return open_sink_ids is not None and hop.dst in open_sink_ids
 
 
 class AdjacencyCache:
