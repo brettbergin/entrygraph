@@ -30,14 +30,29 @@ Requires Python ≥ 3.13. Installs the `entrygraph` command (you can also run it
 
 ## Quick start (CLI)
 
-Index a repo once, then query the resulting `.entrygraph.db` as often as you
-like. Every query command takes `--db PATH` (defaults to discovering
-`.entrygraph.db`) and `--json` for machine-readable output.
+Index a repo once, then query it as often as you like:
+
+```bash
+cd /path/to/acme-api
+entrygraph index .          # build the graph
+entrygraph entrypoints      # query it — no --db needed
+```
+
+**One global store, auto-scoped.** By default every `index` writes into a single
+shared database at `~/.entrygraph/.entrygraph.db`, keyed by repo root, and every
+query command scopes to the repository whose root is your working directory (or
+its nearest ancestor). So you index each repo once and just `cd` between them —
+no per-project file to track. Pass `--db PATH` to any command to use an isolated
+database instead (handy in CI). Every query command also takes `--json` for
+machine-readable output.
 
 ### `index` — build the graph
 
-Walk the tree and extract symbols, imports, and calls into `.entrygraph.db`.
-Incremental by default (only changed files are reparsed); `--full` rebuilds.
+Walk the tree and extract symbols, imports, and calls into the index.
+Incremental by default (only changed files are reparsed); `--full` rebuilds,
+`--paranoid` re-hashes every file (skips the mtime fast path), and
+`--include-tests` indexes test files too (excluded by default; flipping it needs
+`--full`).
 
 ```bash
 entrygraph index .
@@ -47,7 +62,7 @@ entrygraph index .
 ╭───────────────── ✓ indexed acme-api ──────────────────╮
 │ files    5 indexed, 0 skipped, 0 deleted of 5 scanned │
 │ graph    32 symbols  34 edges  5 entrypoints          │
-│ db       /path/to/acme-api/.entrygraph.db             │
+│ db       /Users/you/.entrygraph/.entrygraph.db        │
 ╰─────────────────────── 0.137s ────────────────────────╯
 ```
 
@@ -59,11 +74,11 @@ entrygraph index https://github.com/semgrep/semgrep     # or git@github.com:org/
 ```
 
 The clone lands in a reused workspace (`./.entrygraph/clones/<host>/<org>/<repo>`)
-and the index database in the current directory (`./<repo>.entrygraph.db`), so
-follow-up queries work with `--db <repo>.entrygraph.db`. Re-running `index <url>`
-fetches and updates the existing checkout instead of re-cloning. The clone is
-hardened — shallow, repo hooks disabled, no interactive credential prompt, and a
-wall-clock timeout — and the indexed code is never executed.
+and the graph goes into the same global index (keyed by the checkout root), so
+follow-up queries run from that checkout directory or with `--db`. Re-running
+`index <url>` fetches and updates the existing checkout instead of re-cloning.
+The clone is hardened — shallow, repo hooks disabled, no interactive credential
+prompt, and a wall-clock timeout — and the indexed code is never executed.
 
 | URL flag                     | Meaning                                                                          |
 | ---------------------------- | -------------------------------------------------------------------------------- |
@@ -105,8 +120,8 @@ Frameworks
 ### `entrypoints` — your attack surface
 
 Every HTTP route, CLI command, task, lambda, middleware, and `main` — with its
-framework, method, route, and handler symbol. Filter with `--kind`,
-`--framework`, or `--route`.
+framework, method, route, and handler symbol, grouped by kind, framework, and
+route. Filter with `--kind`, `--framework`, or `--route`, and cap with `--limit`.
 
 ```bash
 entrypoints --kind http_route      # or: --framework flask / --route '/api/*'
@@ -127,16 +142,11 @@ entrypoints --kind http_route      # or: --framework flask / --route '/api/*'
 
 ### `symbols`, `callers`, `callees`, `references` — search & walk the call graph
 
-`symbols` globs on name or qualified name (filter by `--kind`/`--file`);
-`callers`/`callees` walk the call graph (`--depth N`); `references` lists every
-individual call site targeting a symbol, each with its `file:line` and edge
-confidence.
+`symbols` globs on `--name` or `--qname` (filter by `--kind`/`--file`, cap with
+`--limit`):
 
 ```bash
 entrygraph symbols --kind class --name 'Report*'
-entrygraph callers app.services.run_report        # who calls it
-entrygraph callees app.services.run_report        # what it calls
-entrygraph references app.services.run_report     # each call site + file:line
 ```
 
 ```
@@ -147,9 +157,43 @@ entrygraph references app.services.run_report     # each call site + file:line
 └──────┴───────────────────────────┴─────────────────┴─────┘
 ```
 
+`callers`/`callees` walk the call graph (`--depth N`, default 1) and list the
+distinct symbols on the other end of an edge:
+
+```bash
+entrygraph callers app.services.run_report        # who calls it
+entrygraph callees app.services.run_report        # what it calls
+```
+
+```
+┏━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┓
+┃KIND     ┃ QNAME                    ┃ FILE         ┃
+┡━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━┩
+│function │ app.routes.create_report │ app/routes.py│
+│function │ cli.report               │ cli.py       │
+└─────────┴──────────────────────────┴──────────────┘
+```
+
 By default `callers`/`callees` list only *resolved* edges (exact/import and
 unique-name fuzzy binds). `--include-speculative` adds class-hierarchy guesses
 and unresolved wildcard/dynamic calls (lower confidence, noisier).
+
+`references` is the drill-down: instead of distinct caller symbols, it lists
+*every individual call site* targeting a symbol, each with its `file:line` and
+edge-resolution confidence — the checkable form you act on:
+
+```bash
+entrygraph references app.services.run_report
+```
+
+```
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃CALLER                   ┃ LOCATION         ┃ CONFIDENCE┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
+│app.routes.create_report │ app/routes.py:20 │ import    │
+│cli.report               │ cli.py:11        │ import    │
+└─────────────────────────┴──────────────────┴───────────┘
+```
 
 ### `paths` — source → sink reachability
 
@@ -179,24 +223,39 @@ entrygraph paths --source-category http_input --sink-category command_exec
 
 - **Reachability check**: `paths` exits `0` when a path is found, `1` when none —
   `entrygraph paths --source-category http_input --sink-category command_exec && echo reachable`.
+
 - **Sources & sinks**: use `--source-category`/`--sink-category` to start from
   every registered taint source and end at every tagged sink of a category, or
   name an exact `--source`/`--sink` (the language prefix is optional —
   `--sink subprocess.run` resolves to `py:subprocess.run`). Combine a `--source`
   glob with a category to union both. `paths --list-categories` prints the valid
-  category names; an unknown category is a hard error, never a silent empty
-  result.
-- **Precision/recall dial**: by default only high-confidence edges are traversed.
-  Widen with `--include-unresolved` (wildcard `py:*.execute` sinks + dynamic
-  calls), `--include-fuzzy` (speculative class-hierarchy edges), or
-  `--include-callbacks` (function/method values passed as arguments — handler
-  registrations like `http.HandleFunc("/", handler)` or `this::handle`).
+  category names for the index; an unknown category is a hard error, never a
+  silent empty result:
+
+  ```bash
+  entrygraph paths --list-categories
+  # source categories  cli_arg, env_input, http_input, stdin_input, user_input
+  # sink categories    code_eval, command_exec, deserialization, path_traversal, sql, ssrf, …
+  ```
+
+- **Precision/recall dial**: by default the search is adaptive — it tries only
+  high-confidence (resolved) edges first and automatically widens to the
+  speculative frontier if that finds nothing. `--strict` disables the widening
+  (resolved edges only). To force a specific frontier for one run: widen with
+  `--include-unresolved` (wildcard `py:*.execute` sinks + dynamic calls),
+  `--include-fuzzy` (speculative class-hierarchy edges), or `--include-callbacks`
+  (function/method values passed as arguments — handler registrations like
+  `http.HandleFunc("/", handler)` or `this::handle`); `--min-confidence N` sets an
+  explicit floor. Bound the search with `--max-depth` (default 25) and
+  `--max-paths` (default 10).
+
 - **Source provenance**: an `http_input`/`cli_arg` source is labeled `· explicit`
   when the handler demonstrably reads request input (a catalog accessor call like
   `request.args.get("q")`) or `· handler` when the handler is merely shaped like a
   source and reaches the sink without a proven read. `--explicit-sources` drops
   the handler-only seeds entirely (at the cost of property-read frameworks like
   Express `req.body`).
+
 - **Flow verification**: a bounded reaching-defs check labels each path with
   whether a source value actually flows to the sink — `flow: confirmed` when it
   does, `flow: not observed` when it provably doesn't. It follows up to
@@ -222,36 +281,48 @@ entrygraph --help          # every command and flag
 ```
 
 ```
-╭─────────────── index stats ────────────────╮
+╭──────────────── index stats ────────────────╮
 │ ┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓ │
 │ ┃metric           ┃                 value┃ │
 │ ┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩ │
 │ │repo_root        │ /path/to/acme-api    │ │
+│ │index_generation │                     1│ │
 │ │files            │                     5│ │
 │ │symbols          │                    32│ │
 │ │edges            │                    34│ │
+│ │resolved_edges   │                    34│ │
 │ │entrypoints      │                     5│ │
 │ │sink_edges       │                     2│ │
+│ │source_edges     │                     1│ │
 │ └─────────────────┴──────────────────────┘ │
-╰────────────────────────────────────────────╯
+╰──────────────────────────────────────────────╯
+taint catalog: python full
 ```
 
-Add `--json` to any query command for machine-readable output (each path
-includes its `severity`, `min_confidence`, `taint_verified`, and `may_continue`):
+Add `--json` to any query command for machine-readable output. Each path carries
+its `severity`, `min_confidence` (the weakest edge confidence, 0 unresolved →
+3 exact), `taint_verified` (the flow verdict), source provenance, the symbol
+chain, and the literal source/sink lines:
 
 ```json
 [
   {
+    "length": 5,
+    "min_confidence": 2,
     "severity": "high",
-    "min_confidence": 40,
-    "taint_verified": true,
     "may_continue": false,
+    "source_kind": "explicit",
+    "taint_verified": true,
+    "source_channel": "query",
+    "source_key": "name",
     "symbols": [
       "app.routes.create_report", "app.services.run_report",
       "app.services.ReportRunner.start",
       "app.services.ReportRunner.render_and_execute", "py:subprocess.run"
     ],
-    "lines": [20, 27, 17, 22]
+    "lines": [20, 27, 17, 22],
+    "source_line": "cmd = request.args.get(\"cmd\")",
+    "sink_line": "subprocess.run(cmd, shell=True)"
   }
 ]
 ```
