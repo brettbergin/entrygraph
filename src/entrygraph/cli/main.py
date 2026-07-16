@@ -28,6 +28,7 @@ from entrygraph.cli.render import (
     to_json,
 )
 from entrygraph.errors import EntrygraphError
+from entrygraph.kinds import Confidence
 
 DEFAULT_DB_NAME = ".entrygraph.db"
 
@@ -435,6 +436,42 @@ _SEVERITY_STYLE = {
 }
 
 
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def _entrypoint_label(ep) -> str:
+    """A short, human label for the entrypoint a path is reachable through:
+    `POST /reports` for a route, otherwise the command/handler name."""
+    if ep.route:
+        method = (ep.http_method or "").strip()
+        return f"{method} {ep.route}".strip()
+    return _display_name(ep.symbol)
+
+
+def _confidence_phrase(min_conf: int) -> str:
+    """The weakest link on the path, in plain terms (drives whether to trust it)."""
+    if min_conf >= int(Confidence.IMPORT):
+        return "resolved — every call is exact/import"
+    if min_conf >= int(Confidence.FUZZY):
+        return "fuzzy — the weakest call is a unique-name guess"
+    return "unresolved — the weakest call is a wildcard/dynamic guess"
+
+
+def _verdict(path) -> tuple[str, str]:
+    """(text, style) for the finding's headline: fuses the flow verdict with the
+    sink's severity so a reader knows at a glance whether to act."""
+    sev = path.severity or "unknown"
+    cat = path.sink_category or "sink"
+    tail = f"{sev}-severity {cat} sink"
+    verified = getattr(path, "taint_verified", None)
+    if verified is True:
+        return f"confirmed data flow → {tail}", _SEVERITY_STYLE.get(path.severity, "red")
+    if verified is False:
+        return f"reachable, but no data flow observed → {tail}", "yellow"
+    return f"reachable → {tail}", "yellow"
+
+
 def _line_reader(repo_root: str | None):
     """Best-effort reader of the literal source line at file:line, given the indexed
     repo root. Caches each file's lines; returns None when the repo/file/line is gone
@@ -465,105 +502,94 @@ def _line_reader(repo_root: str | None):
     return read
 
 
-def _path_card(index: int, path, source_label: str | None, read_line=None) -> Group:
-    """A finding card: SOURCE and SINK on labeled lines with clickable file:line, the
-    call chain between them, and per-edge confidence — the shape a reviewer reads.
-    When `read_line` is given, the literal source and sink lines are shown too."""
+def _path_card(index: int, path, read_line=None, entrypoint=None) -> Group:
+    """A finding card, read top-down:
+
+    [1] <verdict — flow + severity, so you know whether to act>
+      entrypoint  <the route/command this is reachable through>
+      source      <where untrusted input enters>   file:line
+                  <the literal source line>
+        ↓         <each call on the way to the sink>  file:line
+      sink        <the dangerous call>               file:line
+                  <the literal sink line>
+      confidence  <how trustworthy the weakest link is>
+    """
     syms, edges = path.symbols, path.edges
     read_line = read_line or (lambda _f, _l: None)
-    # A module-level route source (whole Grape/Rails file) has no meaningful line —
-    # show just the file, not the arbitrary `:1`. Real handler symbols keep file:line.
-    src_file = getattr(syms[0], "file", None)
-    src_loc = src_file if syms[0].kind == "module" else _loc(src_file, syms[0].start_line)
-    # rows: (role, name, location, annotation) — role in {source, hop, sink}
-    source_ann = Text("")
-    if source_label:
-        detail = ""
-        # provenance: a demonstrable accessor read (explicit) vs handler-as-source
-        # (the handler is shaped like a source but no request read is proven) — #96
-        kind = getattr(path, "source_kind", None)
-        if kind in ("explicit", "handler", "handler_params"):
-            detail += " · explicit" if kind == "explicit" else " · handler"
-        channel = getattr(path, "source_channel", None)
-        key = getattr(path, "source_key", None)
-        if channel:
-            detail += f" · {channel}"
-        if key:
-            detail += f' "{key}"'
-        source_ann = Text(f"({source_label}{detail})", style="cyan")
-    rows: list[tuple[str, str, str | None, Text]] = [
-        ("source", _display_name(syms[0]), src_loc, source_ann)
-    ]
-    for i, edge in enumerate(edges):
-        is_sink = i == len(edges) - 1
-        # the call happens in the caller's file (syms[i]) at the edge's line; this
-        # also gives the sink a real location, since the sink symbol is external.
-        loc = _loc(getattr(syms[i], "file", None), edge.line)
-        ann = Text()
-        if is_sink and edge.sink_id:
-            ann.append(f"⚡ {edge.sink_id}  ", style="bold red")
-        ann.append_text(confidence_text(edge.confidence))
-        if is_sink and edge.constant_args:
-            ann.append("  const-args", style="dim green")
-        rows.append(("sink" if is_sink else "hop", _display_name(syms[i + 1]), loc, ann))
 
-    # Literal sink line (the dangerous call). The source line is only useful when the
-    # source is a real handler symbol; a module-level route source (whole Grape/Rails
-    # file) points at line 1 — a magic comment / import — so skip it there.
-    snippet = {
-        "sink": read_line(getattr(syms[-2], "file", None), edges[-1].line) if edges else None,
-    }
-    if syms[0].kind != "module":
-        snippet["source"] = read_line(getattr(syms[0], "file", None), syms[0].start_line)
-
-    name_w = max(len(r[1]) for r in rows)
-    labels = {"source": "source ", "hop": "  ↓    ", "sink": "sink   "}
-
-    # The head line states facts, not a blended score: the tagged sink's catalog
-    # severity and the weakest edge confidence — each checkable against the code.
+    # --- headline verdict ---
+    verdict_text, verdict_style = _verdict(path)
     head = Text()
     head.append(f"[{index}] ", style="dim")
-    if path.severity:
-        head.append("severity ", style="dim")
-        head.append(path.severity, style=_SEVERITY_STYLE.get(path.severity, ""))
-        head.append("  ", style="dim")
-    head.append("confidence ", style="dim")
-    head.append_text(confidence_text(path.min_confidence))
+    head.append(verdict_text, style=f"bold {verdict_style}")
     lines: list = [head]
-    for role, name, loc, ann in rows:
-        # metadata rows crop rather than wrap: long file paths + tags otherwise leave
-        # the confidence word dangling on its own line on a narrow terminal.
+
+    # rows: (label, name, location, annotation, snippet)
+    src_file = getattr(syms[0], "file", None)
+    # a module-level route source (whole Grape/Rails file) has no meaningful line
+    src_loc = src_file if syms[0].kind == "module" else _loc(src_file, syms[0].start_line)
+
+    # what the source reads, in plain words (channel + key when we proved a read)
+    src_ann = Text()
+    channel, key = path.source_channel, path.source_key
+    if channel and key:
+        src_ann.append(f'{channel} "{key}"', style="cyan")
+    elif channel:
+        src_ann.append(channel, style="cyan")
+    elif path.source_kind in ("handler", "handler_params"):
+        src_ann.append("input via handler (no explicit read)", style="dim")
+
+    rows: list[tuple[str, str, str | None, Text, str | None]] = []
+    if entrypoint is not None:
+        ep_ann = Text(
+            f"{entrypoint.framework or ''} {entrypoint.kind}".strip(), style="dim magenta"
+        )
+        rows.append(("entrypoint", _entrypoint_label(entrypoint), None, ep_ann, None))
+    src_snip = None if syms[0].kind == "module" else read_line(src_file, syms[0].start_line)
+    rows.append(("source", _display_name(syms[0]), src_loc, src_ann, src_snip))
+
+    for i, edge in enumerate(edges):
+        is_sink = i == len(edges) - 1
+        loc = _loc(getattr(syms[i], "file", None), edge.line)
+        ann = Text()
+        # only flag the uncertain links; a resolved (exact/import) hop stays clean
+        if edge.confidence <= int(Confidence.FUZZY):
+            ann.append(f"~ {confidence_text(edge.confidence).plain} (guess)", style="yellow")
+        if is_sink and edge.constant_args:
+            ann.append("  literal args", style="dim green")
+        snip = read_line(getattr(syms[i], "file", None), edge.line) if is_sink else None
+        rows.append(("sink" if is_sink else "↓", _display_name(syms[i + 1]), loc, ann, snip))
+
+    name_w = max(len(r[1]) for r in rows)
+    for label, name, loc, ann, snip in rows:
         line = Text("  ", no_wrap=True, overflow="ellipsis")
-        line.append(labels[role], style="bold" if role != "hop" else "dim")
-        line.append(" ")
-        name_style = "bold red" if role == "sink" else "bold" if role == "source" else "white"
+        is_step = label == "↓"
+        line.append(f"{label:<10} " if not is_step else "    ↓      ", style=_row_style(label))
+        name_style = "bold red" if label == "sink" else "bold" if label == "source" else "white"
         line.append(name.ljust(name_w), style=name_style)
         line.append("  ")
-        line.append(loc or "?", style="cyan" if loc else "dim")  # not padded — keeps rows narrow
-        line.append("  ")
-        line.append_text(ann)
+        line.append(loc or "", style="cyan" if loc else "dim")
+        if ann.plain:
+            line.append("  ")
+            line.append_text(ann)
         lines.append(line)
-        snip_text = snippet.get(role)
-        if snip_text:
-            # the literal code line word-wraps in full (this is the point of showing
-            # it); the left pad keeps it and its wrapped continuation aligned under
-            # the name column, and the italic styling sets it apart from metadata.
-            snip = Text(snip_text, style="italic red" if role == "sink" else "dim italic")
-            lines.append(Padding(snip, (0, 0, 0, 10), expand=False))
-    verified = getattr(path, "taint_verified", None)
-    hops = max(len(path.symbols) - 2, 0)  # interior call hops between source and sink
-    scope = "handler" if hops == 0 else f"{hops} hop{'s' if hops != 1 else ''}"
-    if verified is True:
-        lines.append(Text(f"       flow: confirmed ({scope})", style="green"))
-    elif verified is False:
-        lines.append(
-            Text(f"       flow: not observed ({scope}, reachability only)", style="dim yellow")
-        )
+        if snip:
+            style = "italic red" if label == "sink" else "dim italic"
+            lines.append(Padding(Text(snip, style=style), (0, 0, 0, 13), expand=False))
+
+    conf = Text("  ")
+    conf.append(f"{'confidence':<10} ", style="dim")
+    conf.append(_confidence_phrase(path.min_confidence), style="dim")
+    lines.append(conf)
     if path.may_continue:
         lines.append(
-            Text("       (path may continue via dynamic/excluded edges)", style="dim yellow")
+            Text("             path may continue past excluded/dynamic edges", style="dim")
         )
     return Group(*lines)
+
+
+def _row_style(label: str) -> str:
+    return "bold" if label in ("source", "sink", "entrypoint") else "dim"
 
 
 def cmd_paths(args) -> int:
@@ -605,6 +631,9 @@ def cmd_paths(args) -> int:
         )
         read_line = _line_reader(graph.repo_root)  # read original lines while db is open-adjacent
         coverage_note = _thin_coverage_note(graph.detect().languages, len(paths))
+        # map each path's source symbol to the entrypoint it's reachable through
+        # (the HTTP route / CLI command an attacker would actually hit), when any
+        ep_by_symbol = {ep.symbol.id: ep for ep in graph.entrypoints()}
     if coverage_note:
         print(coverage_note, file=sys.stderr)
     if getattr(paths, "mode", None) == "widened":
@@ -633,11 +662,22 @@ def cmd_paths(args) -> int:
                         "length": len(p.symbols),
                         "min_confidence": p.min_confidence,
                         "severity": p.severity,
+                        "sink_category": p.sink_category,
                         "may_continue": p.may_continue,
                         "source_kind": p.source_kind,
                         "taint_verified": p.taint_verified,
                         "source_channel": p.source_channel,
                         "source_key": p.source_key,
+                        "entrypoint": (
+                            {
+                                "kind": ep.kind,
+                                "framework": ep.framework,
+                                "http_method": ep.http_method,
+                                "route": ep.route,
+                            }
+                            if (ep := ep_by_symbol.get(p.symbols[0].id))
+                            else None
+                        ),
                         "symbols": [s.qname for s in p.symbols],
                         "lines": [e.line for e in p.edges],
                         "source_line": None
@@ -663,22 +703,15 @@ def cmd_paths(args) -> int:
             Panel("[yellow]No source → sink paths found.[/]", border_style="yellow", expand=False)
         )
         return 1
-    origin = (
-        args.source or (args.source_category and f"category:{args.source_category}") or "source"
-    )
-    target = args.sink or (args.sink_category and f"category:{args.sink_category}") or "sink"
-    con.print(f"[bold]{len(paths)}[/] path(s)  [dim]{origin} → {target}[/]\n")
-    source_label = args.source_category or (args.source and "source")
+    origin = args.source or args.source_category or "source"
+    target = args.sink or args.sink_category or "sink"
+    con.print(f"[bold]{_plural(len(paths), 'path')}[/]  [dim]{origin} → {target}[/]\n")
     for i, path in enumerate(paths, 1):
-        con.print(_path_card(i, path, source_label, read_line))
+        con.print(_path_card(i, path, read_line, entrypoint=ep_by_symbol.get(path.symbols[0].id)))
         con.print()
     con.print(
-        "[dim]confidence: exact/import = resolved · fuzzy/unresolved = speculative"
-        "   ⚡ = tagged sink[/]"
-    )
-    con.print(
-        "[dim]findings are reachability leads to triage, not confirmed dataflow; "
-        "source · explicit = a proven request read, · handler = handler-as-source[/]"
+        "[dim]a finding is a lead to review, not proof of a bug — open the file:line "
+        "and read the code[/]"
     )
     return 0
 
