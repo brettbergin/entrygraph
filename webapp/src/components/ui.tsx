@@ -28,13 +28,3 @@ export function ConfidenceBadge({ confidence }: { confidence: number }) {
     </Label>
   );
 }
-
-export function RiskBadge({ risk }: { risk: number | null }) {
-  if (risk === null) return null;
-  const variant = risk >= 0.7 ? "danger" : risk >= 0.4 ? "severe" : "attention";
-  return (
-    <Label size="small" variant={variant} title="heuristic risk score (0–1, higher = riskier)">
-      risk {risk.toFixed(2)}
-    </Label>
-  );
-}

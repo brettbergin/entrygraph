@@ -99,13 +99,14 @@ def test_shared_adjacency_cache_across_configs(graph):
     assert len(graph._adjacency) == 1
 
 
-# ---------------- S4: enrichment / risk scoring / confidence gating ----------------
+# ---------------- S4: enrichment / fact ranking / confidence gating ----------------
 
 
-def test_paths_carry_risk_score(graph):
+def test_paths_carry_severity_fact(graph):
     paths = graph.paths(source="app.routes.create_report", sink="py:subprocess.run")
     assert paths
-    assert paths[0].risk_score is not None and paths[0].risk_score > 0
+    # the tagged sink's catalog severity rides the path as a displayed fact
+    assert paths[0].severity in ("critical", "high", "medium", "low")
 
 
 def test_adaptive_search_widens_to_wildcard_sinks_strict_excludes(graph):
@@ -135,10 +136,11 @@ def test_sink_terminal_edge_carries_sink_id(graph):
     assert terminal.sink_id == "py.command-exec.subprocess"
 
 
-def test_engines_agree_on_risk_ranked_paths(graph):
+def test_engines_agree_on_ranked_paths(graph):
     mem = graph.paths(source="app.routes.create_report", sink="py:subprocess.run", engine="memory")
     sql = graph.paths(source="app.routes.create_report", sink="py:subprocess.run", engine="sql")
-    assert [round(p.risk_score, 4) for p in mem] == [round(p.risk_score, 4) for p in sql]
+    key = lambda p: (p.severity, p.min_confidence, [s.qname for s in p.symbols])  # noqa: E731
+    assert [key(p) for p in mem] == [key(p) for p in sql]
 
 
 def test_widen_flags_are_monotonic(graph):
@@ -246,6 +248,81 @@ def test_route_handler_passed_by_reference_binds_to_the_handler(tmp_path):
     graph.close()
     chains = [[s.qname for s in p.symbols] for p in paths]
     assert ["controller.getUser", "js:child_process.exec"] in chains
+
+
+def test_unknown_category_raises_with_valid_set(graph):
+    # an unknown category otherwise resolves to an empty pattern set and silently
+    # returns zero paths — indistinguishable from "no reachable sinks"
+    from entrygraph.errors import UnknownCategoryError
+
+    with pytest.raises(UnknownCategoryError, match="command_exec"):
+        graph.paths(source_category="http_input", sink_category="command_injection")
+    with pytest.raises(UnknownCategoryError, match="http_input"):
+        graph.paths(source_category="cli_command", sink_category="command_exec")
+    # 'all' and real categories are accepted
+    assert graph.paths(source_category="http_input", sink_category="all") is not None
+
+
+def test_bare_sink_name_resolves_without_language_prefix(graph):
+    # sink symbols carry a language prefix (py:subprocess.run); a bare name should
+    # still resolve so users needn't know the convention
+    prefixed = graph.paths(source="app.routes.create_report", sink="py:subprocess.run")
+    bare = graph.paths(source="app.routes.create_report", sink="subprocess.run")
+    assert bare and len(bare) == len(prefixed)
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_reachable_and_paths_agree_on_category_terminal(tmp_path, engine):
+    # reachable() must apply the same tagged-terminal-edge filter as paths(): a
+    # handler that only calls the sink symbol with a constant (untagged edge) is
+    # not a command_exec reach (Bug 4 — the two used to disagree).
+    (tmp_path / "app.py").write_text(
+        "import subprocess\n"
+        "from flask import Flask, request\n"
+        "app = Flask(__name__)\n"
+        '@app.route("/c")\n'
+        "def c():\n"
+        '    subprocess.run("ls", shell=True)\n'  # constant arg -> untagged
+    )
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    try:
+        paths = graph.paths(
+            source_category="http_input", sink_category="command_exec", engine=engine
+        )
+        reach = graph.reachable(
+            source_category="http_input", sink_category="command_exec", engine=engine
+        )
+        assert bool(paths) == reach
+    finally:
+        graph.close()
+
+
+def test_category_finding_survives_untagged_crowding(tmp_path):
+    # Bug 3: many benign calls to a shared sink SYMBOL via UNTAGGED edges (the
+    # path_traversal open() sink is arg-hint-gated, so a constant-path open is not
+    # tagged) must not crowd the one real, tagged path out of the candidate pool.
+    # The terminal-edge filter runs inside the traversal, so untagged arrivals
+    # never enter the pool at all.
+    lines = ["from flask import Flask, request", "app = Flask(__name__)"]
+    for i in range(80):
+        lines += [f'@app.route("/b{i}")', f"def b{i}():", '    return open("static.txt").read()']
+    lines += [
+        '@app.route("/vuln")',
+        "def vuln():",
+        '    name = request.args.get("f")',
+        '    return open(name + ".log").read()',  # non-literal path -> tagged edge
+    ]
+    (tmp_path / "app.py").write_text("\n".join(lines) + "\n")
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    try:
+        paths = graph.paths(
+            source_category="http_input", sink_category="path_traversal", max_paths=5
+        )
+        heads = [p.symbols[0].qname for p in paths]
+        # only the tagged path is a candidate; the 80 untagged opens never qualify
+        assert heads == ["app.vuln"]
+    finally:
+        graph.close()
 
 
 def test_sink_category_all_unions_every_tagged_sink(graph):

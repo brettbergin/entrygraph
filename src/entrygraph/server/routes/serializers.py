@@ -1,6 +1,6 @@
 """JSON shapes for the read API — the contract the webapp consumes.
 
-Ported from ``explore/api.py`` and enriched to CLI parity: paths carry per-hop
+Enriched to CLI parity: paths carry per-hop
 edge metadata (line, confidence, via, sanitizers) and literal source/sink line
 snippets read from the repo checkout (best-effort, path-contained).
 """
@@ -12,7 +12,6 @@ from typing import Any
 
 
 def repo_name(root_path: str) -> str:
-    # sentinel:// synthetic roots and real paths both reduce to a readable name
     return root_path.rstrip("/").split("/")[-1] or root_path
 
 
@@ -83,11 +82,13 @@ def make_line_reader(repo_root: str | None):
 
 def path_json(p, read_line=None) -> dict[str, Any]:
     read_line = read_line or (lambda _f, _l: None)
-    src, sink = p.symbols[0], p.symbols[-1]
+    src = p.symbols[0]
     src_line = p.symbols[0].start_line
     sink_edge = p.edges[-1] if p.edges else None
+    # the sink call happens in the caller's file (the sink symbol is external)
+    sink_file = p.symbols[-2].file if len(p.symbols) >= 2 else None
     return {
-        "risk": round(p.risk_score, 4) if p.risk_score is not None else None,
+        "severity": p.severity,
         "verified": p.taint_verified,
         "min_confidence": p.min_confidence,
         "source_category": p.source_category,
@@ -97,7 +98,7 @@ def path_json(p, read_line=None) -> dict[str, Any]:
         "may_continue": p.may_continue,
         "sink_id": sink_edge.sink_id if sink_edge else None,
         "source_snippet": read_line(src.file, src_line),
-        "sink_snippet": read_line(sink.file, sink_edge.line if sink_edge else None),
+        "sink_snippet": read_line(sink_file, sink_edge.line if sink_edge else None),
         "hops": [
             {"qname": sym.qname, "name": sym.name, "file": sym.file, "kind": sym.kind}
             for sym in p.symbols
@@ -110,7 +111,6 @@ def path_json(p, read_line=None) -> dict[str, Any]:
                 "via": e.via,
                 "sink_id": e.sink_id,
                 "constant_args": e.constant_args,
-                "sanitized_by": list(e.sanitized_by),
             }
             for e in p.edges
         ],

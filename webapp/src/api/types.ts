@@ -10,7 +10,6 @@ export interface Me {
   };
   auth_mode: "none" | "oidc";
   auth_disabled: boolean;
-  sentinel_enabled: boolean;
 }
 
 export interface RepoSourceInfo {
@@ -27,7 +26,6 @@ export interface Repo {
   files: number;
   symbols: number;
   indexed_at: string | null;
-  sentinel: boolean;
   source: RepoSourceInfo | null;
 }
 
@@ -117,11 +115,10 @@ export interface PathEdge {
   via: string | null;
   sink_id: string | null;
   constant_args: boolean;
-  sanitized_by: string[];
 }
 
 export interface CallPath {
-  risk: number | null;
+  severity: string | null;
   verified: boolean | null;
   min_confidence: number;
   source_category: string | null;
@@ -181,71 +178,6 @@ export interface RegisterRepoRequest {
   include_tests?: boolean;
 }
 
-export interface GateFinding {
-  fingerprint: string;
-  endpoint_fingerprint: string;
-  source_category: string | null;
-  sink_id: string | null;
-  sink_category: string | null;
-  risk: number;
-  hops: Array<{ qname: string; file: string | null; line: number | null }>;
-}
-
-export interface GateResult {
-  status: "passed" | "failed" | "warned" | "no-baseline";
-  passed: boolean;
-  mode: "block" | "warn";
-  has_baseline: boolean;
-  scan_id: number | null;
-  counts: { new: number; known: number; fixed: number; suppressed: number };
-  new: GateFinding[];
-  gating: GateFinding[];
-  fixed: GateFinding[];
-}
-
-export interface Scan {
-  id: number;
-  status: string;
-  pr_number: number | null;
-  head_sha: string | null;
-  counts: { new: number; known: number; fixed: number; suppressed: number };
-  created_at: string | null;
-}
-
-export interface ScanFinding {
-  id: number;
-  fingerprint: string;
-  status: "new" | "known" | "fixed" | "suppressed";
-  source_category: string | null;
-  sink_id: string | null;
-  risk: number;
-  path: {
-    sink_category: string | null;
-    hops: Array<{ qname: string; file: string | null; line: number | null }>;
-  } | null;
-}
-
-export interface BaselineInfo {
-  branch: string;
-  commit_sha: string | null;
-  created_at: string | null;
-  paths: GateFinding[];
-}
-
-export interface PolicyData {
-  risk_threshold: number;
-  gated_categories: string[] | null;
-  mode: "block" | "warn";
-  min_confidence: "exact" | "import" | "fuzzy" | "unresolved";
-}
-
-export interface Suppression {
-  fingerprint: string;
-  reason: string | null;
-  created_by: string | null;
-  expires_at: string | null;
-}
-
 export interface ApiKey {
   id: number;
   name: string;
@@ -254,18 +186,6 @@ export interface ApiKey {
   created_at: string | null;
   last_used_at: string | null;
   expires_at: string | null;
-}
-
-export interface Installation {
-  id: number;
-  account_login: string;
-  suspended: boolean;
-  repo_count: number;
-}
-
-export interface InstallationRepo {
-  repo_id: number;
-  full_name: string;
 }
 
 export interface PathsQuery {
@@ -280,7 +200,6 @@ export interface PathsQuery {
   include_fuzzy?: boolean;
   include_unresolved?: boolean;
   include_callbacks?: boolean;
-  prune_sanitized?: boolean;
   explicit_sources?: boolean;
   confirmed_only?: boolean;
   taint_hops?: number;

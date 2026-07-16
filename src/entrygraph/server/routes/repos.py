@@ -97,7 +97,6 @@ def _repo_json(r: models.Repository, source: RepoSource | None) -> dict[str, Any
         "files": r.file_count,
         "symbols": r.symbol_count,
         "indexed_at": r.indexed_at.isoformat() if r.indexed_at else None,
-        "sentinel": r.root_path.startswith("sentinel://"),
         "source": {
             "url": source.url,
             "ref": source.ref,
@@ -171,8 +170,6 @@ def reindex_repo(
         if repo is None:
             raise HTTPException(status_code=404, detail="repo not found")
         root = repo.root_path
-    if root.startswith("sentinel://"):
-        raise HTTPException(status_code=422, detail="sentinel-managed repos reindex via PR scans")
     source_row = _sources_by_root(request).get(root)
     source = source_row.url if source_row and source_row.url else root
     if not is_git_url(source) and not Path(source).is_dir():

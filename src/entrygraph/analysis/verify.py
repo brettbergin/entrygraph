@@ -14,8 +14,12 @@ from entrygraph.analysis.facts import extract_function_facts, language_supported
 from entrygraph.analysis.summaries import verify_interprocedural
 from entrygraph.fs.hashing import hash_bytes
 
-# handler-tier source kinds whose parameters seed taint (a request/argv handler)
-_HANDLER_KINDS = frozenset({"handler", "handler_params"})
+# Source kinds whose parameters seed taint. Handler tiers receive the request/
+# argv as parameters; "spec" means the user *named* this function as the source,
+# so its parameters are the attacker-controlled values by definition — without
+# this seed every `--source <qname>` query was vacuously refuted (no taint ever
+# entered, so "no flow" was proven for textbook direct injections).
+_PARAM_SEED_KINDS = frozenset({"handler", "handler_params", "spec"})
 
 
 class FileFactCache:
@@ -90,7 +94,7 @@ def verify_path(
         is_method.append(sym.kind == "method")
 
     seed_roots: set[str] = set()
-    if source_kind in _HANDLER_KINDS:
+    if source_kind in _PARAM_SEED_KINDS:
         seed_roots |= set(facts_list[0].params)
     # A parameter-declarator accessor (FastAPI `q: str = Query(...)`, etc.) sits in
     # the handler's signature, so its tainted value is a *parameter*, not a

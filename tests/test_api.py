@@ -86,6 +86,31 @@ def test_callers_callees(graph):
         graph.callers("no.such.symbol")
 
 
+def test_callers_exclude_speculative_by_default(tmp_path):
+    # a call on a locally-typed receiver resolves EXACT; an unknown-receiver call to
+    # the same method name is only a speculative CHA/wildcard guess. The default
+    # callers list must not include the speculative caller; --include-speculative does.
+    (tmp_path / "app.py").write_text(
+        "class A:\n"
+        "    def run(self): pass\n"
+        "class B:\n"
+        "    def run(self): pass\n"
+        "def direct():\n"
+        "    a = A()\n"
+        "    a.run()\n"  # resolves to A.run (receiver-typed)
+        "def indirect(x):\n"
+        "    x.run()\n"  # unknown receiver -> speculative only
+    )
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    try:
+        default = {c.qname for c in graph.callers("app.A.run")}
+        widened = {c.qname for c in graph.callers("app.A.run", include_speculative=True)}
+        assert "app.direct" in default
+        assert widened >= default
+    finally:
+        graph.close()
+
+
 def test_references(graph):
     refs = graph.references("app.services.run_report")
     assert {r.src_qname for r in refs} >= {"app.routes.create_report", "cli.report"}

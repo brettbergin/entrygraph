@@ -6,7 +6,6 @@ import {
   PersonIcon,
   RepoIcon,
   RocketIcon,
-  ShieldCheckIcon,
   SignOutIcon,
   UnlockIcon,
 } from "@primer/octicons-react";
@@ -24,9 +23,7 @@ import { SymbolsTab } from "./features/explore/SymbolsTab";
 import { EntrypointsTab } from "./features/explore/EntrypointsTab";
 import { CallGraphTab } from "./features/explore/graph/CallGraphTab";
 import { ReachabilityTab } from "./features/explore/reachability/ReachabilityTab";
-import { SecurityTab } from "./features/security/SecurityTab";
 import { SettingsPage } from "./features/settings/SettingsPage";
-import { InstallationPage, SentinelPage } from "./features/sentinel/SentinelPage";
 import { EmptyState } from "./components/EmptyState";
 
 function Shell() {
@@ -66,18 +63,6 @@ function Shell() {
             </NavList.LeadingVisual>
             Jobs
           </NavList.Item>
-          {me?.sentinel_enabled && (
-            <NavList.Item
-              as={Link}
-              to="/sentinel"
-              aria-current={here("/sentinel") ? "page" : undefined}
-            >
-              <NavList.LeadingVisual>
-                <ShieldCheckIcon />
-              </NavList.LeadingVisual>
-              Sentinel
-            </NavList.Item>
-          )}
           <NavList.Item as={Link} to="/settings" aria-current={here("/settings") ? "page" : undefined}>
             <NavList.LeadingVisual>
               <GearIcon />
@@ -124,15 +109,12 @@ export function App() {
         <Route path="jobs" element={<JobsPage />} />
         <Route path="jobs/:jobId" element={<JobDetailPage />} />
         <Route path="settings" element={<SettingsPage />} />
-        <Route path="sentinel" element={<SentinelPage />} />
-        <Route path="sentinel/installations/:instId" element={<InstallationPage />} />
         <Route path="repos/:repoId" element={<RepoLayout />}>
           <Route index element={<OverviewTab />} />
           <Route path="symbols" element={<SymbolsTab />} />
           <Route path="entrypoints" element={<EntrypointsTab />} />
           <Route path="graph" element={<CallGraphTab />} />
           <Route path="reachability" element={<ReachabilityTab />} />
-          <Route path="security" element={<SecurityTab />} />
         </Route>
         <Route
           path="*"

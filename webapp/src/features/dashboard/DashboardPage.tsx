@@ -1,4 +1,4 @@
-import { Button, Heading, Text, Label } from "@primer/react";
+import { Button, Heading, Text } from "@primer/react";
 import { RepoIcon, SearchIcon, ShieldCheckIcon, TelescopeIcon } from "@primer/octicons-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
@@ -56,7 +56,6 @@ export function DashboardPage() {
                 <Text className="clip" style={{ fontWeight: 600 }}>
                   {r.name}
                 </Text>
-                {r.sentinel && <Label size="small">sentinel</Label>}
               </div>
               <div className="n">{r.symbols.toLocaleString()}</div>
               <div className="l">symbols · {r.files.toLocaleString()} files</div>

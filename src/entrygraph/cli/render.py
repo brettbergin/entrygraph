@@ -113,23 +113,6 @@ def confidence_text(value: int) -> Text:
     return Text(_CONFIDENCE_NAME.get(value, str(value)), style=_CONFIDENCE_STYLE.get(value, ""))
 
 
-def risk_style(risk: float | None) -> str:
-    """Color a risk score: red (high) -> yellow -> green (low)."""
-    if risk is None:
-        return "dim"
-    if risk >= 0.66:
-        return "bold red"
-    if risk >= 0.33:
-        return "yellow"
-    return "green"
-
-
-def risk_text(risk: float | None) -> Text:
-    if risk is None:
-        return Text("—", style="dim")
-    return Text(f"{risk:.2f}", style=risk_style(risk))
-
-
 # ---------------- table helper ----------------
 
 

@@ -43,11 +43,11 @@ def test_reachable_from_source_category(graph):
     assert not graph.reachable(source_category="http_input", sink_category="command_exec")
 
 
-def test_catalog_source_marks_origin_tainted(graph):
-    # the source-tainted risk factor should apply (handler calls os.getenv), so
-    # the path risk exceeds the untainted-source baseline discount
+def test_catalog_source_marks_origin_explicit(graph):
+    # the handler calls os.getenv — a demonstrable catalog accessor read, so the
+    # path's source provenance is "explicit" (not handler-as-source)
     path = graph.paths(source_category="env_input", sink_category="command_exec")[0]
-    assert path.risk_score and path.risk_score > 0.5
+    assert path.source_kind == "explicit"
 
 
 CLI_APP = Path(__file__).parent / "fixtures" / "python" / "cli_app"
@@ -117,11 +117,13 @@ def test_source_channel_and_key_surfaced(channels_graph):
     assert header_path.source_key == "X-Api-Key"
 
 
-def test_header_channel_ranks_below_query(channels_graph):
-    # identical chains except the source channel: header is down-weighted (#87 E)
+def test_header_channel_is_labeled(channels_graph):
+    # identical chains except the source channel: both are reported, each labeled
+    # with its channel so a reviewer can weigh header- vs query-sourced findings
     paths = channels_graph.paths(source_category="http_input", sink_category="command_exec")
-    by_head = {p.symbols[0].qname: p for p in paths}
-    assert by_head["app.run_query"].risk_score > by_head["app.run_header"].risk_score
+    channels = {p.symbols[0].qname: p.source_channel for p in paths}
+    assert channels["app.run_query"] == "query"
+    assert channels["app.run_header"] == "header"
 
 
 def test_source_key_stamped_on_edge(channels_graph):

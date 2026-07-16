@@ -124,14 +124,15 @@ def test_entrypoints_json(db, capsys):
 
 
 def test_paths_exit_codes(db, capsys):
-    # reachable -> exit 0 and renders a tree ending at the sink, with a risk score
+    # reachable -> exit 0 and renders a tree ending at the sink, with the facts head
     rc = main(
         ["paths", "--db", db, "--source", "app.routes.create_report", "--sink", "py:subprocess.run"]
     )
     assert rc == 0
     out = capsys.readouterr().out
     assert "py:subprocess.run" in out  # sink node rendered
-    assert "risk" in out  # risk indicator present
+    assert "severity" in out  # sink severity fact present
+    assert "confidence" in out  # weakest-edge confidence fact present
     assert "app.routes.create_report" in out  # source node rendered
 
     # unreachable -> exit 1
@@ -220,6 +221,15 @@ def test_callers(db, capsys):
     assert "app.routes.create_report" in capsys.readouterr().out
 
 
+def test_references_shows_call_sites(db, capsys):
+    assert main(["references", "--db", db, "app.services.run_report", "--json"]) == 0
+    refs = json.loads(capsys.readouterr().out)
+    assert refs
+    # each reference carries a caller, a line, and a confidence — enough to check it
+    assert all({"src_qname", "line", "confidence"} <= set(r) for r in refs)
+    assert any(r["src_qname"] == "app.routes.create_report" for r in refs)
+
+
 def test_stats(db, capsys):
     assert main(["stats", "--db", db]) == 0
     assert "symbols" in capsys.readouterr().out
@@ -252,9 +262,7 @@ def test_paths_thin_coverage_caveat(tmp_path, capsys, monkeypatch):
     from entrygraph.cli import main as cli_main
     from entrygraph.detect.taint import CatalogCoverage
 
-    thin = CatalogCoverage(
-        sinks=4, sources=1, sanitizers=0, sink_categories=("command_exec",), tier="minimal"
-    )
+    thin = CatalogCoverage(sinks=4, sources=1, sink_categories=("command_exec",), tier="minimal")
     monkeypatch.setattr(cli_main, "_catalog_coverage", lambda: {"rust": thin})
 
     repo = tmp_path / "rustapp"

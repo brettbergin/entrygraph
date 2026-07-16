@@ -1,4 +1,4 @@
-import { Heading, Label, UnderlineNav } from "@primer/react";
+import { Heading, UnderlineNav } from "@primer/react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useLocation, useParams } from "react-router";
 import { api, keys } from "../../api/queries";
@@ -11,7 +11,6 @@ const TABS = [
   { path: "entrypoints", label: "Entrypoints" },
   { path: "graph", label: "Call graph" },
   { path: "reachability", label: "Reachability" },
-  { path: "security", label: "Security" },
 ];
 
 export function useRepoId(): number {
@@ -50,7 +49,6 @@ export function RepoLayout() {
         <Heading as="h1" style={{ fontSize: 28 }}>
           {repo.name}
         </Heading>
-        {repo.sentinel && <Label>sentinel</Label>}
         <span className="muted fs0 mono clip" title={repo.root_path}>
           {repo.root_path}
         </span>

@@ -113,25 +113,3 @@ category = "env_input"
 callee = "cs:Environment.GetEnvironmentVariable"
 description = "Environment variable input"
 
-# ---------------- sanitizers ----------------
-
-[[sanitizer]]
-id = "cs.sanitize.path-getfilename"
-category = "path_traversal"
-callee = "cs:*.{GetFileName,GetFullPath}"
-effect = "reduces"
-description = "Path.GetFileName / GetFullPath normalization"
-
-[[sanitizer]]
-id = "cs.sanitize.uri-escape"
-category = "ssrf"
-callee = "cs:*.{EscapeDataString,EscapeUriString}"
-effect = "reduces"
-description = "Uri.EscapeDataString URL encoding"
-
-[[sanitizer]]
-id = "cs.sanitize.sql-parameter"
-category = "sql"
-callee = "cs:*.{AddWithValue}"
-effect = "reduces"
-description = "Parameterized query value binding (SqlParameter)"

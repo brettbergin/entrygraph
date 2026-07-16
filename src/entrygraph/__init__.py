@@ -19,6 +19,7 @@ from entrygraph.errors import (
     EntrygraphError,
     SchemaMismatchError,
     SymbolNotFoundError,
+    UnknownCategoryError,
 )
 from entrygraph.kinds import Confidence, EdgeKind, EntrypointKind, SymbolKind
 from entrygraph.results import (
@@ -83,5 +84,6 @@ __all__ = [
     "Symbol",
     "SymbolKind",
     "SymbolNotFoundError",
+    "UnknownCategoryError",
     "__version__",
 ]

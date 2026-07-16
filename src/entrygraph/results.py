@@ -58,7 +58,6 @@ class FileInfo:
     path: str
     language: str | None
     size_bytes: int
-    symbol_count: int = 0
     skip_reason: str | None = None
 
 
@@ -71,23 +70,27 @@ class PathEdge:
     via: str | None = None  # "cha" | "dynamic" | "reexport" | None
     arg_preview: str | None = None
     constant_args: bool = False  # terminal hop: sink called with literal args only
-    sanitized_by: tuple[str, ...] = ()  # sanitizer ids matched on/around this hop
 
 
 @dataclass(frozen=True, slots=True)
 class CallPath:
+    """A source->sink call path. Carries displayable *facts* only — the sink's
+    catalog severity, the weakest edge confidence, and the tri-state dataflow
+    verdict — never a blended heuristic score; each field is checkable against
+    the code the path points at."""
+
     symbols: tuple[Symbol, ...]  # source ... sink, in order
     edges: tuple[PathEdge, ...]  # one per hop; len == len(symbols) - 1
-    risk_score: float | None = None  # query-time heuristic, higher = riskier
+    severity: str | None = None  # the tagged sink's catalog severity, if any
     may_continue: bool = False  # a node on this path has out-edges the filter excluded
     source_channel: str | None = None  # query|path|header|cookie|body|form (#87)
     source_key: str | None = None  # the specific param/header/flag name (#87)
     source_kind: str | None = None  # explicit|spec|handler_params|handler (#96)
     # the taint source category this path was enumerated under (http_input, ...),
-    # when a `source_category` query produced it; feeds the path fingerprint (#116).
+    # when a `source_category` query produced it
     source_category: str | None = None
-    # same-function reaching-defs verdict: True (flow observed) / False (provable
-    # non-flow, demoted) / None (not checked / unknown). #96 Phase 2.
+    # reaching-defs verdict: True (flow observed) / False (provable non-flow) /
+    # None (not checked / unknown). #96 Phase 2.
     taint_verified: bool | None = None
 
     @property

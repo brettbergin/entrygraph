@@ -20,7 +20,6 @@ const TOGGLES: Array<{
   { key: "include_fuzzy", label: "Include class-hierarchy edges", help: "Add virtual-dispatch fan-out.", term: "cha" },
   { key: "include_unresolved", label: "Include unresolved calls", help: "Add wildcard-sink guesses (e.g. any .execute)." },
   { key: "include_callbacks", label: "Follow callbacks", help: "Track functions passed as arguments.", term: "callback" },
-  { key: "prune_sanitized", label: "Prune sanitized paths", help: "Drop paths where a sanitizer is seen.", term: "sanitizer" },
   { key: "explicit_sources", label: "Explicit sources only", help: "Require a proven input read; drop handler-as-source." },
   { key: "confirmed_only", label: "Taint-verified only", help: "Keep only paths where flow to the sink is confirmed.", term: "taint_verified" },
 ];

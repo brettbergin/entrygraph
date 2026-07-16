@@ -8,6 +8,7 @@ frozen dataclasses; the Session never escapes (except via the explicit
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,9 +24,9 @@ from entrygraph.errors import (
     DatabaseNotFoundError,
     RepositoryNotIndexedError,
     SymbolNotFoundError,
+    UnknownCategoryError,
 )
 from entrygraph.graph.adjacency import AdjacencyCache
-from entrygraph.graph.scoring import is_constant_args, score_path
 from entrygraph.kinds import Confidence, EntrypointKind
 from entrygraph.results import (
     CallPath,
@@ -55,10 +56,8 @@ _HANDLER_SOURCE_KINDS: dict[str, tuple[EntrypointKind, ...]] = {
 
 type SourceSpec = str | Symbol | Entrypoint | list[str | Symbol | Entrypoint]
 
-# Risk multipliers by source provenance (#96 Phase 1). explicit/spec preserve the
-# pre-split tainted(1.0)/untainted(0.9) scores exactly; only handler-as-source
-# paths move, so a demonstrable request read outranks "this handler is shaped
-# like a source." See graph.scoring._SOURCE_WEIGHT.
+# Source-provenance labels (#96 Phase 1): a demonstrable accessor read (explicit)
+# or a user-named source (spec) is stronger evidence than handler-as-source.
 _SOURCE_KIND_EXPLICIT = "explicit"
 _SOURCE_KIND_SPEC = "spec"
 _SOURCE_KIND_HANDLER_PARAMS = "handler_params"
@@ -109,14 +108,29 @@ class _FilteredAdjacency:
     min_confidence: int
     include_cha: bool
 
-    def paths(self, sources, sinks, max_depth=25, max_paths=10):
+    def paths(
+        self, sources, sinks, max_depth=25, max_paths=10, sink_edge_ids=None, open_sink_ids=None
+    ):
         return self.cache.paths(
-            sources, sinks, max_depth, max_paths, self.min_confidence, self.include_cha
+            sources,
+            sinks,
+            max_depth,
+            max_paths,
+            self.min_confidence,
+            self.include_cha,
+            sink_edge_ids=sink_edge_ids,
+            open_sink_ids=open_sink_ids,
         )
 
-    def reachable(self, sources, sinks, max_depth):
+    def reachable(self, sources, sinks, max_depth, sink_edge_ids=None, open_sink_ids=None):
         return self.cache.reachable(
-            sources, sinks, max_depth, self.min_confidence, self.include_cha
+            sources,
+            sinks,
+            max_depth,
+            self.min_confidence,
+            self.include_cha,
+            sink_edge_ids=sink_edge_ids,
+            open_sink_ids=open_sink_ids,
         )
 
 
@@ -134,13 +148,56 @@ class PathResults(list):
     mode: str | None = None
 
 
-def _has_sanitizer(path: CallPath) -> bool:
-    """True if a category sanitizer is called on the path (heuristic, no dataflow).
+# Path ranking is by displayed facts, not a blended score: confirmed flows
+# first, then unchecked, then refuted; higher catalog severity, then stronger
+# weakest-edge confidence, then shorter paths.
+_VERIFIED_RANK = {True: 0, None: 1, False: 2}
+_SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
-    Drives ``--prune-sanitized``. Sanitizer matches only discount risk (never zero
-    it), so pruning is an explicit opt-in that trades recall for noise reduction
-    rather than a silent, certain "this path is safe" claim."""
-    return any(e.sanitized_by for e in path.edges)
+
+def _path_rank(p: CallPath) -> tuple:
+    return (
+        _VERIFIED_RANK[p.taint_verified],
+        _SEVERITY_RANK.get(p.severity or "", 4),
+        -p.min_confidence,
+        len(p.symbols),
+        [s.id for s in p.symbols],
+    )
+
+
+# A literal-only argument preview: strings, numbers, bools, None, kwarg names,
+# and bracketed literal collections. Anything with an identifier/operator that
+# could carry a variable makes it non-constant.
+_CONST_TOKEN = re.compile(
+    r"""^(
+        \s | , | = | \( | \) | \[ | \] | \{ | \} | : |
+        '[^']*' | "[^"]*" | `(?:[^`$]|\$(?!\{))*` |   # backtick: no ${...} interpolation
+        \d[\d_.eExXaAbBcCdDfF]* |
+        True|False|None|null|true|false|nil |
+        [A-Za-z_]\w*\s*=          # kwarg name before '='
+    )*$""",
+    re.VERBOSE,
+)
+
+
+def is_constant_args(arg_preview: str | None) -> bool:
+    """True if the sink was called with only literal/constant arguments.
+
+    Conservative: an empty/None preview is constant (no args); a preview that was
+    truncated at the 80-char cap (trailing ellipsis) returns False because we
+    can't see the whole argument list.
+    """
+    if not arg_preview:
+        return True
+    text = arg_preview.strip()
+    if text.endswith("…") or text.endswith("..."):
+        return False
+    inner = text
+    if inner.startswith("(") and inner.endswith(")"):
+        inner = inner[1:-1]
+    if not inner.strip():
+        return True
+    return bool(_CONST_TOKEN.match(text))
 
 
 def _lookup_repo_id(engine: Engine, root: Path | None = None) -> int:
@@ -348,14 +405,24 @@ class CodeGraph:
     # ---------------- traversal ----------------
 
     def callers(
-        self, target: SourceSpec, *, depth: int = 1, edge_kinds: tuple[str, ...] = ("calls",)
+        self,
+        target: SourceSpec,
+        *,
+        depth: int = 1,
+        edge_kinds: tuple[str, ...] = ("calls",),
+        include_speculative: bool = False,
     ) -> list[Symbol]:
-        return self._neighbors(target, depth, "in", edge_kinds)
+        return self._neighbors(target, depth, "in", edge_kinds, include_speculative)
 
     def callees(
-        self, target: SourceSpec, *, depth: int = 1, edge_kinds: tuple[str, ...] = ("calls",)
+        self,
+        target: SourceSpec,
+        *,
+        depth: int = 1,
+        edge_kinds: tuple[str, ...] = ("calls",),
+        include_speculative: bool = False,
     ) -> list[Symbol]:
-        return self._neighbors(target, depth, "out", edge_kinds)
+        return self._neighbors(target, depth, "out", edge_kinds, include_speculative)
 
     def references(self, target: SourceSpec) -> list[Edge]:
         """All inbound edges (any kind) to the matching symbols."""
@@ -405,19 +472,20 @@ class CodeGraph:
         include_fuzzy: bool = False,
         include_unresolved: bool = False,
         include_callbacks: bool = False,
-        prune_sanitized: bool = False,
         explicit_sources: bool = False,
         confirmed_only: bool = False,
         taint_hops: int = 5,
         engine: str = "memory",
         strict: bool = False,
     ) -> list[CallPath]:
-        """Enumerate source->sink call paths, risk-ranked (highest first), adaptively.
+        """Enumerate source->sink call paths adaptively, ranked by facts.
 
         Sources are an explicit `source` spec (qname/glob/Symbol/Entrypoint) and/or a
         `source_category` from the taint-source catalog; sinks work the same. Each
-        path carries a heuristic `risk_score` and `may_continue`; `prune_sanitized`
-        drops paths neutralized by a registered sanitizer.
+        path carries checkable facts — the sink's catalog `severity`, the weakest
+        edge confidence, the tri-state `taint_verified` verdict, `may_continue` —
+        and results are ordered by them (confirmed > unchecked > refuted, then
+        severity, confidence, length).
 
         By default the search is **adaptive**: it first tries the high-confidence
         frontier (resolved EXACT/IMPORT/unique-name edges), and only if that finds
@@ -448,7 +516,6 @@ class CodeGraph:
                 max_depth=max_depth,
                 max_paths=max_paths,
                 edge_kinds=edge_kinds,
-                prune_sanitized=prune_sanitized,
                 engine=engine,
                 min_confidence=min_conf,
                 include_fuzzy=fuzzy,
@@ -469,16 +536,20 @@ class CodeGraph:
         # edges changes the edge set and rebuilds, so it's the last resort — most
         # widened hits (wildcard sinks) are found at tier 2 without paying for it.
         precise = run(None, False, False, False)  # tier 1: resolved edges only
+        precise.mode = "precise"
         if precise and not precise.truncated:
-            precise.mode = "precise"
             return precise
         widened = run(None, True, True, False)  # tier 2: + CHA + unresolved (same adjacency)
+        widened.mode = "widened"
         if widened and not widened.truncated:
-            widened.mode = "widened"
             return widened
         deep = run(None, True, True, True)  # tier 3: + callback edges (rebuilds adjacency)
         deep.mode = "widened"
-        return deep
+        if deep:
+            return deep
+        # Escalation found nothing new. Never trade found paths for an empty
+        # wider result — a truncated narrow pass may still hold real findings.
+        return widened or precise or deep
 
     def _paths_search(
         self,
@@ -494,7 +565,6 @@ class CodeGraph:
         include_fuzzy: bool = False,
         include_unresolved: bool = False,
         include_callbacks: bool = False,
-        prune_sanitized: bool = False,
         explicit_sources: bool = False,
         confirmed_only: bool = False,
         taint_hops: int = 5,
@@ -504,6 +574,7 @@ class CodeGraph:
         floor, include_cha = _traversal_params(min_confidence, include_fuzzy, include_unresolved)
         kinds = (*edge_kinds, "callback") if include_callbacks else edge_kinds
         with self._session_factory() as session:
+            self._validate_categories(session, source_category, sink_category)
             source_sets = self._resolve_sources(
                 session, source, source_category, explicit_only=explicit_sources
             )
@@ -511,25 +582,28 @@ class CodeGraph:
             sinks = self._sink_ids(session, sink, sink_category)
             if not sources or not sinks:
                 return PathResults()
-            traverser = self._traverser(session, engine, kinds, floor, include_cha)
-            raw_paths = traverser.paths(sources, sinks, max_depth=max_depth, max_paths=max_paths)
-            truncated = bool(getattr(raw_paths, "truncated", False))
+            # A category sink is tagged per-EDGE (with arg hints), but traversal
+            # stops at the sink SYMBOL. A path reaching that symbol via an untagged
+            # sibling edge — createHash('sha256') vs the md5 edge that tagged the
+            # shared createHash symbol — is a false positive. Constrain the terminal
+            # edge inside the traversal (not after) so untagged arrivals can't crowd
+            # the candidate pool and hide a real tagged path. An explicit --sink
+            # symbol qualifies on its own.
+            sink_edge_ids = None
+            open_sink_ids = None
             if sink_category is not None:
-                # A category sink is tagged per-EDGE (with arg hints), but traversal
-                # stops at the sink SYMBOL. A path reaching that symbol via an
-                # untagged sibling edge — createHash('sha256') vs the md5 edge that
-                # tagged the shared createHash symbol — is a false positive. Keep a
-                # path only if its terminal edge is a category sink (or its terminal
-                # node is an explicit --sink symbol). This also drops degenerate
-                # length-1 `--source '*'` self-matches, which have no terminal edge.
-                explicit_ids = self._spec_to_ids(session, sink) if sink is not None else set()
-                sink_edges = self._category_sink_edge_ids(session, sink_category)
-                raw_paths = [
-                    p
-                    for p in raw_paths
-                    if p[-1][0] in explicit_ids
-                    or (p[-1][1] is not None and p[-1][1].edge_id in sink_edges)
-                ]
+                sink_edge_ids = self._category_sink_edge_ids(session, sink_category)
+                open_sink_ids = self._spec_to_ids(session, sink) if sink is not None else set()
+            traverser = self._traverser(session, engine, kinds, floor, include_cha)
+            raw_paths = traverser.paths(
+                sources,
+                sinks,
+                max_depth=max_depth,
+                max_paths=max_paths,
+                sink_edge_ids=sink_edge_ids,
+                open_sink_ids=open_sink_ids,
+            )
+            truncated = bool(getattr(raw_paths, "truncated", False))
             if not raw_paths:
                 # 0 paths may mean the visit budget was spent before any sink was
                 # reached — propagate the flag so this isn't mistaken for "safe".
@@ -547,7 +621,6 @@ class CodeGraph:
             excluded_nodes = self._nodes_with_open_frontier(
                 session, all_ids, kinds, floor, include_cha
             )
-            sibling_calls = self._out_call_qnames(session, all_ids)
             built = [
                 self._materialize_path(
                     path,
@@ -556,22 +629,19 @@ class CodeGraph:
                     registry,
                     source_kinds,
                     excluded_nodes,
-                    sibling_calls,
                     source_meta,
                     source_category,
                 )
                 for path in raw_paths
             ]
-            built = self._verify_same_function(session, built, raw_paths, taint_hops)
-        if confirmed_only:
-            built = [cp for cp in built if cp.taint_verified is True]
-        results = [cp for cp in built if not (prune_sanitized and _has_sanitizer(cp))]
-        results.sort(
-            key=lambda p: (-(p.risk_score or 0.0), len(p.symbols), [s.id for s in p.symbols])
-        )
-        # Enumeration collected a candidate pool; return the top max_paths by risk.
-        # Truncating after the risk rank (not during DFS) is what makes the widen
-        # flags monotonic — a wider edge set can only add candidates to rank.
+            built = self._verify_same_function(
+                session, built, raw_paths, taint_hops, registry, source_category
+            )
+        results = [cp for cp in built if not (confirmed_only and cp.taint_verified is not True)]
+        results.sort(key=_path_rank)
+        # Enumeration collected a candidate pool; return the top max_paths by rank.
+        # Truncating after ranking (not during DFS) is what makes the widen flags
+        # monotonic — a wider edge set can only add candidates to rank.
         out = PathResults(results[:max_paths])
         out.truncated = truncated
         return out
@@ -595,6 +665,7 @@ class CodeGraph:
         floor, include_cha = _traversal_params(min_confidence, include_fuzzy, include_unresolved)
         kinds = (*edge_kinds, "callback") if include_callbacks else edge_kinds
         with self._session_factory() as session:
+            self._validate_categories(session, source_category, sink_category)
             sources = set(
                 self._resolve_sources(
                     session, source, source_category, explicit_only=explicit_sources
@@ -603,8 +674,17 @@ class CodeGraph:
             sinks = self._sink_ids(session, sink, sink_category)
             if not sources or not sinks:
                 return False
+            sink_edge_ids = None
+            open_sink_ids = None
+            if sink_category is not None:
+                # match paths(): reachability of a category means a tagged terminal
+                # edge is reachable, not merely the shared sink symbol (Bug 4).
+                sink_edge_ids = self._category_sink_edge_ids(session, sink_category)
+                open_sink_ids = self._spec_to_ids(session, sink) if sink is not None else set()
             traverser = self._traverser(session, engine, kinds, floor, include_cha)
-            return traverser.reachable(sources, sinks, max_depth)
+            return traverser.reachable(
+                sources, sinks, max_depth, sink_edge_ids=sink_edge_ids, open_sink_ids=open_sink_ids
+            )
 
     # ---------------- maintenance ----------------
 
@@ -722,6 +802,37 @@ class CodeGraph:
             self._adjacency[key] = cache
         return cache
 
+    def sink_categories(self) -> list[str]:
+        """Valid ``sink_category`` values for this repo (catalog + repo config)."""
+        with self._session_factory() as session:
+            return self._registry(session).sink_categories()
+
+    def source_categories(self) -> list[str]:
+        """Valid ``source_category`` values for this repo (catalog + repo config)."""
+        with self._session_factory() as session:
+            return self._registry(session).source_categories()
+
+    def _validate_categories(
+        self, session: Session, source_category: str | None, sink_category: str | None
+    ) -> None:
+        """Reject an unknown category up front. An unknown name otherwise resolves
+        to an empty pattern set and silently returns zero paths — indistinguishable
+        from "no reachable sinks", which is the single biggest paths usability trap."""
+        registry = self._registry(session)
+        if source_category is not None and source_category != "all":
+            valid = registry.source_categories()
+            if source_category not in valid:
+                raise UnknownCategoryError(
+                    f"unknown source category {source_category!r}; valid: "
+                    f"{', '.join(valid)} (or 'all')"
+                )
+        if sink_category is not None and sink_category != "all":
+            valid = registry.sink_categories()
+            if sink_category not in valid:
+                raise UnknownCategoryError(
+                    f"unknown sink category {sink_category!r}; valid: {', '.join(valid)} (or 'all')"
+                )
+
     def _spec_to_ids(self, session: Session, spec) -> set[int]:
         if spec is None:
             return set()
@@ -812,6 +923,11 @@ class CodeGraph:
 
     def _sink_ids(self, session: Session, sink, sink_category: str | None) -> set[int]:
         ids = self._spec_to_ids(session, sink) if sink is not None else set()
+        # Sink symbols are external placeholders carrying a language prefix
+        # (`py:subprocess.run`). A bare `subprocess.run` matches nothing; retry with
+        # a wildcard prefix so users needn't know the `py:` convention.
+        if isinstance(sink, str) and not ids and ":" not in sink and "*" not in sink:
+            ids = self._spec_to_ids(session, f"*:{sink}")
         if sink_category is not None:
             registry = self._registry(session)
             sink_ids = registry.ids_for_category(sink_category)
@@ -827,19 +943,31 @@ class CodeGraph:
         return ids
 
     def _neighbors(
-        self, target, depth: int, direction: str, edge_kinds: tuple[str, ...]
+        self,
+        target,
+        depth: int,
+        direction: str,
+        edge_kinds: tuple[str, ...],
+        include_speculative: bool = False,
     ) -> list[Symbol]:
+        # Default to resolved edges only (EXACT/IMPORT/unique-name FUZZY), matching
+        # paths(): the speculative class-hierarchy fan-out and unresolved wildcard
+        # guesses are noise in a caller/callee listing that carries no confidence
+        # marker. include_speculative lowers the floor and admits CHA edges.
+        floor = 0 if include_speculative else int(Confidence.FUZZY)
         with self._session_factory() as session:
             ids = self._spec_to_ids(session, target)
             if not ids:
                 raise SymbolNotFoundError(f"no symbol matching {target!r}")
             cache = self._cache(session, edge_kinds)
-            found = cache.neighborhood(ids, depth, direction)
+            found = cache.neighborhood(
+                ids, depth, direction, min_confidence=floor, include_cha=include_speculative
+            )
             symbol_map = q.symbols_by_ids(session, self._repo_id, found)
         return sorted(symbol_map.values(), key=lambda s: s.qname)
 
     def _registry(self, session: Session):
-        """The repo's sink/source/sanitizer registry, cached on the instance.
+        """The repo's sink/source registry, cached on the instance.
 
         Rebuilding runs `merged_with`, which recompiles every pattern's regex — so
         without caching a single `paths()` call recompiled the whole catalog up to
@@ -865,7 +993,6 @@ class CodeGraph:
             config_mtime,
             len(taint._user_sinks),
             len(taint._user_sources),
-            len(taint._user_sanitizers),
         )
         cached = self._registry_cache
         if cached is None or cached[0] != key:
@@ -926,11 +1053,19 @@ class CodeGraph:
             meta[sid] = (channel, source_key)
         return meta
 
-    def _verify_same_function(self, session: Session, built, raw_paths, taint_hops: int = 5):
-        """Run the taint reaching check on candidate paths and demote provable
-        non-flows (#96 Phase 2/3). Verdict is tri-state; only ``False`` changes the
-        score (x0.25). Bounded to the candidate pool, ``taint_hops`` interior hops,
-        one parse per distinct file, staleness-guarded."""
+    def _verify_same_function(
+        self,
+        session: Session,
+        built,
+        raw_paths,
+        taint_hops: int = 5,
+        registry=None,
+        source_category: str | None = None,
+    ):
+        """Run the taint reaching check on candidate paths and record the
+        tri-state verdict (#96 Phase 2/3) — a displayed fact, not a score input.
+        Bounded to the candidate pool, ``taint_hops`` interior hops, one parse
+        per distinct file, staleness-guarded."""
         import dataclasses
 
         from entrygraph.analysis.verify import FileFactCache, verify_path
@@ -942,7 +1077,7 @@ class CodeGraph:
             select(models.Repository.root_path).where(models.Repository.id == self._repo_id)
         ).scalar()
         cache = FileFactCache(repo_root)
-        accessor_lines = self._source_accessor_lines(session, heads)
+        accessor_lines = self._source_accessor_lines(session, heads, registry, source_category)
         # hashes for every function file on any candidate path (not just heads)
         all_func_ids = {node for path in raw_paths for node, _ in path}
         file_hashes = self._file_hashes_for_symbols(session, all_func_ids)
@@ -957,32 +1092,32 @@ class CodeGraph:
                 cache,
                 hop_limit=taint_hops,
             )
-            if verdict is False:
-                out.append(
-                    dataclasses.replace(
-                        cp,
-                        taint_verified=False,
-                        risk_score=round((cp.risk_score or 0.0) * 0.25, 4),
-                    )
-                )
-            else:
-                out.append(dataclasses.replace(cp, taint_verified=verdict))
+            out.append(dataclasses.replace(cp, taint_verified=verdict))
         return out
 
     @staticmethod
-    def _source_accessor_lines(session: Session, heads: set[int]) -> dict[int, set[int]]:
+    def _source_accessor_lines(
+        session: Session, heads: set[int], registry=None, source_category: str | None = None
+    ) -> dict[int, set[int]]:
         """Per source symbol, the lines of its catalog source-accessor call edges —
-        seeds the inline-accessor case (`sink(request.args.get("q"))`)."""
+        seeds the inline-accessor case (`sink(request.args.get("q"))`). When a
+        category was queried, only that category's accessors qualify: an accessor
+        of a *different* category must not seed (and wrongly confirm) this one."""
         if not heads:
             return {}
+        wanted: set[str] | None = None
+        if registry is not None and source_category is not None:
+            wanted = registry.source_ids_for_category(source_category)
         rows = session.execute(
-            select(models.Edge.src_symbol_id, models.Edge.line).where(
+            select(models.Edge.src_symbol_id, models.Edge.line, models.Edge.source_id).where(
                 models.Edge.src_symbol_id.in_(heads),
                 models.Edge.source_id.is_not(None),
             )
         ).all()
         out: dict[int, set[int]] = {}
-        for sid, line in rows:
+        for sid, line, source_id in rows:
+            if wanted is not None and source_id not in wanted:
+                continue
             out.setdefault(sid, set()).add(line)
         return out
 
@@ -1056,29 +1191,6 @@ class CodeGraph:
         ).scalars()
         return set(rows)
 
-    @staticmethod
-    def _out_call_qnames(session: Session, node_ids: set[int]) -> dict[int, list[str]]:
-        """For each node, the callee qnames of its outgoing CALLS edges.
-
-        Used for sanitizer detection: a sanitizer is usually a *sibling* call of
-        an on-path function (`shlex.quote(x)` then `subprocess.run(...)`), not a
-        node on the source->sink path itself, so it never appears among the path's
-        own hops."""
-        if not node_ids:
-            return {}
-        from entrygraph.kinds import EdgeKind
-
-        rows = session.execute(
-            select(models.Edge.src_symbol_id, models.Edge.dst_qname).where(
-                models.Edge.src_symbol_id.in_(node_ids),
-                models.Edge.kind == EdgeKind.CALLS,
-            )
-        ).all()
-        out: dict[int, list[str]] = {}
-        for sid, dst_qname in rows:
-            out.setdefault(sid, []).append(dst_qname)
-        return out
-
     def _materialize_path(
         self,
         path,
@@ -1087,7 +1199,6 @@ class CodeGraph:
         registry,
         source_kinds,
         excluded_nodes,
-        sibling_calls,
         source_meta,
         source_category=None,
     ) -> CallPath:
@@ -1095,18 +1206,9 @@ class CodeGraph:
         hops = [hop for _, hop in path[1:]]
         rows = [edge_map.get(hop.edge_id) if hop else None for hop in hops]
 
-        # sink is the terminal edge; its category drives sanitizer matching
         terminal = rows[-1] if rows else None
         sink_id = terminal.sink_id if terminal else None
-        sink_category = registry.sinks[sink_id].category if sink_id in registry.sinks else None
         terminal_const = is_constant_args(terminal.arg_preview) if terminal else False
-
-        # sanitizer detection: a sanitizer for the sink's category called by any
-        # on-path node (its own hops OR a sibling call)
-        sibling_qnames = {q for node, _ in path for q in sibling_calls.get(node, ())}
-        sanitized_ids, sanitized_effect = self._path_sanitizers(
-            symbols, rows, sibling_qnames, registry, sink_category
-        )
 
         path_edges: list[PathEdge] = []
         for i, hop in enumerate(hops):
@@ -1121,57 +1223,19 @@ class CodeGraph:
                     via=row.via if row else hop.via,
                     arg_preview=row.arg_preview if row else None,
                     constant_args=terminal_const if is_terminal else False,
-                    sanitized_by=tuple(sanitized_ids) if is_terminal else (),
                 )
             )
 
         source_channel, source_key = source_meta.get(path[0][0], (None, None))
         source_kind = source_kinds.get(path[0][0], _SOURCE_KIND_SPEC)
-        risk = score_path(
-            hop_confidences=[h.confidence for h in hops],
-            hop_vias=[(row.via if row is not None else h.via) for row, h in zip(rows, hops)],
-            sink_severity=registry.severity_of(sink_id),
-            sanitized_effect=sanitized_effect,
-            constant_args=terminal_const,
-            source_kind=source_kind,
-            source_channel=source_channel,
-            source_key=source_key,
-        )
         may_continue = any(node in excluded_nodes for node, _ in path)
         return CallPath(
             symbols=symbols,
             edges=tuple(path_edges),
-            risk_score=risk,
+            severity=registry.severity_of(sink_id),
             may_continue=may_continue,
             source_kind=source_kind,
             source_channel=source_channel,
             source_key=source_key,
             source_category=source_category,
         )
-
-    @staticmethod
-    def _path_sanitizers(symbols, rows, sibling_qnames, registry, sink_category):
-        """Return (matched sanitizer ids, effect) for the sink category.
-
-        Candidates are every callee reachable from an on-path node: the path's own
-        hops plus sibling calls (`sibling_qnames`). The effect is capped at
-        ``"reduces"`` regardless of the catalog's ``effect`` — with no dataflow we
-        cannot prove the sanitized value is the one reaching the sink, so a match
-        discounts risk but never drives it to zero (which would silently hide a
-        real path). ``--prune-sanitized`` is the explicit, heuristic opt-in to
-        drop these."""
-        if not sink_category:
-            return [], None
-        matched: list = []
-        candidates = (
-            [s.qname for s in symbols]
-            + [r.dst_qname for r in rows if r is not None]
-            + list(sibling_qnames)
-        )
-        for qname in candidates:
-            for san in registry.match_sanitizers(qname):
-                if san.category == sink_category:
-                    matched.append(san)
-        if not matched:
-            return [], None
-        return [s.id for s in matched], "reduces"

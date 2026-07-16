@@ -41,7 +41,6 @@ def test_two_hop_confirmed_and_refuted(tmp_path):
         }
         assert by_head["app.confirmed"].taint_verified is True
         assert by_head["app.refuted"].taint_verified is False
-        assert by_head["app.refuted"].risk_score < by_head["app.confirmed"].risk_score
     finally:
         g.close()
 

@@ -19,7 +19,6 @@ const BOOL_FLAGS = [
   "include_fuzzy",
   "include_unresolved",
   "include_callbacks",
-  "prune_sanitized",
   "explicit_sources",
   "confirmed_only",
 ] as const;
@@ -165,8 +164,8 @@ export function ReachabilityTab() {
           body={
             <>
               A reachability path is a chain of calls from a <b>source</b> (where untrusted input
-              enters) to a <b>sink</b> (a dangerous API). Paths are risk-ranked; sanitizers on the
-              way discount the score. Pick a source and a sink above, or start from a preset.
+              enters) to a <b>sink</b> (a dangerous API). Pick a source and a sink above, or start
+              from a preset.
             </>
           }
         />
@@ -179,8 +178,8 @@ export function ReachabilityTab() {
           {data.mode === "widened" && (
             <Flash style={{ marginBottom: 16 }}>
               No high-confidence paths were found, so the search widened to speculative edges
-              (class-hierarchy dispatch, unresolved calls). <InfoPopover term="mode_widened" /> Treat
-              these as leads to verify, not confirmed flows.
+              (class-hierarchy dispatch, unresolved calls). Treat these as leads to verify, not
+              confirmed flows.
             </Flash>
           )}
           {data.truncated && (
@@ -204,8 +203,8 @@ export function ReachabilityTab() {
           ) : (
             <>
               <div className="muted fs0" style={{ marginBottom: 10 }}>
-                {data.paths.length} path{data.paths.length === 1 ? "" : "s"} · risk-ranked, highest
-                first · mode: {data.mode}
+                {data.paths.length} path{data.paths.length === 1 ? "" : "s"} · severity-ranked,
+                highest first · mode: {data.mode}
               </div>
               {data.paths.map((p, i) => (
                 <PathFlow key={i} path={p} index={i} />

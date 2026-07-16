@@ -34,8 +34,6 @@ class OriginCheckMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if request.headers.get("authorization", "").lower().startswith("bearer "):
             return await call_next(request)  # header auth: not CSRF-able
-        if request.url.path == "/webhook":
-            return await call_next(request)  # sentinel webhook: HMAC-verified
 
         origin = request.headers.get("origin")
         if origin is None:

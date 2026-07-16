@@ -25,8 +25,6 @@ from entrygraph.cli.render import (
     entrypoint_kind_text,
     kind_text,
     method_text,
-    risk_style,
-    risk_text,
     to_json,
 )
 from entrygraph.errors import EntrygraphError
@@ -107,7 +105,7 @@ def _coverage_cell(cov) -> Text:
         return Text("none", style="red")
     style = {"full": "green", "partial": "yellow", "minimal": "red"}[cov.tier]
     cell = Text(cov.tier, style=style)
-    cell.append(f"  {cov.sinks} sinks · {cov.sources} sources · {cov.sanitizers} san", style="dim")
+    cell.append(f"  {cov.sinks} sinks · {cov.sources} sources", style="dim")
     return cell
 
 
@@ -164,7 +162,7 @@ def cmd_index(args) -> int:
         root = src.root
         # Everything indexes into the shared global DB by default; each repo is
         # keyed by its root_path there, so no per-repo db file is needed (#116).
-        # --db still overrides (e.g. an isolated CI database for the gate).
+        # --db still overrides (e.g. an isolated throwaway database in CI).
         db = Path(args.db) if args.db else global_db_path()
 
         def _run():
@@ -288,7 +286,9 @@ def cmd_symbols(args) -> int:
 
 def cmd_entrypoints(args) -> int:
     with _open(args) as graph:
-        rows = graph.entrypoints(kind=args.kind, framework=args.framework, route=args.route)
+        rows = graph.entrypoints(
+            kind=args.kind, framework=args.framework, route=args.route, limit=args.limit
+        )
     if args.json:
         print(to_json(rows))
         return 0
@@ -317,7 +317,9 @@ def cmd_entrypoints(args) -> int:
 
 def cmd_callers(args) -> int:
     with _open(args) as graph:
-        rows = graph.callers(args.qname, depth=args.depth)
+        rows = graph.callers(
+            args.qname, depth=args.depth, include_speculative=args.include_speculative
+        )
     if args.json:
         print(to_json(rows))
     else:
@@ -327,11 +329,36 @@ def cmd_callers(args) -> int:
 
 def cmd_callees(args) -> int:
     with _open(args) as graph:
-        rows = graph.callees(args.qname, depth=args.depth)
+        rows = graph.callees(
+            args.qname, depth=args.depth, include_speculative=args.include_speculative
+        )
     if args.json:
         print(to_json(rows))
     else:
         _print_symbol_table(rows, with_line=False)
+    return 0
+
+
+def cmd_references(args) -> int:
+    """Every call site targeting a symbol — the caller, its file:line, and the
+    edge confidence. Unlike `callers` (which lists distinct caller symbols), this
+    lists each individual reference with its location, so a result is checkable."""
+    with _open(args) as graph:
+        refs = graph.references(args.qname)
+    if args.json:
+        print(to_json(refs))
+        return 0
+    con = console()
+    if not refs:
+        con.print("[dim](no references)[/]")
+        return 0
+    tbl = render.table(caption=f"[dim]{len(refs)} reference(s)[/]")
+    tbl.add_column("CALLER", style="bold", overflow="fold")
+    tbl.add_column("LOCATION", style="cyan", no_wrap=True)
+    tbl.add_column("CONFIDENCE", no_wrap=True)
+    for r in sorted(refs, key=lambda e: (e.src_qname, e.line)):
+        tbl.add_row(r.src_qname, _loc(r.file, r.line) or "?", confidence_text(r.confidence))
+    con.print(tbl)
     return 0
 
 
@@ -352,10 +379,12 @@ def _loc(file: str | None, line: int) -> str | None:
     return f"{file}:{line}" if file else None
 
 
-def _risk_word(risk: float | None) -> str:
-    if risk is None:
-        return "?"
-    return "high" if risk >= 0.66 else "medium" if risk >= 0.33 else "low"
+_SEVERITY_STYLE = {
+    "critical": "bold red",
+    "high": "red",
+    "medium": "yellow",
+    "low": "green",
+}
 
 
 def _line_reader(repo_root: str | None):
@@ -442,11 +471,16 @@ def _path_card(index: int, path, source_label: str | None, read_line=None) -> Gr
     name_w = max(len(r[1]) for r in rows)
     labels = {"source": "source ", "hop": "  ↓    ", "sink": "sink   "}
 
+    # The head line states facts, not a blended score: the tagged sink's catalog
+    # severity and the weakest edge confidence — each checkable against the code.
     head = Text()
     head.append(f"[{index}] ", style="dim")
-    head.append("risk ", style="dim")
-    head.append_text(risk_text(path.risk_score))
-    head.append(f" ({_risk_word(path.risk_score)})", style=risk_style(path.risk_score))
+    if path.severity:
+        head.append("severity ", style="dim")
+        head.append(path.severity, style=_SEVERITY_STYLE.get(path.severity, ""))
+        head.append("  ", style="dim")
+    head.append("confidence ", style="dim")
+    head.append_text(confidence_text(path.min_confidence))
     lines: list = [head]
     for role, name, loc, ann in rows:
         # metadata rows crop rather than wrap: long file paths + tags otherwise leave
@@ -485,6 +519,18 @@ def _path_card(index: int, path, source_label: str | None, read_line=None) -> Gr
 
 
 def cmd_paths(args) -> int:
+    if getattr(args, "list_categories", False):
+        with _open(args) as graph:
+            sources = graph.source_categories()
+            sinks = graph.sink_categories()
+        if args.json:
+            print(to_json({"source_categories": sources, "sink_categories": sinks}))
+            return 0
+        con = console()
+        con.print(f"[bold]source categories[/]  [dim]{', '.join(sources) or '—'}[/]")
+        con.print(f"[bold]sink categories[/]    [dim]{', '.join(sinks) or '—'}[/]")
+        con.print("[dim]pass 'all' to either to match every tagged source/sink[/]")
+        return 0
     if not args.source and not args.source_category:
         raise EntrygraphError("provide --source and/or --source-category")
     # A missing sink would leave the sink set empty and print "no paths found",
@@ -504,7 +550,6 @@ def cmd_paths(args) -> int:
             include_fuzzy=args.include_fuzzy,
             include_unresolved=args.include_unresolved,
             include_callbacks=args.include_callbacks,
-            prune_sanitized=args.prune_sanitized,
             explicit_sources=args.explicit_sources,
             confirmed_only=args.confirmed_only,
             taint_hops=args.taint_hops,
@@ -539,7 +584,7 @@ def cmd_paths(args) -> int:
                     {
                         "length": len(p.symbols),
                         "min_confidence": p.min_confidence,
-                        "risk_score": p.risk_score,
+                        "severity": p.severity,
                         "may_continue": p.may_continue,
                         "source_kind": p.source_kind,
                         "taint_verified": p.taint_verified,
@@ -614,148 +659,6 @@ def cmd_stats(args) -> int:
     return 0
 
 
-# ---------------- gate (#116) ----------------
-
-
-def _finding_line(f) -> str:
-    src = f.hops[0]["qname"] if f.hops else "?"
-    sink = f.sink_id or (f.hops[-1]["qname"] if f.hops else "?")
-    return f"risk {f.risk:.2f}  [bold]{src}[/] → [red]{sink}[/]  [dim]{f.strict[:12]}[/]"
-
-
-def cmd_gate(args) -> int:
-    import json as _json
-    from dataclasses import replace
-    from datetime import UTC, datetime
-
-    from entrygraph import __version__
-    from entrygraph.gate import sarif, store
-    from entrygraph.gate.engine import run_gate
-
-    con = console()
-    with _open(args) as graph, graph.session() as session:
-        policy = store.get_policy(session, graph.repo_id)
-        if args.threshold is not None:
-            policy = replace(policy, risk_threshold=args.threshold)
-        if args.warn:
-            policy = replace(policy, mode="warn")
-        result = run_gate(
-            graph,
-            session,
-            graph.repo_id,
-            policy=policy,
-            branch=args.branch,
-            head_sha=args.head_sha,
-            now=datetime.now(UTC),
-        )
-        if args.sarif:
-            report = sarif.to_sarif(
-                result.new + result.known,
-                threshold=policy.risk_threshold,
-                tool_version=__version__,
-            )
-            Path(args.sarif).write_text(_json.dumps(report, indent=2))
-
-    if args.json:
-        print(
-            to_json(
-                {
-                    "status": result.status,
-                    "passed": result.passed,
-                    "mode": result.mode,
-                    "has_baseline": result.has_baseline,
-                    "counts": {
-                        "new": len(result.new),
-                        "known": len(result.known),
-                        "fixed": len(result.fixed),
-                        "suppressed": len(result.suppressed),
-                        "gating": len(result.gating),
-                    },
-                    "gating": [
-                        {"fingerprint": f.strict, "sink_id": f.sink_id, "risk": f.risk}
-                        for f in result.gating
-                    ],
-                }
-            )
-        )
-        return result.exit_code
-
-    if not result.has_baseline:
-        con.print(
-            "[yellow]no baseline[/] to diff against — every path reads as new. "
-            "Run [cyan]entrygraph baseline update[/] on your default branch first."
-        )
-
-    style = {"passed": "green", "warned": "yellow", "failed": "red", "no-baseline": "yellow"}[
-        result.status
-    ]
-    summary = Text()
-    summary.append(f"gate: {result.status.upper()} ", style=f"bold {style}")
-    summary.append(f"({result.mode})  ", style="dim")
-    summary.append(
-        f"new {len(result.new)} · known {len(result.known)} · "
-        f"fixed {len(result.fixed)} · suppressed {len(result.suppressed)}",
-        style="",
-    )
-    con.print(Panel(summary, border_style=style, expand=False))
-    if result.gating:
-        con.print(f"[bold red]{len(result.gating)} new path(s) at/above threshold:[/]")
-        for f in result.gating:
-            con.print(f"  {_finding_line(f)}")
-    return result.exit_code
-
-
-def cmd_baseline(args) -> int:
-    from datetime import UTC, datetime
-
-    from entrygraph.gate import store
-
-    con = console()
-    with _open(args) as graph, graph.session() as session:
-        if args.action == "update":
-            policy = store.get_policy(session, graph.repo_id)
-            findings = store.enumerate_findings(graph, policy)
-            n = store.save_baseline(
-                session,
-                graph.repo_id,
-                findings,
-                branch=args.branch,
-                commit_sha=args.commit,
-                now=datetime.now(UTC),
-            )
-            if args.json:
-                print(to_json({"branch": args.branch, "paths": n}))
-                return 0
-            con.print(
-                f"[bold green]✓[/] baseline updated: [cyan]{n}[/] path(s) on [bold]{args.branch}[/]"
-            )
-        else:  # show
-            view = store.load_baseline(session, graph.repo_id, args.branch)
-            if args.json:
-                print(
-                    to_json(
-                        {
-                            "branch": args.branch,
-                            "exists": view is not None,
-                            "paths": len(view.strict) if view else 0,
-                            "commit": view.commit_sha if view else None,
-                        }
-                    )
-                )
-                return 0
-            if view is None:
-                con.print(
-                    f"[yellow]no baseline[/] for [bold]{args.branch}[/]; "
-                    "run [cyan]entrygraph baseline update[/]"
-                )
-            else:
-                con.print(
-                    f"baseline [bold]{args.branch}[/]: [cyan]{len(view.strict)}[/] path(s), "
-                    f"commit [dim]{view.commit_sha or '—'}[/]"
-                )
-    return 0
-
-
 # ---------------- parser ----------------
 
 
@@ -826,19 +729,41 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--kind")
     p.add_argument("--framework")
     p.add_argument("--route")
+    p.add_argument("--limit", type=int)
     p.set_defaults(func=cmd_entrypoints)
 
+    speculative_help = (
+        "also include speculative edges: class-hierarchy (CHA) guesses and "
+        "unresolved wildcard/dynamic calls (lower confidence, off by default)"
+    )
     p = sub.add_parser("callers", help="who calls this symbol")
     add_db(p)
     p.add_argument("qname")
     p.add_argument("--depth", type=int, default=1)
+    p.add_argument(
+        "--include-speculative",
+        dest="include_speculative",
+        action="store_true",
+        help=speculative_help,
+    )
     p.set_defaults(func=cmd_callers)
 
     p = sub.add_parser("callees", help="what this symbol calls")
     add_db(p)
     p.add_argument("qname")
     p.add_argument("--depth", type=int, default=1)
+    p.add_argument(
+        "--include-speculative",
+        dest="include_speculative",
+        action="store_true",
+        help=speculative_help,
+    )
     p.set_defaults(func=cmd_callees)
+
+    p = sub.add_parser("references", help="every call site targeting a symbol, with file:line")
+    add_db(p)
+    p.add_argument("qname")
+    p.set_defaults(func=cmd_references)
 
     p = sub.add_parser("paths", help="source -> sink call paths")
     add_db(p)
@@ -846,13 +771,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--source-category",
         dest="source_category",
-        help="named taint-source category (e.g. http_input, env_input) or 'all'",
+        help="named taint-source category (e.g. http_input, env_input) or 'all'; "
+        "run --list-categories to see the valid set",
     )
-    p.add_argument("--sink", help="qname or glob (e.g. py:subprocess.run)")
+    p.add_argument(
+        "--sink",
+        help="qname or glob; the language prefix is optional (subprocess.run "
+        "resolves to py:subprocess.run)",
+    )
     p.add_argument(
         "--sink-category",
         dest="sink_category",
-        help="named sink category (e.g. command_exec, sql) or 'all' for any tagged sink",
+        help="named sink category (e.g. command_exec, sql) or 'all' for any tagged "
+        "sink; run --list-categories to see the valid set",
+    )
+    p.add_argument(
+        "--list-categories",
+        dest="list_categories",
+        action="store_true",
+        help="print the valid source and sink category names for this index and exit",
     )
     p.add_argument("--max-depth", dest="max_depth", type=int, default=25)
     p.add_argument("--max-paths", dest="max_paths", type=int, default=10)
@@ -891,12 +828,6 @@ def build_parser() -> argparse.ArgumentParser:
         "(handler registrations, callbacks)",
     )
     p.add_argument(
-        "--prune-sanitized",
-        dest="prune_sanitized",
-        action="store_true",
-        help="drop paths where a category sanitizer is called (heuristic, no dataflow)",
-    )
-    p.add_argument(
         "--explicit-sources",
         dest="explicit_sources",
         action="store_true",
@@ -924,40 +855,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_db(p)
     p.set_defaults(func=cmd_stats)
 
-    p = sub.add_parser(
-        "gate", help="fail if the index has new reachable dangerous paths vs the baseline"
-    )
-    add_db(p)
-    p.add_argument("--branch", default="main", help="baseline branch to diff against")
-    p.add_argument(
-        "--threshold", type=float, help="risk floor a NEW path must clear to gate (override policy)"
-    )
-    p.add_argument("--warn", action="store_true", help="report but never fail (override policy)")
-    p.add_argument("--sarif", help="write SARIF 2.1.0 findings (new + known) to this path")
-    p.add_argument("--head-sha", dest="head_sha", help="record this head commit on the scan run")
-    p.set_defaults(func=cmd_gate)
-
-    p = sub.add_parser("baseline", help="manage the reachability baseline")
-    p.add_argument(
-        "action", choices=["update", "show"], help="update: cut a baseline; show: inspect"
-    )
-    add_db(p)
-    p.add_argument("--branch", default="main", help="branch the baseline represents")
-    p.add_argument("--commit", help="commit sha to record on the baseline")
-    p.set_defaults(func=cmd_baseline)
-
-    # Sentinel service ops (#126); registered lazily — the module is light and its
-    # heavy imports (fastapi/arq/store) stay inside the command handlers.
-    from entrygraph.sentinel.cli import register as register_sentinel
-
-    register_sentinel(sub)
-
-    # Graph explorer web UI; same lazy-registration pattern as sentinel.
-    from entrygraph.explore.cli import register as register_explore
-
-    register_explore(sub)
-
-    # Unified web app (API + SPA); same lazy-registration pattern.
+    # Unified web app (API + SPA); registered lazily — the module is light and
+    # its heavy imports (fastapi/uvicorn) stay inside the command handlers.
     from entrygraph.server.cli import register as register_server
 
     register_server(sub)

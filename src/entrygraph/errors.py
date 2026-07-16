@@ -27,6 +27,11 @@ class UnsupportedLanguageError(EntrygraphError):
     """No extractor is registered for the requested language."""
 
 
+class UnknownCategoryError(EntrygraphError):
+    """A source/sink category name is not in the catalog. Carries the valid set so
+    the CLI can list it instead of silently returning zero paths."""
+
+
 class GitCloneError(EntrygraphError):
     """Cloning or updating a git URL failed (git missing, timeout, auth, bad ref)."""
 

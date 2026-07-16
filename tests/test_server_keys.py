@@ -1,4 +1,4 @@
-"""API-key management + the sentinel-mount gating."""
+"""API-key management."""
 
 from __future__ import annotations
 

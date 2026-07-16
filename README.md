@@ -3,25 +3,21 @@
 Query your codebase like a graph. `entrygraph` indexes a repository into a
 SQLite database (through the SQLAlchemy ORM) and answers questions about
 **symbols**, **classes/methods**, **entrypoints** (HTTP routes, CLI commands,
-main functions, tasks, lambda handlers), and **source → sink call-graph
-reachability** ("can any HTTP route reach `subprocess.run`?").
+main functions, tasks, lambda handlers), the **call graph** (callers, callees,
+references), and **source → sink reachability** ("can any HTTP route reach
+`subprocess.run`?").
 
 Language-agnostic via [tree-sitter](https://tree-sitter.github.io/); first-class
 support for **Python, JavaScript/TypeScript, Go, Java, Ruby, C#, PHP, and
 Rust**, with language *and* framework detection.
 
-Reachability is a heuristic taint tier, not just call-edge closure: paths are
-**risk-ranked**, **sanitizers** prune or discount them, **class-hierarchy
-analysis** recovers virtual dispatch, and confidence flags trade recall for
-precision. Entrypoints include decorator/attribute routes, call-based route
-registration, middleware, and config-file handlers (serverless, SAM, Procfile,
-Dockerfile).
-
-On top of the graph, entrygraph ships a **diff-aware reachability gate** for CI
-(baseline the accepted paths, then fail only on ones a change *introduces*) and
-**[Sentinel](#sentinel--the-gate-as-a-self-hostable-service)** — an optional
-self-hostable GitHub App that runs the gate on PR webhooks with a Check Run,
-SARIF, a REST API, and a dashboard.
+Entrypoints include decorator/attribute routes, call-based route registration,
+middleware, and config-file handlers (serverless, SAM, Procfile, Dockerfile).
+Reachability enumerates real call paths from a catalog taint source to a tagged
+sink and reports **checkable facts** about each — the sink's catalog severity,
+the weakest edge confidence, and a same-function reaching-defs verdict (`flow: confirmed` / `not observed`) — with class-hierarchy analysis to recover virtual
+dispatch. Every hop carries a `file:line` and the literal source and sink lines,
+so a finding is a lead you can open and verify, not a score to trust.
 
 ## Install
 
@@ -129,15 +125,18 @@ entrypoints --kind http_route      # or: --framework flask / --route '/api/*'
 5 entrypoint(s)
 ```
 
-### `symbols`, `callers`, `callees` — search & walk the call graph
+### `symbols`, `callers`, `callees`, `references` — search & walk the call graph
 
 `symbols` globs on name or qualified name (filter by `--kind`/`--file`);
-`callers`/`callees` walk the call graph (`--depth N`).
+`callers`/`callees` walk the call graph (`--depth N`); `references` lists every
+individual call site targeting a symbol, each with its `file:line` and edge
+confidence.
 
 ```bash
 entrygraph symbols --kind class --name 'Report*'
 entrygraph callers app.services.run_report        # who calls it
 entrygraph callees app.services.run_report        # what it calls
+entrygraph references app.services.run_report     # each call site + file:line
 ```
 
 ```
@@ -148,70 +147,72 @@ entrygraph callees app.services.run_report        # what it calls
 └──────┴───────────────────────────┴─────────────────┴─────┘
 ```
 
+By default `callers`/`callees` list only *resolved* edges (exact/import and
+unique-name fuzzy binds). `--include-speculative` adds class-hierarchy guesses
+and unresolved wildcard/dynamic calls (lower confidence, noisier).
+
 ### `paths` — source → sink reachability
 
-The security workhorse: *can anything reach a dangerous sink?* Paths are
-**risk-ranked** (highest first) and drawn as call trees — the sink node is
-flagged (`⚑`), each hop shows its resolution confidence
-(`exact`/`import`/`fuzzy`/`unresolved`), and badges mark constant-argument sinks
-and speculative edges.
+*Can anything reach a dangerous sink?* Paths are drawn as call cards, ordered by
+their facts — confirmed flows first, then by sink severity, then by the weakest
+edge confidence. Each hop shows its resolution confidence
+(`exact`/`import`/`fuzzy`/`unresolved`) and its `file:line`; the sink node is
+flagged (`⚡`), and the literal source and sink lines are printed so you can read
+the actual call.
 
 ```bash
-entrygraph paths --source '*' --sink-category command_exec
+entrygraph paths --source-category http_input --sink-category command_exec
 ```
 
 ```
-7 path(s)  * → category:command_exec
+1 path(s)  category:http_input → category:command_exec
 
-[1] ■ risk 0.73  app.services.ReportRunner.render_and_execute
-└── → py:subprocess.run   line 22  import  ⚑ py.command-exec.subprocess
-[4] ■ risk 0.50  app.services.run_report
-└── → app.services.ReportRunner.start   line 27  fuzzy
-    └── → app.services.ReportRunner.render_and_execute   line 17  exact
-        └── → py:subprocess.run   line 22  import  ⚑ py.command-exec.subprocess
-[5] ■ risk 0.49  app.routes.create_report
-└── → app.services.run_report   line 20  import
-    └── → app.services.ReportRunner.start   line 27  fuzzy
-        └── → app.services.ReportRunner.render_and_execute   line 17  exact
-            └── → py:subprocess.run   line 22  import  ⚑ py.command-exec.subprocess
+[1] severity high  confidence import
+  source  create_report   app/routes.py:12  (http_input · explicit · query "cmd")
+          cmd = request.args.get("cmd")
+    ↓     run_report      app/routes.py:20  import
+    ↓     start           app/services.py:27  fuzzy
+  sink    subprocess.run  app/services.py:22  ⚡ py.command-exec.subprocess  import
+          subprocess.run(cmd, shell=True)
+       flow: confirmed (2 hops)
 ```
 
-- **CI gate**: exits `0` when a path is found, `1` when none —
-  `entrygraph paths --source '*' --sink-category command_exec && echo reachable`.
-- **Catalog sources**: instead of a `--source` glob, use `--source-category` to
-  start from every call site of a registered taint source (e.g.
-  `--source-category http_input` / `env`) — `entrygraph paths --source-category http_input --sink-category sql`. Combine with `--source` to union both.
+- **Reachability check**: `paths` exits `0` when a path is found, `1` when none —
+  `entrygraph paths --source-category http_input --sink-category command_exec && echo reachable`.
+- **Sources & sinks**: use `--source-category`/`--sink-category` to start from
+  every registered taint source and end at every tagged sink of a category, or
+  name an exact `--source`/`--sink` (the language prefix is optional —
+  `--sink subprocess.run` resolves to `py:subprocess.run`). Combine a `--source`
+  glob with a category to union both. `paths --list-categories` prints the valid
+  category names; an unknown category is a hard error, never a silent empty
+  result.
 - **Precision/recall dial**: by default only high-confidence edges are traversed.
   Widen with `--include-unresolved` (wildcard `py:*.execute` sinks + dynamic
   calls), `--include-fuzzy` (speculative class-hierarchy edges), or
   `--include-callbacks` (function/method values passed as arguments — handler
   registrations like `http.HandleFunc("/", handler)` or `this::handle`).
-- **Sanitizers**: a registered sanitizer for the sink's category called on a
-  path (e.g. `shlex.quote`) *discounts* its risk score — heuristically, since
-  there is no dataflow, so it never zeroes the risk or hides the path.
-  `--prune-sanitized` opts into dropping those paths entirely.
 - **Source provenance**: an `http_input`/`cli_arg` source is labeled `· explicit`
   when the handler demonstrably reads request input (a catalog accessor call like
   `request.args.get("q")`) or `· handler` when the handler is merely shaped like a
-  source and reaches the sink without a proven read. Explicit sources rank above
-  handler-as-source ones; `--explicit-sources` drops the handler-only seeds
-  entirely (at the cost of property-read frameworks like Express `req.body`).
-- **Flow verification**: a bounded reaching-defs check runs over the candidate
-  findings and labels each with whether a request value actually flows to the
-  sink — `flow: confirmed` when it does, `flow: not observed` when it provably
-  doesn't (that path is down-weighted). It follows up to `--taint-hops` interior
-  call hops (default 3; `0` = same-function only) and is conservative: anything
-  it can't analyze stays unlabeled and unchanged. `--confirmed-only` keeps just
-  the confirmed paths.
-- Target an exact sink with `--sink py:subprocess.run` instead of a category.
+  source and reaches the sink without a proven read. `--explicit-sources` drops
+  the handler-only seeds entirely (at the cost of property-read frameworks like
+  Express `req.body`).
+- **Flow verification**: a bounded reaching-defs check labels each path with
+  whether a source value actually flows to the sink — `flow: confirmed` when it
+  does, `flow: not observed` when it provably doesn't. It follows up to
+  `--taint-hops` interior call hops (default 5; `0` = same-function only) and is
+  conservative: anything it can't analyze stays unlabeled. `--confirmed-only`
+  keeps just the confirmed paths.
 
 **What a finding means.** A path is a *reachability lead to triage*, not a
 confirmed dataflow: it says a source-bearing symbol can reach a sink-bearing
-symbol through the call graph. The `flow:` label sharpens this where the check
-can see the code, but an unlabeled path is still just reachability. The per-hop
-confidence tags (`exact`/`fuzzy`/`unresolved`) are *edge-resolution* confidence,
-not taint confidence. Rank, provenance, and flow labels are there to help you
-triage the list, highest-signal first.
+symbol through the call graph. Every field is a checkable fact — open the
+`file:line`s and read the code. The `severity` is the tagged sink's catalog
+severity; the per-hop confidence tags (`exact`/`fuzzy`/`unresolved`) are
+*edge-resolution* confidence, not taint confidence; the `flow:` label is the
+reaching-defs verdict where the check can see the code. There is no blended
+"risk" number to trust — the ordering surfaces confirmed, higher-severity,
+better-resolved paths first so you triage the list top-down.
 
 ### `stats` & `--json`
 
@@ -235,13 +236,15 @@ entrygraph --help          # every command and flag
 ╰────────────────────────────────────────────╯
 ```
 
-Add `--json` to any query command for machine-readable output (paths include
-`risk_score` and `may_continue`):
+Add `--json` to any query command for machine-readable output (each path
+includes its `severity`, `min_confidence`, `taint_verified`, and `may_continue`):
 
 ```json
 [
   {
-    "risk_score": 0.4887,
+    "severity": "high",
+    "min_confidence": 40,
+    "taint_verified": true,
     "may_continue": false,
     "symbols": [
       "app.routes.create_report", "app.services.run_report",
@@ -253,92 +256,25 @@ Add `--json` to any query command for machine-readable output (paths include
 ]
 ```
 
-> Colored tables, share/confidence bars, and risk-tree highlighting render in a
+> Colored tables, share/confidence bars, and severity highlighting render in a
 > real terminal; piped or `--json` output is plain text.
 
-### `gate` & `baseline` — block *new* reachable paths in CI
+### `serve` — a web UI over the index
 
-The reachability gate turns `paths` into a merge check: it diffs the current
-index's reachable dangerous paths against a stored **baseline** and fails only on
-paths a change *introduced*. Paths are identified by a line-independent
-**fingerprint**, so moving or reindenting code is never reported as new.
-
-```bash
-# on your default branch: record the accepted set
-entrygraph index . && entrygraph baseline update
-
-# on a PR branch: fail if the diff adds a new reachable dangerous path
-entrygraph index . && entrygraph gate --sarif findings.sarif
-```
-
-```
-╭──────────────────────────────────────────────────────────────╮
-│ gate: FAILED (block)  new 1 · known 5 · fixed 0 · suppressed 0│
-╰──────────────────────────────────────────────────────────────╯
-1 new path(s) at/above threshold:
-  risk 0.81  app.routes.upload → py.command-exec.subprocess  6c1566c2a29c
-```
-
-`gate` exits non-zero when a new path at/above the risk threshold appears (in
-`block` mode). Flags: `--threshold` (risk floor), `--warn` (report, never fail),
-`--branch` (baseline branch), `--sarif PATH` (SARIF 2.1.0 for GitHub code
-scanning), `--head-sha`. `baseline show` inspects the current baseline. The gate
-**never executes** the analyzed code — it is a parse-and-query operation. Baselines,
-scan history, findings, and per-repo policy are stored alongside the graph.
-
-For zero-config CI, a composite **GitHub Action** wraps index → gate → SARIF
-upload and manages the baseline across runs — see
-[docs/github-action.md](docs/github-action.md):
-
-```yaml
-- uses: actions/checkout@v4
-- uses: brettbergin/entrygraph@main
-  with:
-    threshold: "0.5"
-    mode: block # or "warn"
-```
-
-### Sentinel — the gate as a self-hostable service
-
-For teams that would rather run the gate as a service than wire the Action into
-every repo, **Sentinel** is a self-hostable **GitHub App + service** that runs the
-same gate on PR webhooks:
-
-- Verifies the webhook, fetches the PR head, indexes it, diffs against a
-  **central baseline**, and posts a GitHub **Check Run** plus **SARIF** to code
-  scanning — the counts match the CLI gate exactly.
-- Baselines auto-refresh **only** from the protected default branch on merge, so a
-  PR can't move the baseline it's measured against. Uninstalling the App
-  hard-deletes all of an installation's data.
-- A token-guarded **REST API** (`/api`) and a **React + [Primer](https://primer.style/)
-  dashboard** (`/ui`) surface scans, findings, suppressions, and per-repo policy —
-  every route scoped by installation + repo.
-- Operate it with the CLI: `entrygraph sentinel serve` / `worker` /
-  `config` / `installations` / `purge` / `baseline`.
-
-It reuses the gate engine unchanged (**never executes analyzed code**) and ships
-behind the `entrygraph[sentinel]` extra (FastAPI + arq/Redis + Postgres), so the
-core CLI stays dependency-lean. Full deploy guide, security posture, and secret-
-rotation runbook in [docs/sentinel.md](docs/sentinel.md).
-
-### Explorer — a web UI over the index
-
-To browse an index visually rather than via the CLI, the **explorer** is a
-read-only web UI (behind the `entrygraph[explore]` extra) that walks a repo's
-**symbols**, **entrypoints/routes**, **callers/callees**, **source→sink paths**,
-and an interactive **call graph**:
+To browse an index visually rather than via the CLI, `entrygraph serve` runs a
+web app that walks a repo's **symbols**, **entrypoints/routes**,
+**callers/callees**, **source→sink paths**, and an interactive **call graph**,
+and can register and index repositories from the UI:
 
 ```bash
 entrygraph index . --db /tmp/graph.db
 entrygraph serve --db /tmp/graph.db           # http://127.0.0.1:8100
 ```
 
-`entrygraph serve` runs the unified web app — one server for exploring the graph
-(symbols, entrypoints, D3 call graph, source→sink reachability), registering and
-indexing repositories from the UI, and the reachability-gate workflow (findings,
-baselines, policy, suppressions). It supports Authentik SSO (`EG_OIDC_*`), with a
-zero-setup local mode (no auth) on loopback by default. Build the UI once with
-`cd webapp && npm run build`; the build lands in the package and is served at `/`.
+It supports Authentik SSO (`EG_OIDC_*`), with a zero-setup local mode (no auth)
+on loopback by default, and ships behind the `entrygraph[server]` extra. Build
+the UI once with `cd webapp && npm run build`; the build lands in the package and
+is served at `/`.
 
 ## Python API
 
@@ -369,14 +305,18 @@ graph.callers("app.services.run_report")            # who calls it
 graph.callees("app.services.run_report", depth=3)   # what it (transitively) calls
 graph.references("app.models.CONST")                # inbound edges of any kind
 
-# Source -> sink reachability (paths are risk-ranked, highest first)
+# Source -> sink reachability (ordered by facts: confirmed flows, severity, confidence)
 paths = graph.paths(source="app.routes.*", sink_category="command_exec")
 for p in paths:
-    print(p.risk_score, p.render(), "(+may continue)" if p.may_continue else "")
-    # 0.49 app.routes.create_report -> app.services.run_report (line 20)
+    print(p.severity, p.taint_verified, p.render(), "(+may continue)" if p.may_continue else "")
+    # high True  app.routes.create_report -> app.services.run_report (line 20)
     #   -> ...ReportRunner.render_and_execute (line 17) -> py:subprocess.run (line 22)
 
 graph.reachable(source="app.routes.upload", sink="py:subprocess.run")   # -> bool
+
+# Valid category names (an unknown category raises UnknownCategoryError)
+graph.sink_categories()      # -> ["command_exec", "sql", "path_traversal", ...]
+graph.source_categories()    # -> ["http_input", "cli_arg", "env_input", ...]
 
 # Precision/recall dial. By default only EXACT/IMPORT and unique-name FUZZY
 # edges are traversed. Opt into wider (noisier) traversal:
@@ -385,7 +325,7 @@ graph.paths(source="app.routes.*", sink_category="sql",
 graph.paths(source="app.routes.*", sink_category="command_exec",
             include_fuzzy=True)        # follow speculative class-hierarchy (CHA) edges
 graph.paths(source="app.routes.*", sink_category="command_exec",
-            prune_sanitized=True)      # drop paths where a shlex.quote etc. is called
+            confirmed_only=True)       # keep only paths where a flow is confirmed
 
 # Incremental re-index (only changed/added/deleted files are reparsed)
 graph.refresh()
@@ -422,16 +362,12 @@ results are safe to hold and trivial to serialize.
 
 ## Extending
 
-- **Custom sinks/sources/sanitizers** — drop an `entrygraph.toml` in the repo
-  root with `[[sink]]` / `[[source]]` / `[[sanitizer]]` tables (same schema as
-  the built-in `data/sinks/*.toml`), or call
-  `entrygraph.detect.taint.register_sink(...)` / `register_sanitizer(...)`. A
-  `[[sanitizer]]` called on a path discounts its risk score for that category;
-  since reachability has no dataflow, the discount is capped (a match never
-  zeroes risk or hides a path — use `--prune-sanitized` to drop them explicitly).
-  Third-party wrapper libraries that reach a sink internally are covered by
-  `data/sinks/lib_*.toml`
-  "library summaries" (same schema, with a `library = "..."` tag).
+- **Custom sinks/sources** — drop an `entrygraph.toml` in the repo root with
+  `[[sink]]` / `[[source]]` tables (same schema as the built-in
+  `data/sinks/*.toml`), or call `entrygraph.detect.taint.register_sink(...)` /
+  `register_source(...)`. Third-party wrapper libraries that reach a sink
+  internally are covered by `data/sinks/lib_*.toml` "library summaries" (same
+  schema, with a `library = "..."` tag).
 - **New frameworks / entrypoints** — register a `FrameworkSpec` and an
   `EntrypointRule`; adding a framework is usually a few lines.
 - **New languages** — add a `<lang>/{definitions,imports,calls}.scm` query set

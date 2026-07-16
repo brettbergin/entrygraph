@@ -28,28 +28,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Explorer: a read-only web UI over an entrygraph index (symbols, entrypoints,
-# callers/callees, source->sink paths, call-graph). FastAPI is already in `dev`,
-# so CI unit-tests the API; uvicorn is only needed to actually serve it.
-explore = [
-    "fastapi>=0.110",
-    "uvicorn>=0.29",
-]
-# Sentinel: the self-hostable GitHub App + service layer around the gate (#126).
-# Kept out of the core so the CLI stays dependency-lean; a deployment installs
-# `entrygraph[sentinel]`. arq/redis and the Postgres driver are only needed at
-# runtime — tests exercise the store on SQLite and the app via FastAPI's
-# in-process TestClient, so they aren't required for CI.
-sentinel = [
-    "fastapi>=0.110",
-    "uvicorn>=0.29",
-    "httpx>=0.27",
-    "pyjwt[crypto]>=2.8",
-    "dulwich>=0.22",
-    "arq>=0.26",
-    "redis>=5.0",
-    "psycopg[binary]>=3.1",
-]
 # Unified web app: one server for the read API, repo management/indexing jobs,
 # Authentik OIDC auth, and the SPA. Authlib does OIDC discovery/code exchange;
 # itsdangerous signs the transient OIDC-state cookie (starlette SessionMiddleware).
@@ -75,13 +53,9 @@ dev = [
     "bandit>=1.7",
     "mdformat>=0.7",
     "mdformat-gfm>=0.3",
-    # the pure-Python subset of the sentinel stack, so CI can unit-test the
-    # webhook receiver, App auth, and git fetch (Redis/Postgres stay runtime-only)
+    # server-extra pure-Python deps, so CI unit-tests the unified server + auth
     "fastapi>=0.110",
     "httpx>=0.27",
-    "pyjwt[crypto]>=2.8",
-    "dulwich>=0.22",
-    # server-extra pure-Python deps, so CI unit-tests the unified server + auth
     "authlib>=1.3",
     "itsdangerous>=2.1",
 ]
