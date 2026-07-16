@@ -1,6 +1,6 @@
 """JSON shapes for the read API — the contract the webapp consumes.
 
-Ported from ``explore/api.py`` and enriched to CLI parity: paths carry per-hop
+Enriched to CLI parity: paths carry per-hop
 edge metadata (line, confidence, via, sanitizers) and literal source/sink line
 snippets read from the repo checkout (best-effort, path-contained).
 """

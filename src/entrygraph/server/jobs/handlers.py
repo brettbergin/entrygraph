@@ -113,8 +113,8 @@ def _graph_repo_id(db_path: str, root: Path) -> int | None:
 
 
 def delete_repo_data(config: ServerConfig, app_session_factory, repo_id: int) -> str | None:
-    """Delete a repository's graph rows (FK cascade takes files/symbols/edges/
-    gate rows) and its RepoSource. Returns the removed root_path."""
+    """Delete a repository's graph rows (FK cascade takes files/symbols/edges)
+    and its RepoSource. Returns the removed root_path."""
     engine = make_engine(config.db_path)
     try:
         from sqlalchemy.orm import Session

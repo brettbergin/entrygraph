@@ -27,13 +27,11 @@ from entrygraph.server.auth import oidc as auth_routes
 from entrygraph.server.auth.csrf import OriginCheckMiddleware
 from entrygraph.server.config import ServerConfig, origin_of
 from entrygraph.server.jobs.runner import JobRunner
-from entrygraph.server.routes import gate as gate_routes
 from entrygraph.server.routes import graph as graph_routes
 from entrygraph.server.routes import jobs as jobs_routes
 from entrygraph.server.routes import keys as keys_routes
 from entrygraph.server.routes import meta as meta_routes
 from entrygraph.server.routes import repos as repos_routes
-from entrygraph.server.routes import sentinel as sentinel_routes
 
 # where the webapp build lands (webapp/vite.config.ts outDir)
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -70,8 +68,6 @@ def create_app(config: ServerConfig, *, serve_ui: bool = True) -> FastAPI:
     app.state.app_session_factory = app_session_factory
     app.state.job_runner = runner
     app.state.oauth = auth_routes.make_oauth(config) if config.auth_mode == "oidc" else None
-    app.state.sentinel_session_factory = _maybe_sentinel_store()
-    app.state.sentinel_enabled = app.state.sentinel_session_factory is not None
 
     if config.cors_origins:
         from fastapi.middleware.cors import CORSMiddleware
@@ -110,34 +106,12 @@ def create_app(config: ServerConfig, *, serve_ui: bool = True) -> FastAPI:
     app.include_router(meta_routes.router, prefix=api_prefix)
     app.include_router(repos_routes.router, prefix=api_prefix)
     app.include_router(jobs_routes.router, prefix=api_prefix)
-    app.include_router(gate_routes.router, prefix=api_prefix)
     app.include_router(keys_routes.router, prefix=api_prefix)
-    if app.state.sentinel_enabled:
-        app.include_router(sentinel_routes.router, prefix=api_prefix)
     app.include_router(graph_routes.router, prefix=api_prefix)
 
     if serve_ui:
         _mount_spa(app, _STATIC_DIR)
     return app
-
-
-def _maybe_sentinel_store():
-    """A Sentinel findings-store session factory when Sentinel is configured
-    (``SENTINEL_GITHUB_APP_ID`` present), else None. Failures to build it (e.g.
-    the sentinel extra isn't installed) degrade to "not configured" rather than
-    breaking the whole server."""
-    import os
-
-    if not os.environ.get("SENTINEL_GITHUB_APP_ID"):
-        return None
-    try:
-        from entrygraph.sentinel.config import SentinelConfig
-        from entrygraph.sentinel.store import init_store, make_store_engine
-
-        config = SentinelConfig.from_env()
-        return init_store(make_store_engine(config.database_url))
-    except Exception:  # pragma: no cover - optional integration
-        return None
 
 
 def _mount_spa(app: FastAPI, static_dir: Path) -> None:

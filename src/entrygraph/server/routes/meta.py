@@ -49,5 +49,4 @@ def me(request: Request, principal: CurrentPrincipal) -> dict[str, Any]:
         },
         "auth_mode": config.auth_mode,
         "auth_disabled": config.auth_mode == "none",
-        "sentinel_enabled": bool(getattr(request.app.state, "sentinel_enabled", False)),
     }

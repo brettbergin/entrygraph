@@ -55,7 +55,6 @@ def test_list_repos(client):
     assert len(repos) == 1
     assert repos[0]["name"] == "flask_app"
     assert repos[0]["symbols"] > 0
-    assert repos[0]["sentinel"] is False
     assert repos[0]["source"] is None  # registered outside the UI: no RepoSource yet
 
 
