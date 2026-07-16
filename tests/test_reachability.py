@@ -250,6 +250,80 @@ def test_route_handler_passed_by_reference_binds_to_the_handler(tmp_path):
     assert ["controller.getUser", "js:child_process.exec"] in chains
 
 
+def test_unknown_category_raises_with_valid_set(graph):
+    # an unknown category otherwise resolves to an empty pattern set and silently
+    # returns zero paths — indistinguishable from "no reachable sinks"
+    from entrygraph.errors import UnknownCategoryError
+
+    with pytest.raises(UnknownCategoryError, match="command_exec"):
+        graph.paths(source_category="http_input", sink_category="command_injection")
+    with pytest.raises(UnknownCategoryError, match="http_input"):
+        graph.paths(source_category="cli_command", sink_category="command_exec")
+    # 'all' and real categories are accepted
+    assert graph.paths(source_category="http_input", sink_category="all") is not None
+
+
+def test_bare_sink_name_resolves_without_language_prefix(graph):
+    # sink symbols carry a language prefix (py:subprocess.run); a bare name should
+    # still resolve so users needn't know the convention
+    prefixed = graph.paths(source="app.routes.create_report", sink="py:subprocess.run")
+    bare = graph.paths(source="app.routes.create_report", sink="subprocess.run")
+    assert bare and len(bare) == len(prefixed)
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_reachable_and_paths_agree_on_category_terminal(tmp_path, engine):
+    # reachable() must apply the same tagged-terminal-edge filter as paths(): a
+    # handler that only calls the sink symbol with a constant (untagged edge) is
+    # not a command_exec reach (Bug 4 — the two used to disagree).
+    (tmp_path / "app.py").write_text(
+        "import subprocess\n"
+        "from flask import Flask, request\n"
+        "app = Flask(__name__)\n"
+        '@app.route("/c")\n'
+        "def c():\n"
+        '    subprocess.run("ls", shell=True)\n'  # constant arg -> untagged
+    )
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    try:
+        paths = graph.paths(
+            source_category="http_input", sink_category="command_exec", engine=engine
+        )
+        reach = graph.reachable(
+            source_category="http_input", sink_category="command_exec", engine=engine
+        )
+        assert bool(paths) == reach
+    finally:
+        graph.close()
+
+
+def test_category_finding_survives_untagged_crowding(tmp_path):
+    # a real tainted path must not be crowded out of the candidate pool by many
+    # benign (untagged, constant-arg) arrivals at the same shared sink symbol
+    # (Bug 3). The terminal-edge filter runs inside the traversal, not after.
+    lines = ["import subprocess", "from flask import Flask, request", "app = Flask(__name__)"]
+    for i in range(80):
+        lines += [f'@app.route("/b{i}")', f"def b{i}():", '    subprocess.run("ls", shell=True)']
+    lines += [
+        '@app.route("/vuln")',
+        "def vuln():",
+        '    cmd = request.args.get("cmd")',
+        "    subprocess.run(cmd, shell=True)",
+    ]
+    (tmp_path / "app.py").write_text("\n".join(lines) + "\n")
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    try:
+        paths = graph.paths(
+            source_category="http_input", sink_category="command_exec", max_paths=5
+        )
+        heads = [p.symbols[0].qname for p in paths]
+        assert "app.vuln" in heads
+        # the confirmed flow ranks first (confirmed > unchecked > refuted)
+        assert heads[0] == "app.vuln"
+    finally:
+        graph.close()
+
+
 def test_sink_category_all_unions_every_tagged_sink(graph):
     # `all` is a meta-category: any tagged sink of any category. It must include the
     # command_exec path that `--sink-category command_exec` finds, and be a superset.

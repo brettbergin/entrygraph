@@ -490,6 +490,18 @@ def _path_card(index: int, path, source_label: str | None, read_line=None) -> Gr
 
 
 def cmd_paths(args) -> int:
+    if getattr(args, "list_categories", False):
+        with _open(args) as graph:
+            sources = graph.source_categories()
+            sinks = graph.sink_categories()
+        if args.json:
+            print(to_json({"source_categories": sources, "sink_categories": sinks}))
+            return 0
+        con = console()
+        con.print(f"[bold]source categories[/]  [dim]{', '.join(sources) or '—'}[/]")
+        con.print(f"[bold]sink categories[/]    [dim]{', '.join(sinks) or '—'}[/]")
+        con.print("[dim]pass 'all' to either to match every tagged source/sink[/]")
+        return 0
     if not args.source and not args.source_category:
         raise EntrygraphError("provide --source and/or --source-category")
     # A missing sink would leave the sink set empty and print "no paths found",
@@ -708,13 +720,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--source-category",
         dest="source_category",
-        help="named taint-source category (e.g. http_input, env_input) or 'all'",
+        help="named taint-source category (e.g. http_input, env_input) or 'all'; "
+        "run --list-categories to see the valid set",
     )
-    p.add_argument("--sink", help="qname or glob (e.g. py:subprocess.run)")
+    p.add_argument(
+        "--sink",
+        help="qname or glob; the language prefix is optional (subprocess.run "
+        "resolves to py:subprocess.run)",
+    )
     p.add_argument(
         "--sink-category",
         dest="sink_category",
-        help="named sink category (e.g. command_exec, sql) or 'all' for any tagged sink",
+        help="named sink category (e.g. command_exec, sql) or 'all' for any tagged "
+        "sink; run --list-categories to see the valid set",
+    )
+    p.add_argument(
+        "--list-categories",
+        dest="list_categories",
+        action="store_true",
+        help="print the valid source and sink category names for this index and exit",
     )
     p.add_argument("--max-depth", dest="max_depth", type=int, default=25)
     p.add_argument("--max-paths", dest="max_paths", type=int, default=10)

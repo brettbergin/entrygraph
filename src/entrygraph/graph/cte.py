@@ -36,13 +36,35 @@ class CteEngine:
         self.include_cha = include_cha
         self.repo_id = repo_id  # scope the walk to one repo in a global DB (#116)
 
-    def reachable(self, sources: set[int], sinks: set[int], max_depth: int) -> bool:
-        if sources & sinks:
+    def reachable(
+        self,
+        sources: set[int],
+        sinks: set[int],
+        max_depth: int,
+        sink_edge_ids: set[int] | None = None,
+        open_sink_ids: set[int] | None = None,
+    ) -> bool:
+        if sources & sinks and sink_edge_ids is None:
             return True
-        return bool(self.paths(sources, sinks, max_depth=max_depth, max_paths=1))
+        return bool(
+            self.paths(
+                sources,
+                sinks,
+                max_depth=max_depth,
+                max_paths=1,
+                sink_edge_ids=sink_edge_ids,
+                open_sink_ids=open_sink_ids,
+            )
+        )
 
     def paths(
-        self, sources: set[int], sinks: set[int], max_depth: int = 25, max_paths: int = 10
+        self,
+        sources: set[int],
+        sinks: set[int],
+        max_depth: int = 25,
+        max_paths: int = 10,
+        sink_edge_ids: set[int] | None = None,
+        open_sink_ids: set[int] | None = None,
     ) -> PathList:
         results: list[list[tuple[int, Hop | None]]] = []
         cap = _candidate_cap(max_paths)
@@ -51,12 +73,18 @@ class CteEngine:
         # flood the output and out-rank real chains (#47). A taint path needs a
         # distinct source and sink (>= 2 nodes), so we no longer seed them; the
         # recursive walk below already starts from real edges (src NOT IN sinks).
-
+        #
+        # A category query constrains the terminal EDGE, not just the terminal
+        # symbol: `last_id` carries the id of the edge into `node` so the outer
+        # query can require it be a tagged category sink (mirrors the memory
+        # engine's `_terminal_ok`). ``open_sink_ids`` (explicit --sink) qualify on
+        # the symbol alone.
+        constrain_terminal = sink_edge_ids is not None
         rows = self.session.execute(
             text(
                 """
-                WITH RECURSIVE walk(node, nodes, lines, kinds, ids, confs, depth) AS (
-                    SELECT e.dst_symbol_id,
+                WITH RECURSIVE walk(node, last_id, nodes, lines, kinds, ids, confs, depth) AS (
+                    SELECT e.dst_symbol_id, e.id,
                            :sep || e.src_symbol_id || :sep || e.dst_symbol_id || :sep,
                            :sep || e.line || :sep,
                            :sep || e.kind || :sep,
@@ -72,7 +100,7 @@ class CteEngine:
                       AND e.confidence >= :minconf
                       AND (:include_cha OR e.via IS NULL OR e.via != 'cha')
                     UNION ALL
-                    SELECT e.dst_symbol_id,
+                    SELECT e.dst_symbol_id, e.id,
                            w.nodes || e.dst_symbol_id || :sep,
                            w.lines || e.line || :sep,
                            w.kinds || e.kind || :sep,
@@ -92,6 +120,9 @@ class CteEngine:
                 )
                 SELECT nodes, lines, kinds, ids, confs, depth FROM walk
                 WHERE node IN :sinks
+                  AND (NOT :constrain_terminal
+                       OR last_id IN :sink_edges
+                       OR node IN :open_sinks)
                 ORDER BY depth
                 LIMIT :cap
                 """
@@ -99,6 +130,8 @@ class CteEngine:
                 bindparam("sources", expanding=True),
                 bindparam("sinks", expanding=True),
                 bindparam("kinds", expanding=True),
+                bindparam("sink_edges", expanding=True),
+                bindparam("open_sinks", expanding=True),
             ),
             {
                 "sources": list(sources),
@@ -110,6 +143,10 @@ class CteEngine:
                 "cap": cap,
                 "sep": _SEP,
                 "repo_id": self.repo_id,
+                "constrain_terminal": 1 if constrain_terminal else 0,
+                # expanding bindparams can't be empty; a lone sentinel never matches
+                "sink_edges": list(sink_edge_ids) if sink_edge_ids else [-1],
+                "open_sinks": list(open_sink_ids) if open_sink_ids else [-1],
             },
         ).all()
 

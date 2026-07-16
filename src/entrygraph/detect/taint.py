@@ -130,6 +130,14 @@ class SinkRegistry:
             return set(self.sources)
         return {s.id for s in self.sources.values() if s.category == category}
 
+    def sink_categories(self) -> list[str]:
+        """Sorted distinct sink categories in this registry (for validation/help)."""
+        return sorted({s.category for s in self.sinks.values()})
+
+    def source_categories(self) -> list[str]:
+        """Sorted distinct source categories in this registry (for validation/help)."""
+        return sorted({s.category for s in self.sources.values()})
+
     def severity_of(self, sink_id: str | None) -> str | None:
         sink = self.sinks.get(sink_id) if sink_id else None
         return sink.severity if sink else None

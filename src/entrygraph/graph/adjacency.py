@@ -73,6 +73,22 @@ def _passes(hop: Hop, min_confidence: int, include_cha: bool) -> bool:
     return include_cha or hop.via != "cha"
 
 
+def _terminal_ok(
+    hop: Hop | None, sink_edge_ids: set[int] | None, open_sink_ids: set[int] | None
+) -> bool:
+    """Whether a path terminating via ``hop`` is an accepted sink arrival.
+
+    No ``sink_edge_ids`` constraint (explicit ``--sink`` only): any arrival at a
+    sink symbol qualifies. With one (a category query): the terminal edge must be
+    a tagged category sink, unless the terminal symbol is an explicit ``--sink``
+    (``open_sink_ids``), which qualifies on its own."""
+    if sink_edge_ids is None:
+        return True
+    if hop is not None and hop.edge_id in sink_edge_ids:
+        return True
+    return bool(open_sink_ids) and hop is not None and hop.dst in open_sink_ids
+
+
 class AdjacencyCache:
     def __init__(self, generation: int, kinds: frozenset[str]) -> None:
         self.generation = generation
@@ -155,8 +171,10 @@ class AdjacencyCache:
         max_depth: int,
         min_confidence: int = 0,
         include_cha: bool = True,
+        sink_edge_ids: set[int] | None = None,
+        open_sink_ids: set[int] | None = None,
     ) -> bool:
-        if sources & sinks:
+        if sources & sinks and _terminal_ok(None, sink_edge_ids, open_sink_ids):
             return True
         seen = set(sources)
         frontier = deque((s, 0) for s in sources)
@@ -167,7 +185,7 @@ class AdjacencyCache:
             for hop in self.forward.get(node, ()):
                 if not _passes(hop, min_confidence, include_cha):
                     continue
-                if hop.dst in sinks:
+                if hop.dst in sinks and _terminal_ok(hop, sink_edge_ids, open_sink_ids):
                     return True
                 if hop.dst not in seen:
                     seen.add(hop.dst)
@@ -182,6 +200,8 @@ class AdjacencyCache:
         max_paths: int = 10,
         min_confidence: int = 0,
         include_cha: bool = True,
+        sink_edge_ids: set[int] | None = None,
+        open_sink_ids: set[int] | None = None,
     ) -> list[list[tuple[int, Hop | None]]]:
         """Enumerate simple paths as [(symbol_id, hop_into_it | None), ...].
 
@@ -190,6 +210,12 @@ class AdjacencyCache:
         (>= max_paths) so the caller can rank and truncate; a size-scaled
         visit budget bounds work, and the returned PathList reports `truncated`
         when that budget was spent before enumeration finished.
+
+        When ``sink_edge_ids`` is given (a category query), a path is only
+        accepted if its terminal edge is a tagged category sink (or its terminal
+        symbol is an ``open_sink_ids`` explicit ``--sink``). Filtering *inside*
+        the DFS — not after — is what stops untagged arrivals at a shared sink
+        symbol from crowding the candidate pool and hiding a real tagged path.
         """
         results: list[list[tuple[int, Hop | None]]] = []
         total_hops = sum(len(hops) for hops in self.forward.values())
@@ -215,7 +241,7 @@ class AdjacencyCache:
                     # a distinct source and sink only (>= 2 nodes); a source that is
                     # itself a sink is not a degenerate length-1 path (#47), matching
                     # the CTE engine which never seeds src-in-sinks walks.
-                    if len(stack) > 1:
+                    if len(stack) > 1 and _terminal_ok(stack[-1][1], sink_edge_ids, open_sink_ids):
                         results.append(list(stack))
                     return
                 if depth >= max_depth:

@@ -24,6 +24,7 @@ from entrygraph.errors import (
     DatabaseNotFoundError,
     RepositoryNotIndexedError,
     SymbolNotFoundError,
+    UnknownCategoryError,
 )
 from entrygraph.graph.adjacency import AdjacencyCache
 from entrygraph.kinds import Confidence, EntrypointKind
@@ -107,14 +108,29 @@ class _FilteredAdjacency:
     min_confidence: int
     include_cha: bool
 
-    def paths(self, sources, sinks, max_depth=25, max_paths=10):
+    def paths(
+        self, sources, sinks, max_depth=25, max_paths=10, sink_edge_ids=None, open_sink_ids=None
+    ):
         return self.cache.paths(
-            sources, sinks, max_depth, max_paths, self.min_confidence, self.include_cha
+            sources,
+            sinks,
+            max_depth,
+            max_paths,
+            self.min_confidence,
+            self.include_cha,
+            sink_edge_ids=sink_edge_ids,
+            open_sink_ids=open_sink_ids,
         )
 
-    def reachable(self, sources, sinks, max_depth):
+    def reachable(self, sources, sinks, max_depth, sink_edge_ids=None, open_sink_ids=None):
         return self.cache.reachable(
-            sources, sinks, max_depth, self.min_confidence, self.include_cha
+            sources,
+            sinks,
+            max_depth,
+            self.min_confidence,
+            self.include_cha,
+            sink_edge_ids=sink_edge_ids,
+            open_sink_ids=open_sink_ids,
         )
 
 
@@ -548,6 +564,7 @@ class CodeGraph:
         floor, include_cha = _traversal_params(min_confidence, include_fuzzy, include_unresolved)
         kinds = (*edge_kinds, "callback") if include_callbacks else edge_kinds
         with self._session_factory() as session:
+            self._validate_categories(session, source_category, sink_category)
             source_sets = self._resolve_sources(
                 session, source, source_category, explicit_only=explicit_sources
             )
@@ -555,25 +572,28 @@ class CodeGraph:
             sinks = self._sink_ids(session, sink, sink_category)
             if not sources or not sinks:
                 return PathResults()
-            traverser = self._traverser(session, engine, kinds, floor, include_cha)
-            raw_paths = traverser.paths(sources, sinks, max_depth=max_depth, max_paths=max_paths)
-            truncated = bool(getattr(raw_paths, "truncated", False))
+            # A category sink is tagged per-EDGE (with arg hints), but traversal
+            # stops at the sink SYMBOL. A path reaching that symbol via an untagged
+            # sibling edge — createHash('sha256') vs the md5 edge that tagged the
+            # shared createHash symbol — is a false positive. Constrain the terminal
+            # edge inside the traversal (not after) so untagged arrivals can't crowd
+            # the candidate pool and hide a real tagged path. An explicit --sink
+            # symbol qualifies on its own.
+            sink_edge_ids = None
+            open_sink_ids = None
             if sink_category is not None:
-                # A category sink is tagged per-EDGE (with arg hints), but traversal
-                # stops at the sink SYMBOL. A path reaching that symbol via an
-                # untagged sibling edge — createHash('sha256') vs the md5 edge that
-                # tagged the shared createHash symbol — is a false positive. Keep a
-                # path only if its terminal edge is a category sink (or its terminal
-                # node is an explicit --sink symbol). This also drops degenerate
-                # length-1 `--source '*'` self-matches, which have no terminal edge.
-                explicit_ids = self._spec_to_ids(session, sink) if sink is not None else set()
-                sink_edges = self._category_sink_edge_ids(session, sink_category)
-                raw_paths = [
-                    p
-                    for p in raw_paths
-                    if p[-1][0] in explicit_ids
-                    or (p[-1][1] is not None and p[-1][1].edge_id in sink_edges)
-                ]
+                sink_edge_ids = self._category_sink_edge_ids(session, sink_category)
+                open_sink_ids = self._spec_to_ids(session, sink) if sink is not None else set()
+            traverser = self._traverser(session, engine, kinds, floor, include_cha)
+            raw_paths = traverser.paths(
+                sources,
+                sinks,
+                max_depth=max_depth,
+                max_paths=max_paths,
+                sink_edge_ids=sink_edge_ids,
+                open_sink_ids=open_sink_ids,
+            )
+            truncated = bool(getattr(raw_paths, "truncated", False))
             if not raw_paths:
                 # 0 paths may mean the visit budget was spent before any sink was
                 # reached — propagate the flag so this isn't mistaken for "safe".
@@ -635,6 +655,7 @@ class CodeGraph:
         floor, include_cha = _traversal_params(min_confidence, include_fuzzy, include_unresolved)
         kinds = (*edge_kinds, "callback") if include_callbacks else edge_kinds
         with self._session_factory() as session:
+            self._validate_categories(session, source_category, sink_category)
             sources = set(
                 self._resolve_sources(
                     session, source, source_category, explicit_only=explicit_sources
@@ -643,8 +664,17 @@ class CodeGraph:
             sinks = self._sink_ids(session, sink, sink_category)
             if not sources or not sinks:
                 return False
+            sink_edge_ids = None
+            open_sink_ids = None
+            if sink_category is not None:
+                # match paths(): reachability of a category means a tagged terminal
+                # edge is reachable, not merely the shared sink symbol (Bug 4).
+                sink_edge_ids = self._category_sink_edge_ids(session, sink_category)
+                open_sink_ids = self._spec_to_ids(session, sink) if sink is not None else set()
             traverser = self._traverser(session, engine, kinds, floor, include_cha)
-            return traverser.reachable(sources, sinks, max_depth)
+            return traverser.reachable(
+                sources, sinks, max_depth, sink_edge_ids=sink_edge_ids, open_sink_ids=open_sink_ids
+            )
 
     # ---------------- maintenance ----------------
 
@@ -762,6 +792,38 @@ class CodeGraph:
             self._adjacency[key] = cache
         return cache
 
+    def sink_categories(self) -> list[str]:
+        """Valid ``sink_category`` values for this repo (catalog + repo config)."""
+        with self._session_factory() as session:
+            return self._registry(session).sink_categories()
+
+    def source_categories(self) -> list[str]:
+        """Valid ``source_category`` values for this repo (catalog + repo config)."""
+        with self._session_factory() as session:
+            return self._registry(session).source_categories()
+
+    def _validate_categories(
+        self, session: Session, source_category: str | None, sink_category: str | None
+    ) -> None:
+        """Reject an unknown category up front. An unknown name otherwise resolves
+        to an empty pattern set and silently returns zero paths — indistinguishable
+        from "no reachable sinks", which is the single biggest paths usability trap."""
+        registry = self._registry(session)
+        if source_category is not None and source_category != "all":
+            valid = registry.source_categories()
+            if source_category not in valid:
+                raise UnknownCategoryError(
+                    f"unknown source category {source_category!r}; valid: "
+                    f"{', '.join(valid)} (or 'all')"
+                )
+        if sink_category is not None and sink_category != "all":
+            valid = registry.sink_categories()
+            if sink_category not in valid:
+                raise UnknownCategoryError(
+                    f"unknown sink category {sink_category!r}; valid: "
+                    f"{', '.join(valid)} (or 'all')"
+                )
+
     def _spec_to_ids(self, session: Session, spec) -> set[int]:
         if spec is None:
             return set()
@@ -852,6 +914,11 @@ class CodeGraph:
 
     def _sink_ids(self, session: Session, sink, sink_category: str | None) -> set[int]:
         ids = self._spec_to_ids(session, sink) if sink is not None else set()
+        # Sink symbols are external placeholders carrying a language prefix
+        # (`py:subprocess.run`). A bare `subprocess.run` matches nothing; retry with
+        # a wildcard prefix so users needn't know the `py:` convention.
+        if isinstance(sink, str) and not ids and ":" not in sink and "*" not in sink:
+            ids = self._spec_to_ids(session, f"*:{sink}")
         if sink_category is not None:
             registry = self._registry(session)
             sink_ids = registry.ids_for_category(sink_category)
