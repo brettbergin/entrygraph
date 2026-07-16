@@ -129,32 +129,3 @@ callee = "rb:*.{fetch}"
 require_arg_hint = "ENV"
 description = "Environment variable input"
 
-# ---------------- sanitizers ----------------
-
-[[sanitizer]]
-id = "rb.sanitize.shellwords"
-category = "command_exec"
-callee = "rb:*.{shellescape}"
-effect = "neutralizes"
-description = "Shell argument quoting (Shellwords.escape / String#shellescape)"
-
-[[sanitizer]]
-id = "rb.sanitize.html-escape"
-category = "template_injection"
-callee = "rb:{CGI.escapeHTML,ERB.Util.html_escape,ERB.Util.h,Rack.Utils.escape_html}"
-effect = "reduces"
-description = "HTML escaping"
-
-[[sanitizer]]
-id = "rb.sanitize.sql"
-category = "sql"
-callee = "rb:*.{sanitize_sql,sanitize_sql_array,sanitize_sql_for_conditions,quote}"
-effect = "reduces"
-description = "ActiveRecord SQL sanitization"
-
-[[sanitizer]]
-id = "rb.sanitize.basename"
-category = "path_traversal"
-callee = "rb:{File.basename}"
-effect = "reduces"
-description = "Basename extraction"

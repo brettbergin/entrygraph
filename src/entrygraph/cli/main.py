@@ -25,8 +25,6 @@ from entrygraph.cli.render import (
     entrypoint_kind_text,
     kind_text,
     method_text,
-    risk_style,
-    risk_text,
     to_json,
 )
 from entrygraph.errors import EntrygraphError
@@ -107,7 +105,7 @@ def _coverage_cell(cov) -> Text:
         return Text("none", style="red")
     style = {"full": "green", "partial": "yellow", "minimal": "red"}[cov.tier]
     cell = Text(cov.tier, style=style)
-    cell.append(f"  {cov.sinks} sinks · {cov.sources} sources · {cov.sanitizers} san", style="dim")
+    cell.append(f"  {cov.sinks} sinks · {cov.sources} sources", style="dim")
     return cell
 
 
@@ -352,10 +350,12 @@ def _loc(file: str | None, line: int) -> str | None:
     return f"{file}:{line}" if file else None
 
 
-def _risk_word(risk: float | None) -> str:
-    if risk is None:
-        return "?"
-    return "high" if risk >= 0.66 else "medium" if risk >= 0.33 else "low"
+_SEVERITY_STYLE = {
+    "critical": "bold red",
+    "high": "red",
+    "medium": "yellow",
+    "low": "green",
+}
 
 
 def _line_reader(repo_root: str | None):
@@ -442,11 +442,16 @@ def _path_card(index: int, path, source_label: str | None, read_line=None) -> Gr
     name_w = max(len(r[1]) for r in rows)
     labels = {"source": "source ", "hop": "  ↓    ", "sink": "sink   "}
 
+    # The head line states facts, not a blended score: the tagged sink's catalog
+    # severity and the weakest edge confidence — each checkable against the code.
     head = Text()
     head.append(f"[{index}] ", style="dim")
-    head.append("risk ", style="dim")
-    head.append_text(risk_text(path.risk_score))
-    head.append(f" ({_risk_word(path.risk_score)})", style=risk_style(path.risk_score))
+    if path.severity:
+        head.append("severity ", style="dim")
+        head.append(path.severity, style=_SEVERITY_STYLE.get(path.severity, ""))
+        head.append("  ", style="dim")
+    head.append("confidence ", style="dim")
+    head.append_text(confidence_text(path.min_confidence))
     lines: list = [head]
     for role, name, loc, ann in rows:
         # metadata rows crop rather than wrap: long file paths + tags otherwise leave
@@ -504,7 +509,6 @@ def cmd_paths(args) -> int:
             include_fuzzy=args.include_fuzzy,
             include_unresolved=args.include_unresolved,
             include_callbacks=args.include_callbacks,
-            prune_sanitized=args.prune_sanitized,
             explicit_sources=args.explicit_sources,
             confirmed_only=args.confirmed_only,
             taint_hops=args.taint_hops,
@@ -539,7 +543,7 @@ def cmd_paths(args) -> int:
                     {
                         "length": len(p.symbols),
                         "min_confidence": p.min_confidence,
-                        "risk_score": p.risk_score,
+                        "severity": p.severity,
                         "may_continue": p.may_continue,
                         "source_kind": p.source_kind,
                         "taint_verified": p.taint_verified,
@@ -747,12 +751,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="force following function/method values passed as arguments "
         "(handler registrations, callbacks)",
-    )
-    p.add_argument(
-        "--prune-sanitized",
-        dest="prune_sanitized",
-        action="store_true",
-        help="drop paths where a category sanitizer is called (heuristic, no dataflow)",
     )
     p.add_argument(
         "--explicit-sources",

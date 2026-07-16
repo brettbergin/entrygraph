@@ -1,4 +1,4 @@
-"""Source/sink/sanitizer pattern registry.
+"""Source/sink pattern registry.
 
 Built-in catalogs ship as TOML package data — every ``entrygraph/data/sinks/
 *.toml`` file is loaded (per-language ``<lang>.toml`` plus ``lib_*.toml``
@@ -8,11 +8,6 @@ brace expansion, e.g. ``py:subprocess.{run,call,Popen}``; each is compiled to a
 regex, bucketed by language prefix, and matched against each call edge's
 canonical callee (dst_qname) at index time, stamping ``edges.sink_id``. Bucketing
 means a ``py:`` callee only tests ``py:`` patterns, not the whole catalog.
-
-Sanitizers are matched at query time (not index time) so retuning them never
-requires a re-index: a path passing through a registered sanitizer for the
-sink's category is downgraded (``effect="reduces"``) or pruned
-(``effect="neutralizes"``).
 """
 
 from __future__ import annotations
@@ -44,21 +39,6 @@ class SourcePattern:
     callee: str
     description: str = ""
     channel: str | None = None  # http_input: query|path|header|cookie|body|form
-
-
-@dataclass(frozen=True, slots=True)
-class SanitizerPattern:
-    """A call that neutralizes or reduces taint for a sink category.
-
-    `effect="neutralizes"` means the value is considered safe downstream (paths
-    through it can be pruned); `effect="reduces"` only discounts the risk score.
-    """
-
-    id: str
-    category: str
-    callee: str  # brace-glob over canonical qnames
-    effect: str = "reduces"  # "neutralizes" | "reduces"
-    description: str = ""
 
 
 def expand_braces(pattern: str) -> list[str]:
@@ -111,14 +91,11 @@ class SinkRegistry:
         self,
         sinks: list[SinkPattern],
         sources: list[SourcePattern],
-        sanitizers: list[SanitizerPattern] | None = None,
     ) -> None:
         self.sinks = {s.id: s for s in sinks}
         self.sources = {s.id: s for s in sources}
-        self.sanitizers = {s.id: s for s in (sanitizers or [])}
         self._sinks_by_prefix = _bucket([(_compile(s.callee), s) for s in sinks])
         self._sources_by_prefix = _bucket([(_compile(s.callee), s) for s in sources])
-        self._sanitizers_by_prefix = _bucket([(_compile(s.callee), s) for s in (sanitizers or [])])
 
     def match(self, canonical_callee: str, arg_preview: str | None = None) -> str | None:
         """Return the first matching sink id, or None."""
@@ -142,17 +119,6 @@ class SinkRegistry:
                 return source.id
         return None
 
-    def match_sanitizers(self, canonical_callee: str) -> list[SanitizerPattern]:
-        """Sanitizers whose pattern matches this callee qname."""
-        return [
-            s
-            for regex, s in _candidates(self._sanitizers_by_prefix, canonical_callee)
-            if regex.match(canonical_callee)
-        ]
-
-    def sanitizers_for_category(self, category: str) -> list[SanitizerPattern]:
-        return [s for s in self.sanitizers.values() if s.category == category]
-
     def ids_for_category(self, category: str) -> set[str]:
         # "all" -> every tagged sink, regardless of category (any-sink queries)
         if category == "all":
@@ -173,21 +139,15 @@ class SinkRegistry:
         sinks: list[SinkPattern],
         sources: list[SourcePattern],
         disable: list[str] | None = None,
-        sanitizers: list[SanitizerPattern] | None = None,
     ) -> SinkRegistry:
         disabled = set(disable or [])
         kept = [s for s in self.sinks.values() if s.id not in disabled]
-        kept_san = [s for s in self.sanitizers.values() if s.id not in disabled]
-        return SinkRegistry(
-            [*kept, *sinks],
-            [*self.sources.values(), *sources],
-            [*kept_san, *(sanitizers or [])],
-        )
+        return SinkRegistry([*kept, *sinks], [*self.sources.values(), *sources])
 
 
 def _load_toml(
     text: str,
-) -> tuple[list[SinkPattern], list[SourcePattern], list[SanitizerPattern], list[str]]:
+) -> tuple[list[SinkPattern], list[SourcePattern], list[str]]:
     data = tomllib.loads(text)
     sinks = [
         SinkPattern(
@@ -211,17 +171,7 @@ def _load_toml(
         )
         for raw in data.get("source", [])
     ]
-    sanitizers = [
-        SanitizerPattern(
-            id=raw["id"],
-            category=raw["category"],
-            callee=raw["callee"],
-            effect=raw.get("effect", "reduces"),
-            description=raw.get("description", ""),
-        )
-        for raw in data.get("sanitizer", [])
-    ]
-    return sinks, sources, sanitizers, list(data.get("disable", []))
+    return sinks, sources, list(data.get("disable", []))
 
 
 @cache
@@ -229,21 +179,18 @@ def builtin_registry() -> SinkRegistry:
     """All shipped catalogs: data/sinks/*.toml (per-language + lib_* summaries)."""
     sinks: list[SinkPattern] = []
     sources: list[SourcePattern] = []
-    sanitizers: list[SanitizerPattern] = []
     data_dir = resource_files("entrygraph") / "data" / "sinks"
     for entry in sorted(data_dir.iterdir(), key=lambda p: p.name):
         if not entry.name.endswith(".toml"):
             continue
-        s, src, san, _ = _load_toml(entry.read_text())
+        s, src, _ = _load_toml(entry.read_text())
         sinks.extend(s)
         sources.extend(src)
-        sanitizers.extend(san)
-    return SinkRegistry(sinks, sources, sanitizers)
+    return SinkRegistry(sinks, sources)
 
 
 _user_sinks: list[SinkPattern] = []
 _user_sources: list[SourcePattern] = []
-_user_sanitizers: list[SanitizerPattern] = []
 
 
 def register_sink(sink: SinkPattern) -> None:
@@ -255,29 +202,23 @@ def register_source(source: SourcePattern) -> None:
     _user_sources.append(source)
 
 
-def register_sanitizer(sanitizer: SanitizerPattern) -> None:
-    _user_sanitizers.append(sanitizer)
-
-
 def registry_for_repo(root: str | Path | None = None) -> SinkRegistry:
     """Built-ins + Python-registered patterns + repo-root entrygraph.toml."""
     registry = builtin_registry()
     extra_sinks = list(_user_sinks)
     extra_sources = list(_user_sources)
-    extra_sanitizers = list(_user_sanitizers)
     disable: list[str] = []
     if root is not None:
         config = Path(root) / "entrygraph.toml"
         if config.is_file():
             try:
-                file_sinks, file_sources, file_san, disable = _load_toml(config.read_text())
+                file_sinks, file_sources, disable = _load_toml(config.read_text())
                 extra_sinks.extend(file_sinks)
                 extra_sources.extend(file_sources)
-                extra_sanitizers.extend(file_san)
             except (tomllib.TOMLDecodeError, KeyError):
                 pass
-    if extra_sinks or extra_sources or extra_sanitizers or disable:
-        return registry.merged_with(extra_sinks, extra_sources, disable, extra_sanitizers)
+    if extra_sinks or extra_sources or disable:
+        return registry.merged_with(extra_sinks, extra_sources, disable)
     return registry
 
 
@@ -307,7 +248,6 @@ class CatalogCoverage:
 
     sinks: int
     sources: int
-    sanitizers: int
     sink_categories: tuple[str, ...]
     tier: str  # "full" | "partial" | "minimal"
 
@@ -333,13 +273,10 @@ def catalog_coverage(registry: SinkRegistry) -> dict[str, CatalogCoverage]:
     for kind, patterns in (
         ("sinks", registry.sinks.values()),
         ("sources", registry.sources.values()),
-        ("sanitizers", registry.sanitizers.values()),
     ):
         for pat in patterns:
             prefix = _prefix_of(pat.callee)
-            by_prefix.setdefault(prefix, {"sinks": [], "sources": [], "sanitizers": []})[
-                kind
-            ].append(pat)
+            by_prefix.setdefault(prefix, {"sinks": [], "sources": []})[kind].append(pat)
 
     coverage: dict[str, CatalogCoverage] = {}
     for prefix, groups in by_prefix.items():
@@ -347,7 +284,6 @@ def catalog_coverage(registry: SinkRegistry) -> dict[str, CatalogCoverage]:
             coverage[language] = CatalogCoverage(
                 sinks=len(groups["sinks"]),
                 sources=len(groups["sources"]),
-                sanitizers=len(groups["sanitizers"]),
                 sink_categories=tuple(sorted({s.category for s in groups["sinks"]})),
                 tier=_tier(len(groups["sinks"]), len(groups["sources"])),
             )

@@ -165,7 +165,7 @@ def test_paths_default(client, repo_id):
     assert isinstance(body["truncated"], bool)
     p = body["paths"][0]
     assert p["hops"][0]["qname"] and p["hops"][-1]["qname"].startswith("py:")
-    assert p["risk"] is not None
+    assert p["severity"] in ("critical", "high", "medium", "low")
     assert len(p["edges"]) == len(p["hops"]) - 1
     assert all({"kind", "line", "confidence"} <= set(e) for e in p["edges"])
     # snippets read from the fixture checkout

@@ -29,7 +29,7 @@ _MIN_DFS_VISITS = 200_000
 _DFS_VISIT_CEILING = 40_000_000
 _DFS_VISIT_FACTOR = 200
 # Enumerate a candidate pool larger than the caller's max_paths, then let the
-# caller risk-rank and truncate. Decoupling enumeration from max_paths makes the
+# caller rank and truncate. Decoupling enumeration from max_paths makes the
 # widen flags (--include-fuzzy/-unresolved/-callbacks) monotonic: a wider edge set
 # yields a superset of the pool instead of a different DFS-order slice.
 _CANDIDATE_FACTOR = 4
@@ -187,7 +187,7 @@ class AdjacencyCache:
 
         DFS with an on-path visited set; neighbor order is deterministic. Results
         are sorted shortest-first. Enumeration collects up to a candidate pool
-        (>= max_paths) so the caller can risk-rank and truncate; a size-scaled
+        (>= max_paths) so the caller can rank and truncate; a size-scaled
         visit budget bounds work, and the returned PathList reports `truncated`
         when that budget was spent before enumeration finished.
         """

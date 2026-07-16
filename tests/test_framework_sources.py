@@ -65,12 +65,13 @@ def test_fastapi_typed_param_only_falls_back_to_handler(fastapi_graph):
     assert by_head["main.run_typed"].source_channel is None
 
 
-def test_fastapi_explicit_source_outranks_handler_fallback(fastapi_graph):
-    # the declarator (explicit) path should score above the handler-as-source one,
-    # since a demonstrable read is stronger evidence than "shaped like a source"
+def test_fastapi_explicit_source_labeled_stronger_than_handler_fallback(fastapi_graph):
+    # the declarator path carries the stronger "explicit" provenance label; the
+    # bare typed param is only seen via handler-as-source
     paths = fastapi_graph.paths(source_category="http_input", sink_category="command_exec")
     by_head = {p.symbols[0].qname: p for p in paths}
-    assert by_head["main.search"].risk_score > by_head["main.run_typed"].risk_score
+    assert by_head["main.search"].source_kind == "explicit"
+    assert by_head["main.run_typed"].source_kind in ("handler", "handler_params")
 
 
 # --------------------------- Express (JS) ---------------------------

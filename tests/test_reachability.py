@@ -99,13 +99,14 @@ def test_shared_adjacency_cache_across_configs(graph):
     assert len(graph._adjacency) == 1
 
 
-# ---------------- S4: enrichment / risk scoring / confidence gating ----------------
+# ---------------- S4: enrichment / fact ranking / confidence gating ----------------
 
 
-def test_paths_carry_risk_score(graph):
+def test_paths_carry_severity_fact(graph):
     paths = graph.paths(source="app.routes.create_report", sink="py:subprocess.run")
     assert paths
-    assert paths[0].risk_score is not None and paths[0].risk_score > 0
+    # the tagged sink's catalog severity rides the path as a displayed fact
+    assert paths[0].severity in ("critical", "high", "medium", "low")
 
 
 def test_adaptive_search_widens_to_wildcard_sinks_strict_excludes(graph):
@@ -135,10 +136,11 @@ def test_sink_terminal_edge_carries_sink_id(graph):
     assert terminal.sink_id == "py.command-exec.subprocess"
 
 
-def test_engines_agree_on_risk_ranked_paths(graph):
+def test_engines_agree_on_ranked_paths(graph):
     mem = graph.paths(source="app.routes.create_report", sink="py:subprocess.run", engine="memory")
     sql = graph.paths(source="app.routes.create_report", sink="py:subprocess.run", engine="sql")
-    assert [round(p.risk_score, 4) for p in mem] == [round(p.risk_score, 4) for p in sql]
+    key = lambda p: (p.severity, p.min_confidence, [s.qname for s in p.symbols])  # noqa: E731
+    assert [key(p) for p in mem] == [key(p) for p in sql]
 
 
 def test_widen_flags_are_monotonic(graph):

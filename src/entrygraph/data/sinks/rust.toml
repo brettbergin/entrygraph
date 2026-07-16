@@ -122,18 +122,3 @@ category = "stdin_input"
 callee = "rs:{std.io.stdin,io.stdin}"
 description = "Standard input"
 
-# ---------------- sanitizers ----------------
-
-[[sanitizer]]
-id = "rs.sanitize.shell-escape"
-category = "command_exec"
-callee = "rs:{shell_escape.escape,shell_escape.unix.escape,shlex.quote,shlex.try_quote}"
-effect = "neutralizes"
-description = "Shell argument quoting (shell-escape / shlex crates)"
-
-[[sanitizer]]
-id = "rs.sanitize.path-filename"
-category = "path_traversal"
-callee = "rs:*.{file_name,canonicalize}"
-effect = "reduces"
-description = "Path::file_name / canonicalize"

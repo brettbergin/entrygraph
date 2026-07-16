@@ -34,12 +34,6 @@ def test_source_kind_classified(graph):
     assert by_head["app.implicit_handler"].source_kind in ("handler", "handler_params")
 
 
-def test_explicit_outranks_implicit(graph):
-    paths = graph.paths(source_category="http_input", sink_category="command_exec")
-    by_head = {p.symbols[0].qname: p for p in paths}
-    assert by_head["app.explicit_handler"].risk_score > by_head["app.implicit_handler"].risk_score
-
-
 def test_explicit_sources_flag_drops_implicit(graph):
     paths = graph.paths(
         source_category="http_input", sink_category="command_exec", explicit_sources=True
@@ -49,12 +43,3 @@ def test_explicit_sources_flag_drops_implicit(graph):
     assert "app.implicit_handler" not in heads
 
 
-def test_explicit_weight_preserves_pre_split_tainted_score():
-    # explicit == 1.0 and spec == 0.9 reproduce the old source_tainted True/False
-    # weights exactly; only the handler tiers are new and lower.
-    from entrygraph.graph.scoring import _SOURCE_WEIGHT
-
-    assert _SOURCE_WEIGHT["explicit"] == 1.0  # was source_tainted=True
-    assert _SOURCE_WEIGHT["spec"] == 0.9  # was source_tainted=False
-    assert _SOURCE_WEIGHT["handler_params"] < _SOURCE_WEIGHT["spec"]
-    assert _SOURCE_WEIGHT["handler"] < _SOURCE_WEIGHT["handler_params"]

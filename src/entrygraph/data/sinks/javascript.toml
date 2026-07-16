@@ -97,29 +97,6 @@ channel = "cookie"
 callee = "js:*.cookies"
 description = "Express/Koa request cookies"
 
-# --- sanitizers (S3): neutralize/reduce taint for a sink category ---
-[[sanitizer]]
-id = "js.sanitize.sqlstring"
-category = "sql"
-callee = "js:{sqlstring.escape,mysql.escape,*.escapeId,*.escape}"
-effect = "reduces"
-description = "SQL string escaping"
-
-[[sanitizer]]
-id = "js.sanitize.shellescape"
-category = "command_exec"
-callee = "js:{shell-quote.quote,shellescape}"
-effect = "neutralizes"
-description = "Shell argument quoting"
-
-[[sanitizer]]
-id = "js.sanitize.html-escape"
-category = "template_injection"
-callee = "js:{escape-html,he.encode,*.escapeHtml}"
-effect = "reduces"
-description = "HTML entity escaping"
-
-# --- C5 deepening ---
 [[sink]]
 id = "js.ssrf"
 category = "ssrf"

@@ -25,10 +25,10 @@ def test_confirmed_and_refuted_verdicts(graph):
     assert by_head["app.refuted_handler"].taint_verified is False
 
 
-def test_refuted_is_demoted_below_confirmed(graph):
+def test_refuted_ranks_below_confirmed(graph):
     paths = graph.paths(source_category="http_input", sink_category="command_exec")
-    by_head = {p.symbols[0].qname: p for p in paths}
-    assert by_head["app.refuted_handler"].risk_score < by_head["app.confirmed_handler"].risk_score
+    order = [p.symbols[0].qname for p in paths]
+    assert order.index("app.confirmed_handler") < order.index("app.refuted_handler")
 
 
 def test_confirmed_only_drops_refuted(graph):

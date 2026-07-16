@@ -163,29 +163,6 @@ category = "user_input"
 callee = "py:{input,sys.stdin.*}"
 description = "Interactive input"
 
-# --- sanitizers (S3) ---
-[[sanitizer]]
-id = "py.sanitize.shlex"
-category = "command_exec"
-callee = "py:shlex.{quote,split}"
-effect = "neutralizes"
-description = "Shell argument quoting"
-
-[[sanitizer]]
-id = "py.sanitize.markupsafe"
-category = "template_injection"
-callee = "py:{markupsafe.escape,markupsafe.escape_silent,html.escape,*.escape}"
-effect = "reduces"
-description = "HTML/template escaping"
-
-[[sanitizer]]
-id = "py.sanitize.shutil-which"
-category = "command_exec"
-callee = "py:shutil.which"
-effect = "reduces"
-description = "Resolving an executable path via allowlist lookup"
-
-# --- C5 deepening ---
 [[sink]]
 id = "py.ssrf"
 category = "ssrf"

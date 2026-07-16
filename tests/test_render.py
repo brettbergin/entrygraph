@@ -22,13 +22,6 @@ def test_console_wide_when_not_tty(monkeypatch):
     assert con.width >= 1000
 
 
-def test_risk_style_thresholds():
-    assert render.risk_style(0.9) == "bold red"
-    assert render.risk_style(0.5) == "yellow"
-    assert render.risk_style(0.1) == "green"
-    assert render.risk_style(None) == "dim"
-
-
 def test_kind_and_method_and_confidence_text():
     assert render.kind_text("class").style == "bold cyan"
     assert render.confidence_text(3).plain == "exact"

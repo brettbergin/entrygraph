@@ -16,7 +16,7 @@ def registry():
 
 def test_no_duplicate_sink_ids(registry):
     # SinkRegistry stores by id; a collision would silently drop an entry.
-    ids = list(registry.sinks) + list(registry.sources) + list(registry.sanitizers)
+    ids = list(registry.sinks) + list(registry.sources)
     assert len(ids) == len(set(ids))
 
 
@@ -26,8 +26,8 @@ def test_every_pattern_compiles(registry):
     for sink in registry.sinks.values():
         for glob in expand_braces(sink.callee):
             re.compile(fnmatch.translate(glob))  # must not raise
-    for san in registry.sanitizers.values():
-        for glob in expand_braces(san.callee):
+    for source in registry.sources.values():
+        for glob in expand_braces(source.callee):
             re.compile(fnmatch.translate(glob))
 
 
