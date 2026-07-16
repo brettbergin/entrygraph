@@ -413,10 +413,9 @@ def test_paths_render_source_channel_and_key(tmp_path, capsys):
     )
     assert rc == 0
     out = capsys.readouterr().out
-    # provenance segment (· explicit / · handler) precedes the channel now (#96)
+    # the source line names the exact input it reads: channel + key
     assert 'query "q"' in out
     assert 'header "X-Api-Key"' in out
-    assert "http_input · explicit" in out
 
 
 def test_paths_json_source_channel_and_key(tmp_path, capsys):
@@ -464,8 +463,10 @@ def test_paths_explicit_vs_handler_label_and_flag(tmp_path, capsys):
         == 0
     )
     out = capsys.readouterr().out
-    assert "http_input · explicit" in out
-    assert "http_input · handler" in out
+    # both handlers reported; the handler-as-source one is marked as inferred
+    assert "explicit_handler" in out
+    assert "implicit_handler" in out
+    assert "via handler" in out  # the implicit source's provenance caveat
     # --explicit-sources drops the handler-as-source finding
     main(
         [
@@ -537,7 +538,7 @@ def test_paths_taint_hops_flag_and_multihop_label(tmp_path, capsys):
     )
     assert rc == 0
     out = capsys.readouterr().out
-    assert "flow: confirmed (1 hop)" in out  # 2-hop path -> 1 interior hop
+    assert "confirmed data flow" in out  # interprocedural check confirms the flow
     # --taint-hops 0 disables the interprocedural check -> no confirmed flow line
     main(
         [
@@ -553,7 +554,38 @@ def test_paths_taint_hops_flag_and_multihop_label(tmp_path, capsys):
         ]
     )
     out0 = capsys.readouterr().out
-    assert "flow: confirmed" not in out0
+    assert "confirmed data flow" not in out0
+
+
+def test_paths_show_the_reachable_entrypoint(db, capsys):
+    # a path whose source is an HTTP handler shows the route it's reachable through
+    capsys.readouterr()
+    rc = main(
+        ["paths", "--db", db, "--source-category", "http_input", "--sink-category", "command_exec"]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "entrypoint" in out
+    assert "/reports" in out  # the flask route the handler serves
+
+
+def test_paths_json_carries_entrypoint_and_sink_category(db, capsys):
+    capsys.readouterr()
+    main(
+        [
+            "paths",
+            "--db",
+            db,
+            "--json",
+            "--source-category",
+            "http_input",
+            "--sink-category",
+            "command_exec",
+        ]
+    )
+    p = json.loads(capsys.readouterr().out)[0]
+    assert p["sink_category"] == "command_exec"
+    assert p["entrypoint"] and p["entrypoint"]["route"] == "/reports"
 
 
 def test_cli_unexpected_error_is_handled_cleanly(monkeypatch, capsys):

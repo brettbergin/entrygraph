@@ -94,6 +94,7 @@ class CallPath:
     symbols: tuple[Symbol, ...]  # source ... sink, in order
     edges: tuple[PathEdge, ...]  # one per hop; len == len(symbols) - 1
     severity: str | None = None  # the tagged sink's catalog severity, if any
+    sink_category: str | None = None  # the tagged sink's category (command_exec, sql, ...)
     may_continue: bool = False  # a node on this path has out-edges the filter excluded
     source_channel: str | None = None  # query|path|header|cookie|body|form (#87)
     source_key: str | None = None  # the specific param/header/flag name (#87)

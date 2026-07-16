@@ -1238,6 +1238,8 @@ class CodeGraph:
 
         terminal = rows[-1] if rows else None
         sink_id = terminal.sink_id if terminal else None
+        sink = registry.sinks.get(sink_id) if sink_id else None
+        sink_category = sink.category if sink else None
         terminal_const = is_constant_args(terminal.arg_preview) if terminal else False
 
         path_edges: list[PathEdge] = []
@@ -1263,6 +1265,7 @@ class CodeGraph:
             symbols=symbols,
             edges=tuple(path_edges),
             severity=registry.severity_of(sink_id),
+            sink_category=sink_category,
             may_continue=may_continue,
             source_kind=source_kind,
             source_channel=source_channel,

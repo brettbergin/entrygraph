@@ -63,24 +63,30 @@ entrygraph paths --source-category http_input --sink-category command_exec
 ```
 
 ```
-1 path(s)  category:http_input → category:command_exec
+1 path  http_input → command_exec
 
-[1] severity high  confidence import
-  source  create_report   app/routes.py:12  (http_input · explicit · query "cmd")
-          cmd = request.args.get("cmd")
-    ↓     run_report      app/routes.py:20  import
-  sink    subprocess.run  app/services.py:22  ⚡ py.command-exec.subprocess  import
-          subprocess.run(cmd, shell=True)
-       flow: confirmed (1 hop)
+[1] confirmed data flow → high-severity command_exec sink
+  entrypoint POST /reports                flask http_route
+  source     create_report               app/routes.py:12  query "cmd"
+             cmd = request.args.get("cmd")
+      ↓      run_report                  app/routes.py:20
+  sink       subprocess.run              app/services.py:22
+             subprocess.run(cmd, shell=True)
+  confidence resolved — every call is exact/import
 ```
 
-Each path reports facts you can verify by opening the code:
+Read each finding top-down:
 
-- **severity** — the sink's catalog severity (critical/high/medium/low).
-- **confidence** — how sure the resolver is of the weakest call in the chain.
-  `exact` and `import` are solid; `fuzzy` and `unresolved` are guesses.
-- **flow** — `confirmed` if a source value actually reaches the sink,
-  `not observed` if it provably doesn't.
+- The **headline** tells you whether to act: `confirmed data flow` means input
+  actually reaches the sink; `reachable, but no data flow observed` means the
+  call path exists but the input doesn't provably flow through it. It's paired
+  with the sink's severity and category.
+- **entrypoint** — the route or command the path is reachable through, when the
+  source is one. This is the surface an attacker would actually hit.
+- **source → sink** — the call chain, each with its `file:line` and the literal
+  line of code. Uncertain links are flagged (`~ fuzzy (guess)`); the rest are
+  solidly resolved.
+- **confidence** — how much to trust the weakest link in the chain.
 
 Paths are ordered best first (confirmed flows, then by severity and confidence).
 A finding is a lead to review, not proof of a bug.
