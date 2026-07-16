@@ -33,6 +33,7 @@ from entrygraph.results import (
     GraphStats,
     IndexStats,
     PathEdge,
+    RepoInfo,
     Symbol,
 )
 
@@ -80,6 +81,7 @@ __all__ = [
     "GraphStats",
     "IndexStats",
     "PathEdge",
+    "RepoInfo",
     "SchemaMismatchError",
     "Symbol",
     "SymbolKind",

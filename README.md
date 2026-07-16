@@ -42,9 +42,21 @@ entrygraph entrypoints      # query it — no --db needed
 shared database at `~/.entrygraph/.entrygraph.db`, keyed by repo root, and every
 query command scopes to the repository whose root is your working directory (or
 its nearest ancestor). So you index each repo once and just `cd` between them —
-no per-project file to track. Pass `--db PATH` to any command to use an isolated
-database instead (handy in CI). Every query command also takes `--json` for
-machine-readable output.
+no per-project file to track. To query a repo from outside its directory, pass
+`--repo <path-or-name>` (e.g. `--repo acme-api`); `entrygraph repos` lists every
+indexed repository and the names you can pass. `--db PATH` points any command at
+an isolated database instead (handy in CI), and every query command takes
+`--json` for machine-readable output.
+
+```
+$ entrygraph repos
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┓
+┃NAME      ┃ ROOT                  ┃ FILES ┃ SYMBOLS┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━┩
+│acme-api  │ /Users/you/acme-api   │    42 │    611 │
+│acme-web  │ /Users/you/acme-web   │   118 │   1930 │
+└──────────┴───────────────────────┴───────┴────────┘
+```
 
 ### `index` — build the graph
 

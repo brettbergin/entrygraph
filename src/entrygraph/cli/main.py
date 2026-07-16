@@ -46,12 +46,11 @@ def _discover_db(explicit: str | None) -> Path:
     return Path(explicit) if explicit else global_db_path()
 
 
-def _current_repo_root(db_path: Path) -> str | None:
-    """The indexed repository whose root is the working directory or its nearest
-    ancestor, so `entrygraph paths` run inside a repo scopes to that repo in the
-    global DB. None when the cwd isn't under any indexed repo."""
+def _indexed_roots(db_path: Path) -> list[str]:
+    """Root paths of every repository indexed in ``db_path`` (empty if the DB is
+    absent). One small read, reused by cwd-scoping and --repo resolution."""
     if not db_path.exists():
-        return None
+        return []
     from sqlalchemy import select
     from sqlalchemy.orm import Session
 
@@ -61,18 +60,52 @@ def _current_repo_root(db_path: Path) -> str | None:
     engine = make_engine(db_path)
     try:
         with Session(engine) as session:
-            roots = [r for (r,) in session.execute(select(models.Repository.root_path))]
+            return [r for (r,) in session.execute(select(models.Repository.root_path))]
     finally:
         engine.dispose()
+
+
+def _current_repo_root(db_path: Path) -> str | None:
+    """The indexed repository whose root is the working directory or its nearest
+    ancestor, so `entrygraph paths` run inside a repo scopes to that repo in the
+    global DB. None when the cwd isn't under any indexed repo."""
     here = {Path.cwd(), *Path.cwd().parents}
-    matches = [r for r in roots if Path(r) in here]
+    matches = [r for r in _indexed_roots(db_path) if Path(r) in here]
     return max(matches, key=len) if matches else None  # nearest ancestor wins
+
+
+def _resolve_repo(db_path: Path, repo: str | None) -> str | None:
+    """Which repository a query binds to. With no ``--repo``, fall back to the repo
+    containing the working directory. With ``--repo``, match it against the indexed
+    roots by exact path or by trailing name (`--repo acme-api`), erroring clearly on
+    an unknown or ambiguous value rather than silently querying the wrong repo."""
+    if repo is None:
+        return _current_repo_root(db_path)
+    roots = _indexed_roots(db_path)
+    if not roots:
+        return None  # empty/absent DB — let CodeGraph.open raise the precise error
+    target = str(Path(repo).expanduser().resolve())
+    if target in roots:
+        return target
+    named = [r for r in roots if Path(r).name == repo]
+    if len(named) == 1:
+        return named[0]
+    if len(named) > 1:
+        raise EntrygraphError(
+            f"--repo {repo!r} is ambiguous; matches: {', '.join(sorted(named))}. "
+            "Use the full root path (see `entrygraph repos`)."
+        )
+    raise EntrygraphError(
+        f"no indexed repository matching --repo {repo!r}; run `entrygraph repos` to list them"
+    )
 
 
 def _open(args) -> CodeGraph:
     db = _discover_db(getattr(args, "db", None))
-    # bind to the repo the user is in; fall back to the sole repo of a single-repo DB
-    return CodeGraph.open(db, root=_current_repo_root(db))
+    # --repo wins; otherwise bind to the repo the cwd is in (or the sole repo of a
+    # single-repo DB).
+    root = _resolve_repo(db, getattr(args, "repo", None))
+    return CodeGraph.open(db, root=root)
 
 
 def _percent_bar(percent: float, width: int = 12) -> Text:
@@ -171,14 +204,29 @@ def cmd_index(args) -> int:
                 stats = graph._last_index_stats
                 graph.close()
                 return stats
-            with CodeGraph.open(db) as graph:
+            # Index against the engine directly, not a repo-bound CodeGraph.
+            # index_repository upserts the repo row itself, so it needs no
+            # binding — and CodeGraph.open(db) in a multi-repo global DB is
+            # ambiguous and raises "database holds multiple repositories",
+            # which broke the default incremental path (#163). Opening by
+            # engine also keeps first-time incremental indexing of a brand-new
+            # repo working (its row doesn't exist yet, so a root lookup would
+            # fail).
+            from entrygraph.db.engine import make_engine
+            from entrygraph.db.meta import check_schema
+
+            engine = make_engine(db)
+            check_schema(engine)
+            try:
                 return index_repository(
                     root,
-                    graph._engine,
+                    engine,
                     incremental=True,
                     paranoid=args.paranoid,
                     include_tests=args.include_tests,
                 )
+            finally:
+                engine.dispose()
 
         if args.json:
             print(to_json(_run()))
@@ -659,6 +707,35 @@ def cmd_stats(args) -> int:
     return 0
 
 
+def cmd_repos(args) -> int:
+    """List the repositories indexed in the database. In the global multi-repo DB,
+    this is how you see which `--repo` values are valid."""
+    db = _discover_db(getattr(args, "db", None))
+    if not db.exists():
+        if args.json:
+            print(to_json([]))
+        else:
+            console().print("[dim](no indexed repositories)[/]")
+        return 0
+    repos = CodeGraph.list_repos(db)
+    if args.json:
+        print(to_json(repos))
+        return 0
+    con = console()
+    if not repos:
+        con.print("[dim](no indexed repositories)[/]")
+        return 0
+    tbl = render.table(caption=f"[dim]{len(repos)} repositor{'y' if len(repos) == 1 else 'ies'}[/]")
+    tbl.add_column("NAME", style="bold")
+    tbl.add_column("ROOT", style="cyan", overflow="fold")
+    tbl.add_column("FILES", justify="right")
+    tbl.add_column("SYMBOLS", justify="right")
+    for r in repos:
+        tbl.add_row(r.name, r.root, str(r.files), str(r.symbols))
+    con.print(tbl)
+    return 0
+
+
 # ---------------- parser ----------------
 
 
@@ -669,6 +746,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add_db(p):
         p.add_argument("--db", help="index database path (default: ~/.entrygraph/.entrygraph.db)")
+        p.add_argument(
+            "--repo",
+            help="in a multi-repo DB, select the repository by root path or name "
+            "(default: the repo containing the working directory); see `entrygraph repos`",
+        )
         p.add_argument("--json", action="store_true", help="emit JSON")
 
     p = sub.add_parser("index", help="index or re-index a repository (local path or git URL)")
@@ -854,6 +936,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("stats", help="index statistics")
     add_db(p)
     p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("repos", help="list the repositories indexed in the database")
+    p.add_argument("--db", help="index database path (default: ~/.entrygraph/.entrygraph.db)")
+    p.add_argument("--json", action="store_true", help="emit JSON")
+    p.set_defaults(func=cmd_repos)
 
     # Unified web app (API + SPA); registered lazily — the module is light and
     # its heavy imports (fastapi/uvicorn) stay inside the command handlers.

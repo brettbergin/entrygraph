@@ -104,3 +104,20 @@ def test_open_requires_repo_selection_when_ambiguous(two_repos, tmp_path):
     # an unknown root is an error too
     with pytest.raises(RepositoryNotIndexedError):
         _lookup_repo_id(two_repos, tmp_path / "not-indexed")
+
+
+def test_list_repos_enumerates_the_database(tmp_path):
+    db = tmp_path / "global.db"
+    engine = make_engine(db)
+    create_schema(engine)
+    index_repository(FLASK_APP, engine)
+    index_repository(CLI_APP, engine)
+    engine.dispose()
+
+    repos = CodeGraph.list_repos(db)
+    assert {r.name for r in repos} == {"flask_app", "cli_app"}
+    assert {r.root for r in repos} == {str(FLASK_APP.resolve()), str(CLI_APP.resolve())}
+    flask = next(r for r in repos if r.name == "flask_app")
+    assert flask.symbols > 0 and flask.files > 0
+    # ordered by root path, stable
+    assert [r.root for r in repos] == sorted(r.root for r in repos)
