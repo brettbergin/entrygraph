@@ -12,8 +12,13 @@ PyPI — no manual version edits, no tokens.
    version (`v0.1.4` → `v0.1.5`). With no tags yet, the first release is `v0.1.0`.
 1. It creates and pushes that tag. [`hatch-vcs`](https://github.com/ofek/hatch-vcs)
    derives the package version from the tag, so nothing is committed back to `main`.
-1. `uv build` produces the sdist + wheel, which are published to PyPI via
-   **Trusted Publishing (OIDC)** and attached to a GitHub Release.
+1. The SPA is built (`npm ci && npm run build` in `webapp/`) into
+   `src/entrygraph/server/static/` — that directory is gitignored, so this step
+   is what gets the web UI into the published package.
+1. `uv build` produces the sdist + wheel. A guard step fails the release if the
+   wheel is missing `entrygraph/server/static/index.html`, so a UI-less package
+   can never ship. The artifacts are published to PyPI via **Trusted Publishing
+   (OIDC)** and attached to a GitHub Release.
 
 Pull requests are tested separately by [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 across Python 3.13–3.14, so broken code never reaches `main`.
@@ -78,6 +83,8 @@ Add a `PYPI_API_TOKEN` repository secret and give the publish step a password:
 ## Local sanity check
 
 ```bash
+(cd webapp && npm ci && npm run build)   # bundle the SPA into server/static
 uv build            # version comes from `git describe`; a dev tree -> X.Y.Z.devN
 uv run entrygraph --version
+unzip -l dist/*.whl | grep server/static/index.html   # UI made it into the wheel
 ```

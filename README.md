@@ -108,8 +108,9 @@ entrygraph serve
 
 Browse symbols, entrypoints, the call graph, and reachability in the browser, and
 index repos from the UI. Runs locally with no auth by default; supports OIDC SSO
-for shared deployments. Ships in the `entrygraph[server]` extra — build the UI
-once with `cd webapp && npm run build`.
+for shared deployments. Everything is bundled — `uvx entrygraph serve` just works.
+(When developing from a source checkout, build the UI once with
+`cd webapp && npm run build`.)
 
 ## Python API
 
