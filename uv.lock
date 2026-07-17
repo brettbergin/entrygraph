@@ -247,20 +247,22 @@ wheels = [
 name = "entrygraph"
 source = { editable = "." }
 dependencies = [
+    { name = "authlib" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "itsdangerous" },
     { name = "pathspec" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "rich" },
     { name = "sqlalchemy" },
     { name = "tree-sitter" },
     { name = "tree-sitter-language-pack" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
 dev = [
-    { name = "authlib" },
     { name = "bandit" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "itsdangerous" },
     { name = "mdformat" },
     { name = "mdformat-gfm" },
     { name = "mypy" },
@@ -268,31 +270,19 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
-server = [
-    { name = "authlib" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "itsdangerous" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "uvicorn" },
-]
 
 [package.metadata]
 requires-dist = [
-    { name = "authlib", marker = "extra == 'dev'", specifier = ">=1.3" },
-    { name = "authlib", marker = "extra == 'server'", specifier = ">=1.3" },
+    { name = "authlib", specifier = ">=1.3" },
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.7" },
-    { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.110" },
-    { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.110" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
-    { name = "httpx", marker = "extra == 'server'", specifier = ">=0.27" },
-    { name = "itsdangerous", marker = "extra == 'dev'", specifier = ">=2.1" },
-    { name = "itsdangerous", marker = "extra == 'server'", specifier = ">=2.1" },
+    { name = "fastapi", specifier = ">=0.110" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "itsdangerous", specifier = ">=2.1" },
     { name = "mdformat", marker = "extra == 'dev'", specifier = ">=0.7" },
     { name = "mdformat-gfm", marker = "extra == 'dev'", specifier = ">=0.3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11,<2" },
     { name = "pathspec", specifier = ">=0.12,<1.0" },
-    { name = "psycopg", extras = ["binary"], marker = "extra == 'server'", specifier = ">=3.1" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "rich", specifier = ">=13.0" },
@@ -300,9 +290,9 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.30,<3.0" },
     { name = "tree-sitter", specifier = ">=0.25,<0.26" },
     { name = "tree-sitter-language-pack", specifier = ">=1.10" },
-    { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.29" },
+    { name = "uvicorn", specifier = ">=0.29" },
 ]
-provides-extras = ["dev", "server"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "fastapi"

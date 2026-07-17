@@ -1,8 +1,8 @@
 # entrygraph unified web app image.
 #
 # Stage 1 builds the SPA (webapp/) into the server package's static dir; stage 2
-# is a slim Python runtime with the `server` extra (FastAPI, uvicorn, authlib,
-# psycopg). `entrygraph serve` binds 0.0.0.0:8100 and serves the API + SPA.
+# is a slim Python runtime. `entrygraph serve` binds 0.0.0.0:8100 and serves the
+# API + SPA.
 #
 # Runtime config is env-driven (EG_*): point EG_APP_DATABASE_URL at Postgres for
 # durable state, keep the graph DB (EG_DB) on a mounted volume, and set the
@@ -30,10 +30,10 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# install the package (with the built SPA baked in) + the server extra
+# install the package (with the built SPA baked in)
 COPY --from=webui /w/pyproject.toml /w/README.md /src/
 COPY --from=webui /w/src /src/src
-RUN pip install --no-cache-dir "/src[server]" && rm -rf /src
+RUN pip install --no-cache-dir "/src" && rm -rf /src
 
 # graph DB + server-side clones live under here; mount a volume at /data
 ENV EG_DB=/data/graph.db \

@@ -1,12 +1,10 @@
 """``entrygraph serve`` — run the unified web app (API + SPA).
 
 Light module-level imports so registering the command is free; FastAPI/uvicorn
-load lazily inside the handler. Needs the ``server`` extra.
+load lazily inside the handler.
 """
 
 from __future__ import annotations
-
-_MISSING_EXTRA = "this command needs the optional extra: pip install 'entrygraph[server]'"
 
 
 def register(sub) -> None:
@@ -25,12 +23,9 @@ def register(sub) -> None:
 
 
 def _serve(args) -> int:
-    try:
-        import uvicorn
-    except ImportError:
-        print(_MISSING_EXTRA)
-        return 2
     import os
+
+    import uvicorn
 
     from entrygraph.server.app import create_app
     from entrygraph.server.config import ConfigError, ServerConfig
