@@ -359,3 +359,183 @@ def test_express_inline_require_mount_prefix_end_to_end(tmp_path):
     routes = {(e.http_method, e.route) for e in graph.entrypoints(framework="express")}
     graph.close()
     assert ("GET", "/api/v1/users") in routes
+
+
+# ---------------- GraphQL resolvers ----------------
+
+
+def _gql_ext(symbols=(), bindings=(), path="src/users.resolver.ts"):
+    return FileExtraction(
+        path=path,
+        language="typescript",
+        module_path="users_resolver",
+        parse_ok=True,
+        error_count=0,
+        symbols=list(symbols),
+        bindings=list(bindings),
+    )
+
+
+def _gql_class(name, decorators, line=1):
+    return RawSymbol(
+        kind=SymbolKind.CLASS,
+        name=name,
+        qualified_name=f"users_resolver.{name}",
+        span=Span(line, 0, line + 20, 1),
+        decorators=list(decorators),
+    )
+
+
+def _gql_method(name, parent, decorators, line=2):
+    return RawSymbol(
+        kind=SymbolKind.METHOD,
+        name=name,
+        qualified_name=f"{parent}.{name}",
+        span=Span(line, 2, line + 2, 3),
+        parent_qualified_name=parent,
+        decorators=list(decorators),
+    )
+
+
+def _nest_gql_rule():
+    return {r.id: r for r in rules_for("javascript", {"nestjs-graphql"})}[
+        "javascript.nestjs-graphql.resolver"
+    ]
+
+
+def _type_gql_rule():
+    return {r.id: r for r in rules_for("javascript", {"type-graphql"})}[
+        "javascript.type-graphql.resolver"
+    ]
+
+
+def _apollo_rule():
+    return {r.id: r for r in rules_for("javascript", {"apollo"})}["javascript.apollo.resolver"]
+
+
+def test_nestjs_graphql_query_mutation_detected():
+    cls = _gql_class("UserResolver", ["@Resolver(() => User)"])
+    symbols = [
+        cls,
+        _gql_method("user", cls.qualified_name, ["@Query(() => User, { name: 'user' })"]),
+        _gql_method("createUser", cls.qualified_name, ["@Mutation()"], line=8),
+    ]
+    hints = _nest_gql_rule().match(_gql_ext(symbols))
+    by_route = {h.route: h for h in hints}
+    assert set(by_route) == {"Query.user", "Mutation.createUser"}
+    h = by_route["Query.user"]
+    assert h.kind is EntrypointKind.GRAPHQL_RESOLVER
+    assert h.handler_qualified_name == "users_resolver.UserResolver.user"
+    assert h.http_methods == []
+    assert h.metadata["operation"] == "query"
+    assert by_route["Mutation.createUser"].metadata["operation"] == "mutation"
+
+
+def test_nestjs_graphql_resolve_field_uses_resolver_target():
+    cls = _gql_class("UserResolver", ["@Resolver(() => User)"])
+    symbols = [cls, _gql_method("posts", cls.qualified_name, ["@ResolveField('posts')"])]
+    (hint,) = _nest_gql_rule().match(_gql_ext(symbols))
+    assert hint.route == "User.posts"
+    assert hint.metadata == {"operation": "field", "parent_type": "User"}
+
+
+def test_gql_query_outside_resolver_class_ignored():
+    # another library's @Query decorator on a class without @Resolver — no hint
+    cls = _gql_class("UsersController", ["@Controller('users')"])
+    symbols = [cls, _gql_method("user", cls.qualified_name, ["@Query()"])]
+    assert _nest_gql_rule().match(_gql_ext(symbols)) == []
+
+
+def test_type_graphql_field_resolver_and_string_target():
+    cls = _gql_class("UserResolver", ["@Resolver('User')"])
+    symbols = [cls, _gql_method("posts", cls.qualified_name, ["@FieldResolver()"])]
+    (hint,) = _type_gql_rule().match(_gql_ext(symbols))
+    assert hint.route == "User.posts"
+    assert hint.framework == "type-graphql"
+
+
+def test_nest_and_type_graphql_double_fire_dedups():
+    from entrygraph.pipeline.scanner import _dedup_entrypoint_hints
+
+    cls = _gql_class("UserResolver", ["@Resolver(() => User)"])
+    symbols = [cls, _gql_method("user", cls.qualified_name, ["@Query()"])]
+    ext = _gql_ext(symbols)
+    hints = _nest_gql_rule().match(ext) + _type_gql_rule().match(ext)
+    assert len(hints) == 2
+    deduped = _dedup_entrypoint_hints(hints, {"nestjs-graphql": 0.9, "type-graphql": 0.8})
+    assert len(deduped) == 1
+    assert deduped[0].framework == "nestjs-graphql"
+
+
+def _map_method(qname):
+    *_, name = qname.split(".")
+    parent = qname.rsplit(".", 1)[0]
+    return RawSymbol(
+        kind=SymbolKind.METHOD,
+        name=name,
+        qualified_name=qname,
+        span=Span(3, 2, 4, 3),
+        parent_qualified_name=parent,
+    )
+
+
+def test_apollo_resolver_map_query_and_type_fields():
+    symbols = [
+        _map_method("users_resolver.resolvers.Query.user"),
+        _map_method("users_resolver.resolvers.User.posts"),
+        _map_method("users_resolver.handlers.Thing.create"),  # not a resolvers container
+    ]
+    hints = _apollo_rule().match(_gql_ext(symbols))
+    by_route = {h.route: h for h in hints}
+    assert set(by_route) == {"Query.user", "User.posts"}
+    assert by_route["Query.user"].metadata["operation"] == "query"
+    assert by_route["User.posts"].metadata["operation"] == "field"
+    assert by_route["User.posts"].handler_qualified_name == "users_resolver.resolvers.User.posts"
+
+
+def test_apollo_typed_resolvers_binding():
+    # codegen-typed map: `const queryMap: Resolvers = {...}` — name doesn't match
+    # /resolvers?$/ but the declared TS type does.
+    from entrygraph.extract.ir import RawBinding
+
+    symbols = [_map_method("users_resolver.queryMap.User.posts")]
+    binding = RawBinding(
+        name="queryMap", type_text="Resolvers", span=Span(1, 0, 1, 10), kind="declared"
+    )
+    (hint,) = _apollo_rule().match(_gql_ext(symbols, bindings=[binding]))
+    assert hint.route == "User.posts"
+
+
+def test_apollo_root_operations_match_anywhere():
+    # Query/Mutation parents count even outside a *resolvers*-named container
+    symbols = [_map_method("users_resolver.gqlHandlers.Mutation.createUser")]
+    (hint,) = _apollo_rule().match(_gql_ext(symbols))
+    assert hint.route == "Mutation.createUser"
+    assert hint.metadata["operation"] == "mutation"
+
+
+def test_apollo_resolver_map_end_to_end(tmp_path):
+    from entrygraph import CodeGraph
+
+    (tmp_path / "package.json").write_text(
+        '{"name":"app","dependencies":{"@apollo/server":"^4","graphql":"^16"}}'
+    )
+    (tmp_path / "resolvers.ts").write_text(
+        "import { db } from './db';\n"
+        "export const resolvers = {\n"
+        "  Query: {\n"
+        "    user: async (_p, { id }) => db.find(id),\n"
+        "    posts() { return db.posts(); },\n"
+        "  },\n"
+        "  User: {\n"
+        "    posts: (parent) => db.postsFor(parent.id),\n"
+        "  },\n"
+        "};\n"
+    )
+    graph = CodeGraph.index(tmp_path, db=tmp_path / "g.db")
+    eps = graph.entrypoints(kind="graphql_resolver", framework="apollo")
+    routes = {e.route for e in eps}
+    handlers = {e.symbol.qname for e in eps}
+    graph.close()
+    assert routes == {"Query.user", "Query.posts", "User.posts"}
+    assert "resolvers.resolvers.Query.user" in handlers

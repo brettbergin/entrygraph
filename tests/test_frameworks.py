@@ -115,3 +115,56 @@ def test_rails_detected_without_manifest_dep():
     )
     rails = next((d for d in detected if d.name == "rails"), None)
     assert rails is not None and rails.confidence > 0.8
+
+
+def test_graphql_ruby_gem_fires_but_client_require_alone_does_not():
+    # the `graphql` gem IS graphql-ruby (server); `require 'graphql/client'`
+    # surfaces the same top import segment but must stay sub-threshold alone.
+    detected = detect_frameworks(
+        ManifestDeps(ruby={"graphql"}),
+        import_signals=set(),
+        file_paths=[],
+        languages_present={"ruby"},
+    )
+    assert any(d.name == "graphql-ruby" for d in detected)
+
+    client_only = detect_frameworks(
+        ManifestDeps(),
+        import_signals={("ruby", "graphql")},
+        file_paths=[],
+        languages_present={"ruby"},
+    )
+    assert not any(d.name == "graphql-ruby" for d in client_only)
+
+
+def test_npm_graphql_alone_fires_no_graphql_framework():
+    # the bare npm `graphql` package is a peer dep of every GraphQL client
+    detected = detect_frameworks(
+        ManifestDeps(javascript={"graphql"}),
+        import_signals={("javascript", "graphql")},
+        file_paths=[],
+        languages_present={"javascript"},
+    )
+    assert not any(d.name in ("apollo", "nestjs-graphql", "type-graphql") for d in detected)
+
+
+def test_apollo_server_variants_fire():
+    for dep in ("@apollo/server", "apollo-server-express"):
+        detected = detect_frameworks(
+            ManifestDeps(javascript={dep}),
+            import_signals=set(),
+            file_paths=[],
+            languages_present={"javascript"},
+        )
+        assert any(d.name == "apollo" for d in detected), dep
+
+
+def test_gqlgen_detected_from_go_mod_or_config():
+    detected = detect_frameworks(
+        ManifestDeps(go={"github.com/99designs/gqlgen"}),
+        import_signals=set(),
+        file_paths=["gqlgen.yml"],
+        languages_present={"go"},
+    )
+    gqlgen = next(d for d in detected if d.name == "gqlgen")
+    assert gqlgen.confidence > 0.9  # dep + config file
