@@ -29,6 +29,7 @@ from entrygraph.detect import entrypoints as entrypoint_rules
 from entrygraph.detect.entrypoints.base import first_string_arg
 from entrygraph.detect.express_mounts import resolve_mount_prefixes
 from entrygraph.detect.frameworks import detect_frameworks
+from entrygraph.detect.graphql_link import link_graphql
 from entrygraph.detect.grpc_expand import expand_grpc
 from entrygraph.detect.manifests import parse_manifests
 from entrygraph.detect.taint import SinkRegistry, registry_for_repo
@@ -195,6 +196,9 @@ def index_repository(
 
         # ---- gRPC per-method expansion via the binding table (#98 P2 / #37) ----
         expand_grpc(extractions, table)
+
+        # ---- GraphQL SDL fields -> code resolvers (cross-file rebind + dedup) ----
+        link_graphql(extractions, table)
 
         # ---- resolve references -> edges + entrypoints ----
         externals = ExternalRegistry(lambda: alloc.take(Symbol), repo.id)
