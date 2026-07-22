@@ -108,6 +108,7 @@ class JavaScriptExtractor:
             error_count=1 if root.has_error else 0,
         )
         self._definitions(root, ctx, out)
+        self._object_literal_callables(root, ctx, out)
         self._imports(root, ctx, out)
         self._calls(root, ctx, out)
         self._bindings(root, ctx, out)
@@ -239,6 +240,8 @@ class JavaScriptExtractor:
         for node in caps.get("def.function", []):
             self._add_callable(node, ctx, out, SymbolKind.FUNCTION)
         for node in caps.get("def.method", []):
+            if node.parent is not None and node.parent.type == "object":
+                continue  # object-literal shorthand: emitted with a key-path qname below
             self._add_callable(node, ctx, out, SymbolKind.METHOD)
 
         for node in caps.get("def.class", []):
@@ -339,6 +342,104 @@ class JavaScriptExtractor:
                 return_type_text=self._return_type_text(node),
             )
         )
+
+    # ---------------- object-literal callables ----------------
+
+    def _object_literal_callables(self, root, ctx, out) -> None:
+        """Function-valued object-literal properties become METHOD symbols with
+        key-path qnames: `const resolvers = { Query: { user: () => {} } }` ->
+        ``mod.resolvers.Query.user``. Covers shorthand methods (`user() {}`) and
+        arrow/function-expression pairs; makes Apollo-style resolver maps (and any
+        handler-map idiom) addressable/bindable. Members with no stable path
+        anchor (`module.exports = { run() {} }`) keep their previous flat qname.
+        """
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.named_children)
+            if n.type == "method_definition" and n.parent is not None and n.parent.type == "object":
+                name = self._key_name(n.child_by_field_name("name"))
+                if name is not None:
+                    self._emit_object_member(n, name, ctx, out)
+            elif n.type == "pair":
+                value = n.child_by_field_name("value")
+                if value is None or value.type not in ("arrow_function", "function_expression"):
+                    continue
+                name = self._key_name(n.child_by_field_name("key"))
+                if name is not None:
+                    self._emit_object_member(n, name, ctx, out)
+
+    def _emit_object_member(self, node, name, ctx, out) -> None:
+        parent_path = self._object_parent_path(node, ctx)
+        if parent_path is None:
+            qname, parent_q = self._qualify(node, name, ctx)
+        else:
+            qname, parent_q = f"{parent_path}.{name}", parent_path
+        out.symbols.append(
+            RawSymbol(
+                kind=SymbolKind.METHOD,
+                name=name,
+                qualified_name=qname,
+                span=span_of(node),
+                parent_qualified_name=parent_q,
+                signature=self._signature(node),
+                is_exported=self._exported(node),
+                return_type_text=self._return_type_text(node),
+            )
+        )
+
+    def _key_name(self, key_node) -> str | None:
+        if key_node is None:
+            return None
+        if key_node.type == "property_identifier":
+            return node_text(key_node)
+        if key_node.type == "string":
+            text = node_text(key_node).strip("'\"`")
+            return text or None
+        return None  # computed / numeric keys carry no stable name
+
+    # An object member's path stops at 4 key segments — deeper nesting is config
+    # data, not a handler map.
+    _OBJECT_PATH_MAX_KEYS = 4
+
+    def _object_parent_path(self, node, ctx) -> str | None:
+        """Dotted parent path of an object-literal member: enclosing pair keys up
+        to a variable/assignment anchor (`const resolvers = ...` -> resolvers).
+        An object passed inline as a call argument uses its keys alone
+        (`new ApolloServer({resolvers: {Query: ...}})` -> mod.resolvers.Query).
+        None when there is neither anchor nor keys (flat-qname fallback).
+        """
+        keys: list[str] = []
+        anchor: str | None = None
+        current = node.parent
+        while current is not None:
+            t = current.type
+            if t in ("object", "parenthesized_expression"):
+                current = current.parent
+                continue
+            if t == "pair":
+                key = self._key_name(current.child_by_field_name("key"))
+                if key is None or len(keys) >= self._OBJECT_PATH_MAX_KEYS:
+                    return None
+                keys.append(key)
+                current = current.parent
+                continue
+            if t == "variable_declarator":
+                name = current.child_by_field_name("name")
+                if name is not None and name.type == "identifier":
+                    anchor = node_text(name)
+                break
+            if t == "assignment_expression":
+                left = current.child_by_field_name("left")
+                if left is not None and left.type == "identifier":
+                    anchor = node_text(left)
+                break
+            break  # arguments / export_statement / return_statement / program ...
+        if not keys and anchor is None:
+            return None
+        segments = ([anchor] if anchor else []) + list(reversed(keys))
+        chain = self._scope_chain(node)
+        return ".".join([ctx.module_path, *chain, *segments])
 
     # value-preserving generic wrappers: `Promise<T>` (awaited) and `Awaited<T>`
     # still denote a T; `Array<T>`/`Readonly<T>` do not, so they don't unwrap.
@@ -740,7 +841,21 @@ class JavaScriptExtractor:
             if current.type in ("function_declaration", "method_definition"):
                 name = current.child_by_field_name("name")
                 if name is not None:
+                    # object-literal shorthand: same key-path qname its symbol got,
+                    # so body call edges attach to the resolver, not a flat alias.
+                    if current.parent is not None and current.parent.type == "object":
+                        key = self._key_name(name)
+                        path = self._object_parent_path(current, ctx)
+                        if key is not None and path is not None:
+                            return f"{path}.{key}"
                     return self._qualify(current, node_text(name), ctx)[0]
+            if current.type == "pair":
+                value = current.child_by_field_name("value")
+                if value is not None and value.type in ("arrow_function", "function_expression"):
+                    key = self._key_name(current.child_by_field_name("key"))
+                    path = self._object_parent_path(current, ctx)
+                    if key is not None and path is not None:
+                        return f"{path}.{key}"
             if current.type == "variable_declarator":
                 value = current.child_by_field_name("value")
                 if value is not None and value.type in ("arrow_function", "function_expression"):

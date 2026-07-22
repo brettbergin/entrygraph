@@ -223,3 +223,71 @@ def test_go_test_route_paths_classified_centrally():
     refs = [_call("Get", "r", '("/users", h)')]
     assert _chi_rule().match(_go_ext(refs, path="middleware/compress_test.go"))
     assert _chi_rule().match(_go_ext(refs, path="middleware/compress.go"))
+
+
+# ---------------- gqlgen ----------------
+
+from entrygraph.extract.ir import RawSymbol
+from entrygraph.kinds import EntrypointKind, SymbolKind
+
+
+def _gql_method(name, receiver, signature, exported=True):
+    parent = f"internal.graph.{receiver}"
+    return RawSymbol(
+        kind=SymbolKind.METHOD,
+        name=name,
+        qualified_name=f"{parent}.{name}",
+        span=Span(10, 0, 20, 1),
+        parent_qualified_name=parent,
+        signature=signature,
+        is_exported=exported,
+    )
+
+
+def _gqlgen_ext(symbols):
+    return FileExtraction(
+        path="internal/graph/schema.resolvers.go",
+        language="go",
+        module_path="internal.graph",
+        parse_ok=True,
+        error_count=0,
+        symbols=list(symbols),
+    )
+
+
+def _gqlgen_rule():
+    return {r.id: r for r in rules_for("go", {"gqlgen"})}["go.gqlgen.resolver"]
+
+
+def test_gqlgen_query_resolver_method():
+    sym = _gql_method(
+        "Todos",
+        "queryResolver",
+        "func (r *queryResolver) Todos(ctx context.Context) ([]*Todo, error)",
+    )
+    (hint,) = _gqlgen_rule().match(_gqlgen_ext([sym]))
+    assert hint.kind is EntrypointKind.GRAPHQL_RESOLVER
+    assert hint.route == "Query.todos"
+    assert hint.handler_qualified_name == "internal.graph.queryResolver.Todos"
+    assert hint.metadata["operation"] == "query"
+    assert hint.http_methods == []
+
+
+def test_gqlgen_type_field_resolver():
+    sym = _gql_method(
+        "Owner",
+        "todoResolver",
+        "func (r *todoResolver) Owner(ctx context.Context, obj *Todo) (*User, error)",
+    )
+    (hint,) = _gqlgen_rule().match(_gqlgen_ext([sym]))
+    assert hint.route == "Todo.owner"
+    assert hint.metadata["operation"] == "field"
+
+
+def test_gqlgen_root_resolver_wiring_and_helpers_excluded():
+    wiring = _gql_method("Query", "Resolver", "func (r *Resolver) Query() generated.QueryResolver")
+    no_ctx = _gql_method(
+        "helper", "queryResolver", "func (r *queryResolver) helper() int", exported=False
+    )
+    no_ctx_exported = _gql_method("Helper", "queryResolver", "func (r *queryResolver) Helper() int")
+    assert _gqlgen_rule().match(_gqlgen_ext([wiring, no_ctx, no_ctx_exported])) == []

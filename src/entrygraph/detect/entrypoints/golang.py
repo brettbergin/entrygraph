@@ -323,6 +323,47 @@ def _grpc_services(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
+# gqlgen's generated wiring instantiates unexported per-type resolver structs
+# (`type queryResolver struct{ *Resolver }`); user code implements the schema as
+# exported methods on them in resolver.go / *.resolvers.go. The lowercase-first
+# anchor excludes both the exported root `Resolver` (whose Query()/Mutation()
+# methods are wiring, not fields) and generated executionContext methods.
+_GQLGEN_RECEIVER = re.compile(r"^([a-z]\w*)Resolver$")
+_GQL_OPERATIONS = {"Query": "query", "Mutation": "mutation", "Subscription": "subscription"}
+
+
+def _gqlgen_resolvers(x: FileExtraction) -> list[EntrypointHint]:
+    hints = []
+    for symbol in x.symbols:
+        if symbol.kind is not SymbolKind.METHOD or not symbol.is_exported:
+            continue
+        parent = (symbol.parent_qualified_name or "").rsplit(".", 1)[-1]
+        m = _GQLGEN_RECEIVER.match(parent)
+        if m is None:
+            continue
+        # every gqlgen resolver method takes ctx first — cheap precision guard
+        if "ctx context.Context" not in (symbol.signature or ""):
+            continue
+        parent_type = m.group(1)[:1].upper() + m.group(1)[1:]
+        field = symbol.name[:1].lower() + symbol.name[1:]  # gqlgen lowerCamels fields
+        hints.append(
+            EntrypointHint(
+                rule_id="go.gqlgen.resolver",
+                kind=EntrypointKind.GRAPHQL_RESOLVER,
+                handler_qualified_name=symbol.qualified_name,
+                route=f"{parent_type}.{field}",
+                name=field,
+                framework="gqlgen",
+                span=symbol.span,
+                metadata={
+                    "operation": _GQL_OPERATIONS.get(parent_type, "field"),
+                    "parent_type": parent_type,
+                },
+            )
+        )
+    return hints
+
+
 register(EntrypointRule("go.core.main", "go", None, EntrypointKind.MAIN, _go_main))
 register(
     EntrypointRule("go.nethttp.route", "go", "net/http", EntrypointKind.HTTP_ROUTE, _nethttp_routes)
@@ -342,4 +383,9 @@ register(
 )
 register(
     EntrypointRule("go.grpc.service", "go", "grpc-go", EntrypointKind.RPC_HANDLER, _grpc_services)
+)
+register(
+    EntrypointRule(
+        "go.gqlgen.resolver", "go", "gqlgen", EntrypointKind.GRAPHQL_RESOLVER, _gqlgen_resolvers
+    )
 )

@@ -546,6 +546,58 @@ FRAMEWORKS: list[FrameworkSpec] = [
             FrameworkSignal("import", "tokio", 0.7),
         ),
     ),
+    # --- GraphQL server frameworks. Deliberately no signal for the bare npm
+    # `graphql` package: it is a peer dep of every GraphQL *client* (apollo-client,
+    # urql, relay) and would fire on repos that only consume GraphQL.
+    FrameworkSpec(
+        "apollo",
+        "javascript",
+        (
+            FrameworkSignal("manifest_dep", "@apollo/server", 0.8),  # v4
+            FrameworkSignal("manifest_dep", "apollo-server*", 0.8),  # v2/3 + -express/-koa/...
+            FrameworkSignal("manifest_dep", "@apollo/subgraph", 0.6),
+            FrameworkSignal("import", "@apollo/server*", 0.7),
+            FrameworkSignal("import", "apollo-server*", 0.7),
+        ),
+    ),
+    FrameworkSpec(
+        "nestjs-graphql",
+        "javascript",
+        (
+            FrameworkSignal("manifest_dep", "@nestjs/graphql", 0.8),
+            FrameworkSignal("import", "@nestjs/graphql", 0.7),
+        ),
+    ),
+    FrameworkSpec(
+        "type-graphql",
+        "javascript",
+        (
+            FrameworkSignal("manifest_dep", "type-graphql", 0.8),
+            FrameworkSignal("import", "type-graphql", 0.7),
+        ),
+    ),
+    FrameworkSpec(
+        "graphql-ruby",
+        "ruby",
+        (
+            # the `graphql` gem IS graphql-ruby (the server library); the client
+            # ships as `graphql-client`, so the exact-name match stays quiet for
+            # consumer-only repos. `require 'graphql/client'` also surfaces top
+            # segment "graphql", so the import signal is corroborative-only.
+            FrameworkSignal("manifest_dep", "graphql", 0.8),
+            FrameworkSignal("import", "graphql", 0.4),
+            FrameworkSignal("file_presence", "*app/graphql/*", 0.4),
+        ),
+    ),
+    FrameworkSpec(
+        "gqlgen",
+        "go",
+        (
+            FrameworkSignal("manifest_dep", "github.com/99designs/gqlgen", 0.8),
+            FrameworkSignal("import", "github.com/99designs/gqlgen*", 0.7),
+            FrameworkSignal("file_presence", "*gqlgen.y*ml", 0.6),
+        ),
+    ),
 ]
 
 

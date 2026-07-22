@@ -207,6 +207,118 @@ def _nest_routes(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
+_GQL_RESOLVER_CLASS = re.compile(r"^@Resolver\b")
+_GQL_FIELD_DECORATOR = re.compile(r"^@(Query|Mutation|Subscription|ResolveField|FieldResolver)\b")
+_GQL_NAME_OPT = re.compile(r"""name\s*:\s*['"]([\w.]+)['"]""")
+_GQL_TYPE_THUNK = re.compile(r"=>\s*\[?\s*([A-Za-z_$][\w$]*)")
+_GQL_OPERATIONS = {"Query": "query", "Mutation": "mutation", "Subscription": "subscription"}
+
+
+def _gql_decorator_resolvers(framework: str):
+    """@Resolver classes with @Query/@Mutation/@Subscription/@ResolveField methods.
+
+    NestJS-GraphQL and TypeGraphQL share this shape (TypeGraphQL says
+    @FieldResolver where Nest says @ResolveField). Requiring the enclosing class
+    to carry @Resolver keeps other libraries' @Query decorators out; when both
+    frameworks are detected the scanner's hint dedup keeps one row.
+    """
+
+    def matcher(x: FileExtraction) -> list[EntrypointHint]:
+        # resolver class qname -> the parent type it resolves for:
+        # @Resolver('User') / @Resolver(() => User) / bare -> class name - "Resolver"
+        targets: dict[str, str] = {}
+        for symbol in x.symbols:
+            if symbol.kind is not SymbolKind.CLASS:
+                continue
+            for decorator in symbol.decorators:
+                if _GQL_RESOLVER_CLASS.match(decorator):
+                    thunk = _GQL_TYPE_THUNK.search(decorator)
+                    targets[symbol.qualified_name] = (
+                        first_string_arg(decorator)
+                        or (thunk.group(1) if thunk else None)
+                        or symbol.name.removesuffix("Resolver")
+                        or symbol.name
+                    )
+        if not targets:
+            return []
+        hints = []
+        for symbol in x.symbols:
+            if symbol.kind is not SymbolKind.METHOD or symbol.parent_qualified_name not in targets:
+                continue
+            for decorator in symbol.decorators:
+                m = _GQL_FIELD_DECORATOR.match(decorator)
+                if not m:
+                    continue
+                kind = m.group(1)
+                if kind in ("ResolveField", "FieldResolver"):
+                    parent = targets[symbol.parent_qualified_name]
+                    field = first_string_arg(decorator) or symbol.name
+                    operation = "field"
+                else:
+                    parent, operation = kind, _GQL_OPERATIONS[kind]
+                    named = _GQL_NAME_OPT.search(decorator)
+                    field = named.group(1) if named else symbol.name
+                hints.append(
+                    EntrypointHint(
+                        rule_id=f"javascript.{framework}.resolver",
+                        kind=EntrypointKind.GRAPHQL_RESOLVER,
+                        handler_qualified_name=symbol.qualified_name,
+                        route=f"{parent}.{field}",
+                        name=field,
+                        framework=framework,
+                        span=symbol.span,
+                        metadata={"operation": operation, "parent_type": parent},
+                    )
+                )
+        return hints
+
+    return matcher
+
+
+_RESOLVERS_VAR = re.compile(r"resolvers?$", re.IGNORECASE)
+
+
+def _apollo_resolvers(x: FileExtraction) -> list[EntrypointHint]:
+    """Apollo resolver-map objects: `const resolvers = { Query: { user() {} } }`.
+
+    Keys off the object-literal method symbols the JS extractor emits with
+    key-path qnames. Query/Mutation/Subscription parents match anywhere; other
+    TitleCase parents (type-field resolvers like `User: { posts }`) only inside
+    a *resolvers*-named or `Resolvers`-typed container. Shorthand *references*
+    (`Query: { user }` where `user` is imported) emit no symbol and are a known
+    gap.
+    """
+    typed_vars = {
+        b.name for b in x.bindings if b.kind == "declared" and b.type_text.endswith("Resolvers")
+    }
+    hints = []
+    for symbol in x.symbols:
+        if symbol.kind is not SymbolKind.METHOD or not symbol.parent_qualified_name:
+            continue
+        parts = symbol.parent_qualified_name.split(".")
+        parent_type = parts[-1]
+        container = parts[-2] if len(parts) >= 2 else ""
+        operation = _GQL_OPERATIONS.get(parent_type)
+        if operation is None:
+            in_map = bool(_RESOLVERS_VAR.search(container)) or container in typed_vars
+            if not in_map or not parent_type[:1].isupper():
+                continue
+            operation = "field"
+        hints.append(
+            EntrypointHint(
+                rule_id="javascript.apollo.resolver",
+                kind=EntrypointKind.GRAPHQL_RESOLVER,
+                handler_qualified_name=symbol.qualified_name,
+                route=f"{parent_type}.{symbol.name}",
+                name=symbol.name,
+                framework="apollo",
+                span=symbol.span,
+                metadata={"operation": operation, "parent_type": parent_type},
+            )
+        )
+    return hints
+
+
 def _next_handlers(x: FileExtraction) -> list[EntrypointHint]:
     """Next.js App Router route handlers in app/**/route.{ts,js}.
 
@@ -380,5 +492,32 @@ register(
         "next",
         EntrypointKind.HTTP_ROUTE,
         _next_pages_handlers,
+    )
+)
+register(
+    EntrypointRule(
+        "javascript.apollo.resolver",
+        "javascript",
+        "apollo",
+        EntrypointKind.GRAPHQL_RESOLVER,
+        _apollo_resolvers,
+    )
+)
+register(
+    EntrypointRule(
+        "javascript.nestjs-graphql.resolver",
+        "javascript",
+        "nestjs-graphql",
+        EntrypointKind.GRAPHQL_RESOLVER,
+        _gql_decorator_resolvers("nestjs-graphql"),
+    )
+)
+register(
+    EntrypointRule(
+        "javascript.type-graphql.resolver",
+        "javascript",
+        "type-graphql",
+        EntrypointKind.GRAPHQL_RESOLVER,
+        _gql_decorator_resolvers("type-graphql"),
     )
 )
