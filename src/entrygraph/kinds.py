@@ -42,6 +42,7 @@ class EntrypointKind(enum.Enum):
     EVENT_HANDLER = "event_handler"
     MIDDLEWARE = "middleware"  # request/response interceptor (before_request, app.use, ...)
     RPC_HANDLER = "rpc_handler"  # gRPC / RPC service registration (RegisterXxxServer)
+    GRAPHQL_RESOLVER = "graphql_resolver"  # GraphQL field resolver (SDL field or code resolver)
 
 
 class Confidence(enum.IntEnum):

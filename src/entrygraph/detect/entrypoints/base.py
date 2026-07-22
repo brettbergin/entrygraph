@@ -112,9 +112,10 @@ def identifier_args(arg_preview: str | None) -> list[str]:
 def tainted_params(signature: str | None, kind: str) -> list[str]:
     """Parameters of an entrypoint handler that are likely user-controlled.
 
-    HTTP handlers: every parameter except self/cls (path/query params flow in).
-    Lambda handlers: the `event` parameter. Otherwise: parameters whose names
-    match the conventional tainted-name set.
+    HTTP handlers and GraphQL resolvers: every parameter except self/cls
+    (path/query params and field arguments flow in). Lambda handlers: the
+    `event` parameter. Otherwise: parameters whose names match the
+    conventional tainted-name set.
     """
     if not signature:
         return []
@@ -127,7 +128,7 @@ def tainted_params(signature: str | None, kind: str) -> list[str]:
         name = p.split(":", 1)[0].split("=", 1)[0].strip().lstrip("*")
         if name and name not in ("self", "cls"):
             params.append(name)
-    if kind == "http_route":
+    if kind in ("http_route", "graphql_resolver"):
         return params
     if kind == "lambda_handler":
         return [p for p in params if p == "event"] or params[:1]

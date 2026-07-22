@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from entrygraph.db.models import Base, Meta
 from entrygraph.errors import SchemaMismatchError
 
-SCHEMA_VERSION = 8  # gate/sentinel tables removed; risk scoring retired from paths
+SCHEMA_VERSION = 9  # graphql_resolver entrypoints + graphql SDL extraction
 
 
 def create_schema(engine: Engine) -> None:

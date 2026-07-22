@@ -83,6 +83,8 @@ _ENTRYPOINT_STYLE = {
     "lambda_handler": "yellow",
     "event_handler": "yellow",
     "middleware": "dim yellow",
+    "rpc_handler": "magenta",
+    "graphql_resolver": "bright_magenta",
 }
 
 _CONFIDENCE_NAME = {0: "unresolved", 1: "fuzzy", 2: "import", 3: "exact"}
