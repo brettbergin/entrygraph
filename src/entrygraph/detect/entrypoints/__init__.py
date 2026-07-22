@@ -11,7 +11,7 @@ from entrygraph.detect.entrypoints.base import (
 
 # Importing each rule module registers its rules. Done defensively so a
 # language still under construction doesn't break the whole registry.
-for _mod in ("python", "javascript", "golang", "java", "ruby", "csharp", "php", "rust"):
+for _mod in ("python", "javascript", "golang", "java", "ruby", "csharp", "php", "rust", "graphql"):
     _full = f"entrygraph.detect.entrypoints.{_mod}"
     try:
         importlib.import_module(_full)

@@ -248,6 +248,11 @@ LANGUAGE_PREFIX: dict[str, str] = {
     lang: prefix for prefix, langs in _PREFIX_LANGUAGES.items() for lang in langs
 }
 
+# Extractable languages with no call semantics: pure declarations (GraphQL SDL
+# type/field definitions). They can never have sink/source catalog entries, so
+# the every-extractable-language-has-a-catalog guard exempts them.
+DECLARATION_ONLY_LANGUAGES: frozenset[str] = frozenset({"graphql"})
+
 
 @dataclass(frozen=True, slots=True)
 class CatalogCoverage:

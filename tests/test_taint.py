@@ -134,12 +134,18 @@ def test_catalog_coverage_counts_and_tiers():
 
 
 def test_every_extractable_language_has_catalog_entries():
-    # a newly-added language can't silently ship with zero taint patterns
-    from entrygraph.detect.taint import LANGUAGE_PREFIX, builtin_registry, catalog_coverage
+    # a newly-added language can't silently ship with zero taint patterns —
+    # unless it is declaration-only (GraphQL SDL) and can't have call sites.
+    from entrygraph.detect.taint import (
+        DECLARATION_ONLY_LANGUAGES,
+        LANGUAGE_PREFIX,
+        builtin_registry,
+        catalog_coverage,
+    )
     from entrygraph.fs.lang import EXTRACTABLE
 
     cov = catalog_coverage(builtin_registry())
-    for language in EXTRACTABLE:
+    for language in EXTRACTABLE - DECLARATION_ONLY_LANGUAGES:
         assert language in LANGUAGE_PREFIX, f"{language} has no callee prefix mapping"
         assert cov.get(language) and cov[language].sinks > 0, (
             f"{language} has no sink catalog entries"

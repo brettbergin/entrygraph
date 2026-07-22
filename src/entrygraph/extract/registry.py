@@ -17,6 +17,7 @@ _EXTRACTOR_SPECS = [
     ("entrygraph.extract.csharp", "CSharpExtractor"),
     ("entrygraph.extract.php", "PhpExtractor"),
     ("entrygraph.extract.rust", "RustExtractor"),
+    ("entrygraph.extract.graphql", "GraphQLExtractor"),
 ]
 
 

@@ -11,7 +11,19 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 EXTRACTABLE = frozenset(
-    {"python", "javascript", "typescript", "tsx", "go", "java", "ruby", "csharp", "php", "rust"}
+    {
+        "python",
+        "javascript",
+        "typescript",
+        "tsx",
+        "go",
+        "java",
+        "ruby",
+        "csharp",
+        "php",
+        "rust",
+        "graphql",
+    }
 )
 
 _EXTENSION_MAP = {
@@ -34,6 +46,8 @@ _EXTENSION_MAP = {
     ".rs": "rust",
     ".php": "php",
     ".phtml": "php",
+    ".graphql": "graphql",
+    ".gql": "graphql",
     # recognized but not extracted — kept for honest stats. A repo's *dominant*
     # language must land here rather than fall through to None, or its files vanish
     # from both the language profile and the files table (pandoc's 364 .hs files
@@ -86,8 +100,6 @@ _EXTENSION_MAP = {
     ".psm1": "powershell",
     ".f90": "fortran",
     ".f95": "fortran",
-    ".graphql": "graphql",
-    ".gql": "graphql",
     ".sh": "shell",
     ".bash": "shell",
     ".zsh": "shell",
