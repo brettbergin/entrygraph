@@ -26,6 +26,7 @@ _GRAMMAR_NAMES = {
     "csharp": "csharp",
     "php": "php",
     "rust": "rust",
+    "graphql": "graphql",
 }
 
 
