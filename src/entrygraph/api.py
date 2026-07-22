@@ -51,7 +51,7 @@ DEFAULT_DB_NAME = ".entrygraph.db"
 # MAIN rides cli_arg because argv enters a program at main (Java
 # `main(String[] args)`, Go `os.Args` in main, ...).
 _HANDLER_SOURCE_KINDS: dict[str, tuple[EntrypointKind, ...]] = {
-    "http_input": (EntrypointKind.HTTP_ROUTE,),
+    "http_input": (EntrypointKind.HTTP_ROUTE, EntrypointKind.GRAPHQL_RESOLVER),
     "cli_arg": (EntrypointKind.CLI_COMMAND, EntrypointKind.MAIN),
 }
 

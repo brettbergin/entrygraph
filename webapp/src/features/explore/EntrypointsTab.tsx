@@ -16,6 +16,7 @@ const KINDS = [
   "event_handler",
   "middleware",
   "rpc_handler",
+  "graphql_resolver",
 ];
 
 const METHOD_COLOR: Record<string, "success" | "accent" | "attention" | "danger" | "secondary"> = {

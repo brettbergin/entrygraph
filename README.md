@@ -2,9 +2,9 @@
 
 `entrygraph` builds a queryable graph of your codebase. It indexes a repository
 into a local SQLite database, then answers questions about the code: what
-symbols and classes exist, what the entrypoints are (HTTP routes, CLI commands,
-`main`, tasks, lambdas), who calls what, and whether untrusted input can reach a
-dangerous function.
+symbols and classes exist, what the entrypoints are (HTTP routes, GraphQL
+resolvers, CLI commands, `main`, tasks, lambdas), who calls what, and whether
+untrusted input can reach a dangerous function.
 
 It works across **Python, JavaScript/TypeScript, Go, Java, Ruby, C#, PHP, and
 Rust**, using [tree-sitter](https://tree-sitter.github.io/) to parse and
@@ -36,18 +36,18 @@ what's indexed). Add `--json` to any command for machine-readable output.
 
 ## Commands
 
-| Command               | What it does                                                                                     |
-| --------------------- | ------------------------------------------------------------------------------------------------ |
-| `index <path\|url>`   | Build or update the graph. Incremental by default; `--full` rebuilds. A git URL is cloned first. |
-| `detect`              | Languages (by byte share) and detected frameworks.                                               |
-| `symbols`             | Search symbols by name, qualified name, kind, or file.                                           |
-| `entrypoints`         | Every route, command, `main`, task, and handler, with its framework and location.                |
-| `callers` / `callees` | Who calls a symbol / what it calls (`--depth N`).                                                |
-| `references`          | Every call site targeting a symbol, with file:line.                                              |
-| `paths`               | Source → sink reachability (see below).                                                          |
-| `stats`               | Counts for the current repo.                                                                     |
-| `repos`               | List the repositories in the database.                                                           |
-| `serve`               | Web UI over the index.                                                                           |
+| Command               | What it does                                                                                        |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| `index <path\|url>`   | Build or update the graph. Incremental by default; `--full` rebuilds. A git URL is cloned first.    |
+| `detect`              | Languages (by byte share) and detected frameworks.                                                  |
+| `symbols`             | Search symbols by name, qualified name, kind, or file.                                              |
+| `entrypoints`         | Every route, GraphQL resolver, command, `main`, task, and handler, with its framework and location. |
+| `callers` / `callees` | Who calls a symbol / what it calls (`--depth N`).                                                   |
+| `references`          | Every call site targeting a symbol, with file:line.                                                 |
+| `paths`               | Source → sink reachability (see below).                                                             |
+| `stats`               | Counts for the current repo.                                                                        |
+| `repos`               | List the repositories in the database.                                                              |
+| `serve`               | Web UI over the index.                                                                              |
 
 Run `entrygraph <command> --help` for the flags on each.
 

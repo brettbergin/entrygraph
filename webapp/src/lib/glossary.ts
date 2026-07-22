@@ -10,7 +10,7 @@ export interface GlossaryEntry {
 export const GLOSSARY: Record<string, GlossaryEntry> = {
   entrypoint: {
     title: "Entrypoint",
-    short: "Where outside input enters your code: an HTTP route, CLI command, scheduled task, lambda handler…",
+    short: "Where outside input enters your code: an HTTP route, GraphQL resolver, CLI command, scheduled task, lambda handler…",
     long: "Entrypoints come from framework detection — a Flask detection makes @app.route handlers entrypoints. They are the default sources for reachability questions.",
   },
   source: {

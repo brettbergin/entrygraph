@@ -182,3 +182,33 @@ def test_edge_via_and_new_kinds_round_trip(session_factory):
         raw = s.connection().exec_driver_sql("SELECT kind FROM edges WHERE id = 4").scalar()
         assert raw == "callback"
         assert s.get(Entrypoint, 2).kind is EntrypointKind.MIDDLEWARE
+
+
+def test_graphql_resolver_entrypoint_round_trip(session_factory):
+    with session_factory() as s:
+        _seed(s)
+        s.add(
+            Entrypoint(
+                id=2,
+                repo_id=1,
+                kind=EntrypointKind.GRAPHQL_RESOLVER,
+                framework="apollo",
+                symbol_id=1,
+                route="Query.user",
+                http_method=None,
+            )
+        )
+        s.commit()
+
+        ep = s.get(Entrypoint, 2)
+        assert ep.kind is EntrypointKind.GRAPHQL_RESOLVER
+        assert ep.route == "Query.user"
+        assert ep.http_method is None
+        raw = s.connection().exec_driver_sql("SELECT kind FROM entrypoints WHERE id = 2").scalar()
+        assert raw == "graphql_resolver"
+
+
+def test_graphql_resolver_seeds_http_input_sources():
+    from entrygraph.api import _HANDLER_SOURCE_KINDS
+
+    assert EntrypointKind.GRAPHQL_RESOLVER in _HANDLER_SOURCE_KINDS["http_input"]
