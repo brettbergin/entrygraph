@@ -142,6 +142,32 @@ top_level_call(1)
     assert calls["top_level_call"].caller_qualified_name is None
 
 
+def test_dsl_call_preview_keeps_trailing_options():
+    """A DSL declaration's meaning lives in its option list, which routinely runs
+    past the 80-char preview used for method-body calls — on GitLab's route files
+    the cut landed before `module:`. Receiver-less calls get a wider preview; a
+    call with a receiver keeps the short one."""
+    long_opts = (
+        "path: ':project_id', constraints: { project_id: Gitlab::PathRegex.project_route_regex }, "
+        "module: :projects, as: :project"
+    )
+    x = extract(
+        f"""
+scope({long_opts}) do
+end
+
+class C
+  def m
+    log("{"x" * 200}")
+  end
+end
+"""
+    )
+    calls = {r.callee_name: r for r in x.references if r.kind == "call"}
+    assert "module: :projects" in calls["scope"].arg_preview
+    assert len(calls["log"].arg_preview) <= 80
+
+
 def test_partial_tree_still_extracts():
     x = extract("def good\nend\n\ndef broken(\n")
     assert not x.parse_ok

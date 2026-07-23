@@ -75,7 +75,7 @@ def observed_params(
     return out
 
 
-def _is_rails_routes_file(path: str) -> bool:
+def is_rails_routes_file(path: str) -> bool:
     """The main `config/routes.rb` plus split route files loaded via `draw(:x)`
     (`config/routes/api.rb`, `config/routes/admin.rb`, ...). Missing the split
     files hid most of the route surface on large Rails apps (mastodon/forem)."""
@@ -126,7 +126,8 @@ _TO_TARGET = re.compile(r"\bto\s*(?:=>|:)\s*['\"]([\w/]+)#(\w+)['\"]")
 _ARROW_TARGET = re.compile(r"['\"]\s*=>\s*['\"]([\w/]+)#(\w+)['\"]")
 _ONLY_EXCEPT = re.compile(r"\b(only|except)\s*(?:=>|:)\s*(\[[^\]]*\]|:\w+)")
 _VIA_OPT = re.compile(r"\bvia\s*(?:=>|:)\s*(\[[^\]]*\]|:\w+)")
-_MODULE_OPT = re.compile(r"\bmodule\s*(?:=>|:)\s*['\"]?(\w+)['\"]?")
+# `module: :projects` (symbol), `module: 'admin/reports'` (string), `module => ...`
+_MODULE_OPT = re.compile(r"\bmodule\s*(?:=>|:)\s*(?::|['\"])?([\w/]+)['\"]?")
 _PATH_OPT = re.compile(r"\bpath\s*(?:=>|:)\s*['\"]([^'\"]*)['\"]")
 _SYMBOLS = re.compile(r":(\w+)")
 
@@ -170,7 +171,7 @@ def _join_path(*segments: str | None) -> str:
     return "/" + "/".join(parts)
 
 
-def _first_symbol_or_string(arg_preview: str | None) -> str | None:
+def first_symbol_or_string(arg_preview: str | None) -> str | None:
     if not arg_preview:
         return None
     m = _FIRST_SYMBOL.match(arg_preview.lstrip("("))
@@ -210,37 +211,84 @@ def _infer_target(route: str) -> tuple[str, str] | None:
     return "/".join(segments[:-1]), segments[-1]
 
 
-def _rails_routes(x: FileExtraction) -> list[EntrypointHint]:
-    """Span-aware walk of the routes DSL: `namespace`/`scope`/nested `resources`
-    blocks stack path and controller-module prefixes (a call node's span covers
-    its `do ... end` block), `resources`/`resource` expand to their conventional
-    RESTful set, and verb routes pick up `to:`/hashrocket/inferred targets. The
-    controller#action lands in metadata; the cross-file link pass binds it to
-    the controller symbol after all files' symbols are registered."""
-    if not _is_rails_routes_file(x.path):
-        return []
+# A scope frame inherited from a parent routes file outlives every line of this
+# one, so it must never be popped by the span walk.
+_UNBOUNDED = 1 << 30
+
+# (path segment, controller-module segment) contributed by an enclosing block
+ScopeFrame = tuple[str | None, str | None]
+
+
+def _block_frame(ref) -> ScopeFrame | None:
+    """The scope frame a `namespace`/`scope`/nested-`resources` block opens, or
+    None when the call opens no block scope."""
+    if not _has_block(ref):
+        return None
+    name, preview = ref.callee_name, ref.arg_preview
+    if name == "namespace":
+        seg = first_symbol_or_string(preview)
+        return (seg, seg)
+    if name == "scope":
+        path_seg = first_string_arg("(" + (preview or "").lstrip("(")) or (
+            m.group(1) if (m := _PATH_OPT.search(preview or "")) else None
+        )
+        module_m = _MODULE_OPT.search(preview or "")
+        return (path_seg, module_m.group(1) if module_m else None)
+    if name in ("resources", "resource"):
+        res = first_symbol_or_string(preview)
+        if not res:
+            return None
+        path_m = _PATH_OPT.search(preview or "")
+        res_path = path_m.group(1) if path_m else res
+        # nested routes hang off the parent's member id
+        return (res_path if name == "resource" else f"{res_path}/:{_singularize(res)}_id", None)
+    return None
+
+
+def walk_routes(x: FileExtraction, seed: list[ScopeFrame] | None = None):
+    """Yield `(call, path prefixes, controller-module prefixes)` for every bare
+    call in a routes file, span-aware: a call node's span covers its `do ... end`
+    block, so `namespace`/`scope`/nested `resources` frames stay active for the
+    calls inside them. A call is yielded with the prefixes enclosing it, before
+    its own frame (if any) is pushed.
+
+    ``seed`` are frames inherited from a parent routes file that `draw`s this one
+    (see detect.rails_draw); they enclose the whole file."""
     calls = sorted(
         (r for r in x.references if r.kind == "call" and r.receiver_text is None),
         key=lambda r: (r.span.start_line, r.span.start_col),
     )
     # active enclosing blocks: (end_line, path segment | None, module segment | None)
-    scopes: list[tuple[int, str | None, str | None]] = []
-    hints: list[EntrypointHint] = []
-
-    def _prefixes() -> tuple[list[str], list[str]]:
-        return (
+    scopes: list[tuple[int, str | None, str | None]] = [(_UNBOUNDED, p, m) for p, m in (seed or ())]
+    for ref in calls:
+        while scopes and ref.span.start_line > scopes[-1][0]:
+            scopes.pop()
+        yield (
+            ref,
             [p for _e, p, _m in scopes if p],
             [m for _e, _p, m in scopes if m],
         )
+        frame = _block_frame(ref)
+        if frame is not None:
+            scopes.append((ref.span.end_line, *frame))
 
-    def _emit(route, methods, controller, action, ref, extra_meta=None):
+
+def _rails_routes(x: FileExtraction) -> list[EntrypointHint]:
+    """Span-aware walk of the routes DSL: `namespace`/`scope`/nested `resources`
+    blocks stack path and controller-module prefixes, `resources`/`resource`
+    expand to their conventional RESTful set, and verb routes pick up
+    `to:`/hashrocket/inferred targets. The controller#action lands in metadata;
+    the cross-file link pass binds it to the controller symbol after all files'
+    symbols are registered."""
+    if not is_rails_routes_file(x.path):
+        return []
+    hints: list[EntrypointHint] = []
+
+    def _emit(route, methods, controller, action, ref, module_segs):
         metadata = {"registration": ref.arg_preview or ref.callee_name}
         if controller and action:
-            _path_segs, module_segs = _prefixes()
             metadata["controller"] = "/".join([*module_segs, controller])
             metadata["action"] = action
-        if extra_meta:
-            metadata.update(extra_meta)
         hints.append(
             EntrypointHint(
                 rule_id="ruby.rails.routes",
@@ -255,27 +303,15 @@ def _rails_routes(x: FileExtraction) -> list[EntrypointHint]:
             )
         )
 
-    for ref in calls:
-        while scopes and ref.span.start_line > scopes[-1][0]:
-            scopes.pop()
+    for ref, path_segs, module_segs in walk_routes(x, x.rails_draw_scopes):
         name = ref.callee_name
         preview = ref.arg_preview
-        if name == "namespace" and _has_block(ref):
-            seg = _first_symbol_or_string(preview)
-            scopes.append((ref.span.end_line, seg, seg))
-        elif name == "scope" and _has_block(ref):
-            path_seg = first_string_arg("(" + (preview or "").lstrip("(")) or (
-                m.group(1) if (m := _PATH_OPT.search(preview or "")) else None
-            )
-            module_m = _MODULE_OPT.search(preview or "")
-            scopes.append((ref.span.end_line, path_seg, module_m.group(1) if module_m else None))
-        elif name in ("resources", "resource"):
-            res = _first_symbol_or_string(preview)
+        if name in ("resources", "resource"):
+            res = first_symbol_or_string(preview)
             if not res:
                 continue
             path_m = _PATH_OPT.search(preview or "")
             res_path = path_m.group(1) if path_m else res
-            path_segs, _module_segs = _prefixes()
             for action, methods, suffix in _restful_actions(name, preview):
                 _emit(
                     _join_path(*path_segs, res_path + suffix),
@@ -283,10 +319,8 @@ def _rails_routes(x: FileExtraction) -> list[EntrypointHint]:
                     res,
                     action,
                     ref,
+                    module_segs,
                 )
-            if _has_block(ref):  # nested resources scope under the parent's id
-                nested = res_path if name == "resource" else f"{res_path}/:{_singularize(res)}_id"
-                scopes.append((ref.span.end_line, nested, None))
         elif name == "root":
             target = _route_target(preview)
             if target is None and preview:
@@ -295,8 +329,7 @@ def _rails_routes(x: FileExtraction) -> list[EntrypointHint]:
                     ctrl, _sep, act = arg.partition("#")
                     target = (ctrl, act)
             controller, action = target if target else (None, None)
-            path_segs, _module_segs = _prefixes()
-            _emit(_join_path(*path_segs), ["GET"], controller, action, ref)
+            _emit(_join_path(*path_segs), ["GET"], controller, action, ref, module_segs)
         elif name in ("get", "post", "put", "patch", "delete", "match"):
             route = first_string_arg("(" + (preview or "").lstrip("(")) if preview else None
             if route is None:
@@ -309,8 +342,7 @@ def _rails_routes(x: FileExtraction) -> list[EntrypointHint]:
                 methods = [name.upper()]
             target = _route_target(preview) or _infer_target(route)
             controller, action = target if target else (None, None)
-            path_segs, _module_segs = _prefixes()
-            _emit(_join_path(*path_segs, route), methods, controller, action, ref)
+            _emit(_join_path(*path_segs, route), methods, controller, action, ref, module_segs)
     return hints
 
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from entrygraph import CodeGraph
 from entrygraph.detect.entrypoints import rules_for
+from entrygraph.detect.rails_draw import resolve_draw_scopes
 from entrygraph.detect.rails_link import link_rails
 from entrygraph.extract.ir import FileExtraction, RawReference, Span
 from entrygraph.kinds import SymbolKind
@@ -155,8 +156,104 @@ def test_scope_module_and_path():
     assert status.metadata["controller"] == "api/health"
 
 
+def test_scope_module_symbol_form():
+    hints = _match(
+        [
+            _call(
+                "scope",
+                "path: ':project_id', constraints: { id: /\\d+/ }, module: :projects",
+                2,
+                end=5,
+            ),
+            _call("resources", ":milestones, only: [:index]", 3),
+        ]
+    )
+    (index,) = hints
+    assert index.route == "/:project_id/milestones"
+    assert index.metadata["controller"] == "projects/milestones"
+
+
 def test_non_routes_files_ignored():
     assert _match([_call("get", "'/x'", 1)], path="app/models/post.rb") == []
+
+
+# ---------------- cross-file draw() scope inheritance ----------------
+
+
+def _draw_scopes(files: dict[str, list]):
+    """files: routes-file path -> its calls; returns resolve_draw_scopes' output."""
+    return resolve_draw_scopes(
+        [(path, _routes_ext(calls, path), False) for path, calls in files.items()]
+    )
+
+
+def test_draw_child_inherits_enclosing_scope():
+    scopes = _draw_scopes(
+        {
+            "config/routes.rb": [
+                _call("scope", "path: 'admin', module: :admin", 2, end=4),
+                _call("draw", ":reports", 3),
+            ],
+            "config/routes/reports.rb": [_call("resources", ":reports", 1)],
+        }
+    )
+    assert scopes == {"config/routes/reports.rb": [("admin", None), (None, "admin")]}
+
+
+def test_draw_scopes_compose_through_a_chain():
+    scopes = _draw_scopes(
+        {
+            "config/routes.rb": [
+                _call("scope", "path: '*namespace_id'", 2, end=6),
+                _call("scope", "path: ':project_id', module: :projects", 3, end=5),
+                _call("draw", ":project", 4),
+            ],
+            "config/routes/project.rb": [
+                _call("scope", "'-'", 2, end=4),
+                _call("draw", ":repository", 3),
+            ],
+            "config/routes/repository.rb": [_call("resources", ":branches, only: [:index]", 1)],
+        }
+    )
+    assert scopes["config/routes/repository.rb"] == [
+        ("*namespace_id", None),
+        (":project_id", None),
+        (None, "projects"),
+        ("-", None),
+    ]
+    # and the child file's routes carry the whole inherited prefix
+    child = _routes_ext(
+        [_call("resources", ":branches, only: [:index]", 1)], "config/routes/repository.rb"
+    )
+    child.rails_draw_scopes = scopes[child.path]
+    (index,) = _rails_rule().match(child)
+    assert index.route == "/*namespace_id/:project_id/-/branches"
+    assert index.metadata["controller"] == "projects/branches"
+
+
+def test_draw_from_conflicting_scopes_stays_unseeded():
+    scopes = _draw_scopes(
+        {
+            "config/routes.rb": [
+                _call("scope", "path: 'a', module: :a", 2, end=4),
+                _call("draw", ":shared", 3),
+                _call("scope", "path: 'b', module: :b", 5, end=7),
+                _call("draw", ":shared", 6),
+            ],
+            "config/routes/shared.rb": [_call("get", "'/x', to: 'x#y'", 1)],
+        }
+    )
+    assert scopes == {}
+
+
+def test_draw_cycle_and_unscoped_draw_seed_nothing():
+    scopes = _draw_scopes(
+        {
+            "config/routes.rb": [_call("draw", ":api", 2)],  # no enclosing scope
+            "config/routes/api.rb": [_call("draw", ":api", 1)],  # draws itself
+        }
+    )
+    assert scopes == {}
 
 
 # ---------------- cross-file binding pass ----------------
@@ -233,6 +330,10 @@ def test_rails_app_end_to_end(tmp_path):
         assert by[("GET", "/")].symbol.qname.endswith("PagesController.home")
         # split routes file (config/routes/api.rb) is part of the route surface
         assert by[("GET", "/api/ping")].symbol.qname.endswith("ApiController.ping")
+
+        # a file drawn inside `scope(path: 'v2', ..., module: :v2)` inherits both
+        # the path prefix and the controller module across the file boundary
+        assert by[("GET", "/v2/widgets")].symbol.qname.endswith("V2::WidgetsController.index")
 
         comments = by[("GET", "/posts/:post_id/comments")]
         assert comments.symbol.qname.endswith("CommentsController.index")

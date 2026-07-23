@@ -41,6 +41,7 @@ from entrygraph.detect.frameworks import detect_frameworks
 from entrygraph.detect.graphql_link import link_graphql
 from entrygraph.detect.grpc_expand import expand_grpc
 from entrygraph.detect.manifests import parse_manifests
+from entrygraph.detect.rails_draw import resolve_draw_scopes
 from entrygraph.detect.rails_link import link_rails
 from entrygraph.detect.taint import SinkRegistry, registry_for_repo
 from entrygraph.errors import IndexCancelledError
@@ -185,9 +186,11 @@ def index_repository(
         fw_confidence = {fw.name: fw.confidence for fw in frameworks}
         route_wrappers = _collect_route_wrappers(extractions)
         mount_prefixes = resolve_mount_prefixes(extractions)
+        draw_scopes = resolve_draw_scopes(extractions)
         for _path, x, _pkg in extractions:
             x.route_wrappers = route_wrappers
             x.route_prefixes = mount_prefixes.get(x.module_path, {})
+            x.rails_draw_scopes = draw_scopes.get(x.path, [])
             for rule in entrypoint_rules.rules_for(x.language, detected_names):
                 x.entrypoint_hints.extend(rule.match(x))
             # express/fastify/koa/hono (and gin/chi/fiber) share a registration
