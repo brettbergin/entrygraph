@@ -29,7 +29,7 @@ SCHEMA_VERSION = 11  # entrypoint_parameters table (migrated in place from 8/9/1
 # Bump when parsing/detection logic changes so that already-indexed repos would
 # produce different rows. Do NOT bump SCHEMA_VERSION for this. Stale repos heal
 # per-repo (scanner heal gate) instead of a global rebuild.
-ANALYZER_VERSION = 3  # Rails RESTful expansion + route->controller binding
+ANALYZER_VERSION = 4  # param enrichment: Grape params DSL, strong params, usage reads
 
 # analyzer_version stamped on rows that predate the current analyzer (e.g. a
 # database migrated up from schema 8, which had no GraphQL detection). Anything
