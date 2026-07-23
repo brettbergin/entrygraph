@@ -11,6 +11,7 @@ import argparse
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from rich.console import Group
 from rich.padding import Padding
@@ -351,17 +352,29 @@ def cmd_entrypoints(args) -> int:
     tbl.add_column("FRAMEWORK", style="magenta", no_wrap=True)
     tbl.add_column("METHOD", no_wrap=True)
     tbl.add_column("ROUTE", style="bold", no_wrap=True)
+    if args.params:
+        tbl.add_column("PARAMS", style="cyan", overflow="fold")
     tbl.add_column("HANDLER", style="dim", overflow="fold")
     for r in rows:
-        tbl.add_row(
+        cells: list[Any] = [
             entrypoint_kind_text(r.kind),
             render.cell(r.framework),
             method_text(r.http_method),
             render.cell(r.route),
-            r.symbol.qname,
-        )
+        ]
+        if args.params:
+            cells.append(_params_text(r.parameters))
+        cells.append(r.symbol.qname)
+        tbl.add_row(*cells)
     con.print(tbl)
     return 0
+
+
+def _params_text(parameters) -> str:
+    """Compact `name:location` list, e.g. `id:path, title:body`."""
+    if not parameters:
+        return "[dim]—[/]"
+    return ", ".join(f"{p.name}:{p.location}" for p in parameters)
 
 
 def cmd_callers(args) -> int:
@@ -544,6 +557,14 @@ def _path_card(index: int, path, read_line=None, entrypoint=None) -> Group:
         ep_ann = Text(
             f"{entrypoint.framework or ''} {entrypoint.kind}".strip(), style="dim magenta"
         )
+        # name the declared parameter this flow enters through, matched on the
+        # source key (so `POST /reports` reads `· param id (path)`).
+        matched = next(
+            (p for p in entrypoint.parameters if key and p.name == key),
+            None,
+        )
+        if matched is not None:
+            ep_ann.append(f"  · param {matched.name} ({matched.location})", style="cyan")
         rows.append(("entrypoint", _entrypoint_label(entrypoint), None, ep_ann, None))
     src_snip = None if syms[0].kind == "module" else read_line(src_file, syms[0].start_line)
     rows.append(("source", _display_name(syms[0]), src_loc, src_ann, src_snip))
@@ -887,6 +908,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_symbols)
 
     p = sub.add_parser("entrypoints", help="list entrypoints")
+    p.add_argument(
+        "--params",
+        action="store_true",
+        help="show each entrypoint's parameters (name:location)",
+    )
     add_db(p)
     p.add_argument("--kind")
     p.add_argument("--framework")
