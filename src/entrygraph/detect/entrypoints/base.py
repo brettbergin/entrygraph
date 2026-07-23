@@ -16,7 +16,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from entrygraph.extract.ir import EntrypointHint, FileExtraction
+from entrygraph.extract.ir import EntrypointHint, FileExtraction, ParameterHint
 from entrygraph.kinds import EntrypointKind
 
 Matcher = Callable[[FileExtraction], list[EntrypointHint]]
@@ -83,6 +83,43 @@ def compose_route(prefix: str | None, path: str | None) -> str:
     """
     parts = [seg.strip("/") for seg in (prefix, path) if seg and seg.strip("/")]
     return "/" + "/".join(parts)
+
+
+# `:id` / `*splat` (Rails/Sinatra/Grape/Express), `{id}` (OpenAPI/JAX-RS),
+# `<id>` / `<int:id>` (Flask/werkzeug). One alternation so a single scan finds
+# every style; group order mirrors that list.
+_ROUTE_PARAM = re.compile(r"[:*]([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\}|<(?:[^:<>]+:)?([A-Za-z_]\w*)>")
+
+
+def route_path_params(route: str | None, *, line: int | None = None) -> list[ParameterHint]:
+    """Parameters declared as segments of a route template.
+
+    A segment inside Rails-style optional parens — ``(.:format)``, ``(/:page)``
+    — and ``*`` splats/globs are required=False; everything else must be present
+    for the route to match. Duplicate names keep the first occurrence.
+    """
+    if not route:
+        return []
+    params: list[ParameterHint] = []
+    seen: set[str] = set()
+    for m in _ROUTE_PARAM.finditer(route):
+        name = m.group(1) or m.group(2) or m.group(3)
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        prefix = route[: m.start()]
+        optional = prefix.count("(") > prefix.count(")")
+        splat = route[m.start()] == "*"
+        params.append(
+            ParameterHint(
+                name=name,
+                location="path",
+                required=not (optional or splat),
+                provenance="route",
+                line=line,
+            )
+        )
+    return params
 
 
 def methods_kwarg(decorator_text: str) -> list[str]:
