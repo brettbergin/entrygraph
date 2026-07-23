@@ -170,3 +170,8 @@ class FileExtraction:
     # Express router var -> the path prefix it is mounted under, resolved across
     # files by the scanner's mount graph and consumed by the express route rule (#36).
     route_prefixes: dict[str, str] = field(default_factory=dict)
+    # Rails split route files: the (path segment, controller-module segment) scope
+    # frames the parent routes file wraps this file's `draw(:x)` call in. Resolved
+    # across files by the scanner and consumed by the rails routes rule, which
+    # seeds its scope stack with them.
+    rails_draw_scopes: list[tuple[str | None, str | None]] = field(default_factory=list)

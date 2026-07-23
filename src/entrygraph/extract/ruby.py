@@ -40,6 +40,13 @@ _SRC_ROOTS = ("app", "lib", "src")
 _SCOPE_TYPES = frozenset({"class", "module", "method", "singleton_method"})
 _METHOD_SCOPES = frozenset({"method", "singleton_method"})
 _REQUIRE_METHODS = frozenset({"require", "require_relative", "load"})
+# Ruby DSLs carry an entrypoint's whole meaning in a bare call's arguments
+# (`scope path: ':project_id', constraints: {...}, module: :projects`), and those
+# option lists run past the 80-char default — on GitLab's route files the cut
+# landed before `module:`, losing the controller namespace for ~190 routes in one
+# file. Only receiver-less calls (class-body/DSL declarations, not the method-body
+# calls that make up the edge bulk) get the wider preview.
+_DSL_PREVIEW_LIMIT = 240
 
 
 class RubyExtractor:
@@ -274,6 +281,7 @@ class RubyExtractor:
                 # Bare call at module/top level (e.g. `get '/x'`, `require`).
                 receiver, callee_text = None, callee_name
             args = node.child_by_field_name("arguments")
+            limit = 80 if receiver is not None else _DSL_PREVIEW_LIMIT
             out.references.append(
                 RawReference(
                     kind="call",
@@ -283,7 +291,7 @@ class RubyExtractor:
                     span=span_of(node),
                     caller_qualified_name=self._caller(node, ctx),
                     arg_count=len(args.named_children) if args is not None else 0,
-                    arg_preview=truncate(node_text(args)) if args is not None else None,
+                    arg_preview=truncate(node_text(args), limit) if args is not None else None,
                 )
             )
 
