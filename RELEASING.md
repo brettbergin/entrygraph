@@ -54,6 +54,32 @@ protection rule** — if so, allow `v*` tags to be created by Actions.
 
 Just merge to `main`. That's it — a new patch version ships automatically.
 
+## Database versioning: which constant do I bump?
+
+The graph DB carries two independent versions (`src/entrygraph/db/meta.py`), and
+picking the wrong one is the difference between a seamless customer upgrade and
+a fleet-wide forced re-index. The rule:
+
+- **Changed a table/column/index in `db/models.py`?** Bump `SCHEMA_VERSION`
+  **and ship an ordered migration step in `db/migrations.py`** (plus a test in
+  `tests/test_migrations.py` that migrates a previous-version fixture DB
+  forward). Customer DBs then upgrade **in place** at next open — no data loss,
+  no re-index. Never ship a `SCHEMA_VERSION` bump without its migration: a gap
+  in the migration chain falls back to a full rebuild, which is exactly the
+  outage this system exists to prevent.
+- **Changed extraction/detection logic** (new framework rule, new entrypoint
+  kind's detector, extractor behavior — anything that would make already-stored
+  rows differ from a fresh index)? Bump `ANALYZER_VERSION` **only**. Do not
+  touch `SCHEMA_VERSION`. Already-indexed repos keep serving their existing
+  (still-valid) results, show as _refreshing_, and re-scan per-repo in the
+  background (`entrygraph reindex --stale`, or the server's automatic heal
+  sweep). No outage, no manual customer action.
+- **Neither?** (Bug fix with identical output, CLI/UI change, docs): bump
+  nothing.
+
+If a change is both structural *and* semantic, do both: `SCHEMA_VERSION` + its
+migration for the shape, `ANALYZER_VERSION` for the contents.
+
 ### Cutting a minor or major release
 
 The workflow only auto-bumps the **patch** segment. To move the minor or major,

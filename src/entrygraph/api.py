@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from entrygraph.db import models
 from entrygraph.db import queries as q
 from entrygraph.db.engine import make_engine, make_session_factory
-from entrygraph.db.meta import check_schema
+from entrygraph.db.migrations import is_stale, prepare_db
 from entrygraph.errors import (
     DatabaseNotFoundError,
     RepositoryNotIndexedError,
@@ -287,7 +287,7 @@ class CodeGraph:
         if not db_path.exists():
             raise DatabaseNotFoundError(f"no index database at {db_path}")
         engine = make_engine(db_path)
-        check_schema(engine)
+        prepare_db(engine)  # migrate an older schema in place; raises only if newer
         return cls(engine, _lookup_repo_id(engine, Path(root).resolve() if root else None))
 
     @staticmethod
@@ -299,7 +299,7 @@ class CodeGraph:
         if not db_path.exists():
             raise DatabaseNotFoundError(f"no index database at {db_path}")
         engine = make_engine(db_path)
-        check_schema(engine)
+        prepare_db(engine)  # migrate an older schema in place; raises only if newer
         try:
             with Session(engine) as session:
                 rows = session.execute(
@@ -313,6 +313,7 @@ class CodeGraph:
                         files=r.file_count,
                         symbols=r.symbol_count,
                         indexed_at=r.indexed_at.isoformat() if r.indexed_at else None,
+                        stale=is_stale(r.analyzer_version),
                     )
                     for r in rows
                 ]
@@ -782,6 +783,7 @@ class CodeGraph:
                         models.Edge.repo_id == rid, models.Edge.source_id.is_not(None)
                     )
                 ),
+                stale=is_stale(repo.analyzer_version),
             )
 
     def session(self) -> Session:

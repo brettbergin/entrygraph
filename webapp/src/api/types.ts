@@ -27,6 +27,7 @@ export interface Repo {
   symbols: number;
   indexed_at: string | null;
   source: RepoSourceInfo | null;
+  stale: boolean;
 }
 
 export interface Stats {

@@ -12,42 +12,25 @@ def test_pragmas_applied_per_connection(tmp_engine):
 
 
 def test_schema_version_stamped(tmp_engine):
-    from entrygraph.db.meta import SCHEMA_VERSION, check_schema, stored_schema_version
+    from entrygraph.db.meta import SCHEMA_VERSION, stored_schema_version
+    from entrygraph.db.migrations import prepare_db
 
     assert stored_schema_version(tmp_engine) == SCHEMA_VERSION
-    check_schema(tmp_engine)  # must not raise
+    assert prepare_db(tmp_engine) is False  # already current: no migration, no rebuild
 
 
-def test_schema_mismatch_raises(tmp_engine):
+def test_schema_newer_than_binary_raises(tmp_engine):
     import pytest
     from sqlalchemy.orm import Session
 
-    from entrygraph.db.meta import check_schema
+    from entrygraph.db.migrations import prepare_db
     from entrygraph.db.models import Meta
     from entrygraph.errors import SchemaMismatchError
 
+    # a DB written by a future entrygraph cannot be read safely and must not be
+    # silently rebuilt.
     with Session(tmp_engine) as s:
         s.get(Meta, "schema_version").value = "999"
         s.commit()
     with pytest.raises(SchemaMismatchError):
-        check_schema(tmp_engine)
-
-
-def test_ensure_schema_rebuilds_on_mismatch(tmp_engine):
-    from sqlalchemy.orm import Session
-
-    from entrygraph.db.meta import SCHEMA_VERSION, ensure_schema, stored_schema_version
-    from entrygraph.db.models import Meta, Repository
-
-    with Session(tmp_engine) as s:
-        s.add(Repository(id=1, root_path="/tmp/x"))
-        s.get(Meta, "schema_version").value = "999"
-        s.commit()
-
-    rebuilt = ensure_schema(tmp_engine)
-    assert rebuilt is True
-    assert stored_schema_version(tmp_engine) == SCHEMA_VERSION
-    with Session(tmp_engine) as s:
-        assert s.get(Repository, 1) is None  # old data dropped
-
-    assert ensure_schema(tmp_engine) is False  # already current: no-op
+        prepare_db(tmp_engine)

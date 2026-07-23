@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from entrygraph.db import models
+from entrygraph.db.migrations import is_stale
 from entrygraph.fs.remote import is_git_url
 from entrygraph.server.auth.deps import CurrentPrincipal, current_principal, require_role
 from entrygraph.server.jobs.handlers import delete_repo_data
@@ -97,6 +98,9 @@ def _repo_json(r: models.Repository, source: RepoSource | None) -> dict[str, Any
         "files": r.file_count,
         "symbols": r.symbol_count,
         "indexed_at": r.indexed_at.isoformat() if r.indexed_at else None,
+        # analyzer_version behind current: rows are valid and still served, but a
+        # background/manual re-scan will refresh them.
+        "stale": is_stale(r.analyzer_version),
         "source": {
             "url": source.url,
             "ref": source.ref,

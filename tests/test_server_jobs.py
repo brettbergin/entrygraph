@@ -214,3 +214,47 @@ def test_orphan_recovery_marks_stale_running_jobs_failed(tmp_path):
 def test_unknown_job_404(client):
     assert client.get("/api/v1/jobs/nope").status_code == 404
     assert client.post("/api/v1/jobs/nope/cancel").status_code == 404
+
+
+# ---------------- stale-repo auto-heal sweep ----------------
+
+
+def test_heal_sweep_enqueues_stale_repos_and_dedups(tmp_path):
+    from sqlalchemy import select, update
+
+    from entrygraph.db.engine import make_engine
+    from entrygraph.db.models import Repository
+    from entrygraph.pipeline.scanner import index_repository
+    from entrygraph.server.appdb import (
+        ensure_app_schema,
+        make_app_engine,
+        make_app_session_factory,
+    )
+    from entrygraph.server.jobs.heal import sweep_stale_repos
+
+    graph_db = tmp_path / "graph.db"
+    graph_engine = make_engine(graph_db)
+    index_repository(FLASK_APP, graph_engine)
+    graph_engine.dispose()
+
+    app_url = f"sqlite:///{tmp_path / 'app.db'}"
+    app_engine = make_app_engine(app_url)
+    ensure_app_schema(app_engine)
+    app_sf = make_app_session_factory(app_engine)
+    cfg = ServerConfig(db_path=str(graph_db), app_db_url=app_url, auth_mode="none")
+
+    # current repo: nothing to heal
+    assert sweep_stale_repos(cfg, app_sf) == 0
+
+    # simulate an analyzer bump landing on the existing repo
+    eng = make_engine(graph_db)
+    with eng.begin() as conn:
+        conn.execute(update(Repository).values(analyzer_version=0))
+    eng.dispose()
+
+    assert sweep_stale_repos(cfg, app_sf) == 1  # enqueues one index job
+    assert sweep_stale_repos(cfg, app_sf) == 0  # dedup: job already queued
+
+    with app_sf() as s:
+        jobs = list(s.execute(select(Job)).scalars())
+    assert len(jobs) == 1 and jobs[0].type == "index" and jobs[0].status == "queued"

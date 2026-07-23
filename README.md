@@ -46,10 +46,23 @@ what's indexed). Add `--json` to any command for machine-readable output.
 | `references`          | Every call site targeting a symbol, with file:line.                                                 |
 | `paths`               | Source → sink reachability (see below).                                                             |
 | `stats`               | Counts for the current repo.                                                                        |
-| `repos`               | List the repositories in the database.                                                              |
+| `repos`               | List the repositories in the database, with each one's refresh status.                              |
+| `reindex --stale`     | Refresh repos whose data predates the current analyzer (see Upgrading).                             |
 | `serve`               | Web UI over the index.                                                                              |
 
 Run `entrygraph <command> --help` for the flags on each.
+
+## Upgrading
+
+The index is a cache, but upgrading entrygraph does **not** make you rebuild it.
+A structural schema change is migrated in place, preserving your data. When a
+release improves the analyzer itself — teaching it a new framework, say — every
+repo you've already indexed keeps serving its existing results and is simply
+marked _refreshing_ until re-scanned; nothing goes offline and no repo is wiped.
+Refresh them on your own schedule with `entrygraph reindex --stale`, or let
+`entrygraph serve` do it automatically in the background (`EG_HEAL_INTERVAL_S`:
+`0` sweeps once at startup, the default; `>0` also re-sweeps on that interval;
+`-1` disables).
 
 ## Reachability (`paths`)
 

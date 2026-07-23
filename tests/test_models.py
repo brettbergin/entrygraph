@@ -112,6 +112,18 @@ def test_round_trip_and_enum_values_stored_as_strings(session_factory):
         assert raw_ep == "http_route"
 
 
+def test_repository_analyzer_version_round_trips(session_factory):
+    from entrygraph.db.models import Repository
+
+    with session_factory() as s:
+        s.add(Repository(id=1, root_path="/repo/a", analyzer_version=3))
+        s.add(Repository(id=2, root_path="/repo/b"))  # default: NULL (unversioned)
+        s.commit()
+    with session_factory() as s:
+        assert s.get(Repository, 1).analyzer_version == 3
+        assert s.get(Repository, 2).analyzer_version is None
+
+
 def test_delete_file_cascades_symbols_and_nullifies_inbound_edges(session_factory):
     with session_factory() as s:
         _seed(s)

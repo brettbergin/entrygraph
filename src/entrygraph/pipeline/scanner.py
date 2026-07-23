@@ -23,7 +23,8 @@ from pathlib import Path
 from sqlalchemy import Engine, delete, func, select, text, update
 from sqlalchemy.orm import Session, aliased
 
-from entrygraph.db.meta import ensure_schema
+from entrygraph.db.meta import ANALYZER_VERSION
+from entrygraph.db.migrations import is_stale, prepare_db
 from entrygraph.db.models import Detection, Edge, Entrypoint, File, Repository, Symbol
 from entrygraph.detect import entrypoints as entrypoint_rules
 from entrygraph.detect.entrypoints.base import first_string_arg
@@ -82,7 +83,7 @@ def index_repository(
 ) -> IndexStats:
     started = time.monotonic()
     root = Path(root).resolve()
-    fresh = ensure_schema(engine)
+    fresh = prepare_db(engine)  # migrate in place; True only if created/rebuilt from scratch
     if fresh:
         incremental = False
 
@@ -93,6 +94,12 @@ def index_repository(
 
     with Session(engine) as session:
         repo = _load_or_create_repo(session, root, incremental)
+        # An analyzer-logic upgrade leaves file bytes unchanged, so the content-hash
+        # diff would skip everything and miss the new detection. When this repo's
+        # data predates the current analyzer, force a full re-scan of *this repo*
+        # (others are untouched) so every file is re-extracted (#analyzer-versioning).
+        if is_stale(repo.analyzer_version):
+            incremental = False
         known = _known_file_states(session, repo.id) if incremental else {}
         diff = diff_files(walked, known, paranoid=paranoid)
 
@@ -232,6 +239,7 @@ def index_repository(
         _report(on_progress, "writing", 0, 1)
         repo.file_count = len(walked)
         repo.symbol_count = _count_symbols(session, repo.id)
+        repo.analyzer_version = ANALYZER_VERSION  # this repo is now current; clears stale
         session.commit()
 
         return IndexStats(

@@ -1,8 +1,11 @@
 """SQLAlchemy 2.0 typed ORM models — the single definition of the on-disk schema.
 
-Bump ``meta.SCHEMA_VERSION`` whenever anything here changes; the database is a
-rebuildable cache, so a version mismatch triggers a full re-index rather than a
-migration.
+A *structural* change here (new table/column/index) must bump
+``meta.SCHEMA_VERSION`` **and** ship an ordered step in ``db.migrations`` so
+existing databases upgrade in place — never a full re-index. A change to
+*analyzer/extraction logic* (which leaves the table shapes identical but makes
+derived rows stale) must not touch this file's version at all; it bumps
+``meta.ANALYZER_VERSION`` and heals per-repo in the background.
 
 There are deliberately no relationship() constructs: all writes go through the
 bulk-insert writer with app-assigned PKs, which inserts tables in dependency
@@ -59,6 +62,11 @@ class Repository(Base):
     index_generation: Mapped[int] = mapped_column(Integer, default=0)
     file_count: Mapped[int] = mapped_column(Integer, default=0)
     symbol_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Analyzer/extraction-logic version this repo's rows were produced by. When it
+    # falls behind meta.ANALYZER_VERSION the repo is stale — its existing rows stay
+    # valid and keep serving, but a re-scan (per-repo, never a global rebuild) will
+    # refresh it. NULL means "produced before this column existed" -> treated stale.
+    analyzer_version: Mapped[int | None] = mapped_column(Integer, default=None)
 
 
 class File(Base):

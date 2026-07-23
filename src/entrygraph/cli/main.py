@@ -214,10 +214,10 @@ def cmd_index(args) -> int:
             # repo working (its row doesn't exist yet, so a root lookup would
             # fail).
             from entrygraph.db.engine import make_engine
-            from entrygraph.db.meta import check_schema
 
+            # index_repository migrates an older schema in place via prepare_db;
+            # no separate schema guard needed here.
             engine = make_engine(db)
-            check_schema(engine)
             try:
                 return index_repository(
                     root,
@@ -763,10 +763,57 @@ def cmd_repos(args) -> int:
     tbl.add_column("ROOT", style="cyan", overflow="fold")
     tbl.add_column("FILES", justify="right")
     tbl.add_column("SYMBOLS", justify="right")
+    tbl.add_column("STATUS")
     for r in repos:
-        tbl.add_row(r.name, r.root, str(r.files), str(r.symbols))
+        status = "[yellow]refreshing[/]" if r.stale else "[green]current[/]"
+        tbl.add_row(r.name, r.root, str(r.files), str(r.symbols), status)
     con.print(tbl)
+    if any(r.stale for r in repos):
+        con.print(
+            "[dim]refreshing: analyzer upgraded; existing data is still served. "
+            "Run [/][cyan]entrygraph reindex --stale[/][dim] to refresh now.[/]"
+        )
     return 0
+
+
+def cmd_reindex(args) -> int:
+    """Re-scan repositories whose data predates the current analyzer, refreshing
+    them one at a time. Each repo's existing rows keep serving until its own
+    re-scan commits, so other repos are never disrupted."""
+    from entrygraph.db.engine import make_engine
+    from entrygraph.pipeline.scanner import index_repository
+
+    db = _discover_db(getattr(args, "db", None))
+    if not db.exists():
+        console().print("[dim](no indexed repositories)[/]")
+        return 0
+    repos = CodeGraph.list_repos(db)
+    targets = repos if getattr(args, "all", False) else [r for r in repos if r.stale]
+    if not targets:
+        console().print("[green]all repositories are current[/]")
+        return 0
+    con = console()
+    engine = make_engine(db)
+    done, failed = 0, []
+    try:
+        for r in targets:
+            root = Path(r.root)
+            if not root.exists():
+                con.print(f"[yellow]skip[/] {r.name}: root path no longer exists ({r.root})")
+                failed.append(r.name)
+                continue
+            con.print(f"[dim]refreshing[/] {r.name} …")
+            try:
+                # the scanner's heal gate forces a full re-scan of a stale repo
+                index_repository(root, engine, incremental=True, include_tests=args.include_tests)
+                done += 1
+            except Exception as exc:  # noqa: BLE001 - report and continue the sweep
+                con.print(f"[red]failed[/] {r.name}: {exc}")
+                failed.append(r.name)
+    finally:
+        engine.dispose()
+    con.print(f"[green]refreshed {done}[/]" + (f", [red]{len(failed)} failed[/]" if failed else ""))
+    return 1 if failed else 0
 
 
 # ---------------- parser ----------------
@@ -974,6 +1021,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", help="index database path (default: ~/.entrygraph/.entrygraph.db)")
     p.add_argument("--json", action="store_true", help="emit JSON")
     p.set_defaults(func=cmd_repos)
+
+    p = sub.add_parser(
+        "reindex", help="refresh repositories whose data predates the current analyzer"
+    )
+    p.add_argument("--db", help="index database path (default: ~/.entrygraph/.entrygraph.db)")
+    p.add_argument(
+        "--stale",
+        action="store_true",
+        help="refresh only repositories flagged stale (default target)",
+    )
+    p.add_argument(
+        "--all", action="store_true", help="refresh every repository, not just stale ones"
+    )
+    p.add_argument(
+        "--include-tests",
+        action="store_true",
+        help="index test files too (must match how the repo was originally indexed)",
+    )
+    p.set_defaults(func=cmd_reindex)
 
     # Unified web app (API + SPA); registered lazily — the module is light and
     # its heavy imports (fastapi/uvicorn) stay inside the command handlers.
