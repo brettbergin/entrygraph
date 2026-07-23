@@ -33,6 +33,12 @@ from entrygraph.errors import SchemaMismatchError
 # from_version -> function migrating the DB from that version to from_version + 1.
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {}
 
+# The analyzer version that v9-era data reflects (GraphQL detection, analyzer 1).
+# The 9->10 backfill must stamp THIS, not the live ANALYZER_VERSION: a v9 DB
+# migrating under a newer binary predates that binary's analyzer and must read
+# as stale, not be silently promoted to current.
+_V9_ANALYZER_VERSION = 1
+
 # Transient meta key set by the 8->9 step so the 9->10 step knows the data
 # predates GraphQL detection and must be flagged analyzer-stale (not backfilled
 # to the current analyzer). Deleted once consumed.
@@ -60,16 +66,16 @@ def _v8_to_v9(conn: Connection) -> None:
 def _v9_to_v10(conn: Connection) -> None:
     """Add ``repositories.analyzer_version`` and backfill it.
 
-    A DB that reached here from v9 already reflects the current analyzer, so its
-    repos are stamped current (no re-scan). A DB that came up from v8 carries the
-    pre-analyzer marker and is stamped stale, so its repos keep serving their
-    existing (pre-GraphQL) rows and heal in the background."""
+    A DB that reached here from v9 reflects the v9-era analyzer (1), so its repos
+    are stamped 1 — current if this binary is still on analyzer 1, stale (healing
+    per-repo) under any later analyzer. A DB that came up from v8 carries the
+    pre-analyzer marker and is stamped fully stale."""
     if not _has_column(conn, "repositories", "analyzer_version"):
         conn.execute(text("ALTER TABLE repositories ADD COLUMN analyzer_version INTEGER"))
     marker = conn.execute(
         text("SELECT value FROM meta WHERE key = :k"), {"k": _PRE_ANALYZER_MARKER}
     ).scalar()
-    backfill = STALE_ANALYZER_VERSION if marker else ANALYZER_VERSION
+    backfill = STALE_ANALYZER_VERSION if marker else _V9_ANALYZER_VERSION
     conn.execute(
         text("UPDATE repositories SET analyzer_version = :v WHERE analyzer_version IS NULL"),
         {"v": backfill},
@@ -77,8 +83,18 @@ def _v9_to_v10(conn: Connection) -> None:
     conn.execute(text("DELETE FROM meta WHERE key = :k"), {"k": _PRE_ANALYZER_MARKER})
 
 
+def _v10_to_v11(conn: Connection) -> None:
+    """Add the ``entrypoint_parameters`` table (first-class parameter rows).
+
+    Purely additive: existing rows are untouched and keep serving. Parameter
+    rows appear per repo when an analyzer bump marks it stale and the heal
+    re-index runs — this step itself does not change analyzer staleness."""
+    Base.metadata.tables["entrypoint_parameters"].create(conn, checkfirst=True)
+
+
 _register(8, _v8_to_v9)
 _register(9, _v9_to_v10)
+_register(10, _v10_to_v11)
 
 
 def _backup(engine: Engine, from_version: int) -> None:

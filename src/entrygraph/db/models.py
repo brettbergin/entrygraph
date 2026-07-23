@@ -189,6 +189,42 @@ class Entrypoint(Base):
     )
 
 
+class EntrypointParameter(Base):
+    """A declared or observed input parameter of an entrypoint.
+
+    First-class rows rather than JSON inside ``Entrypoint.extra`` so parameters
+    are SQL-queryable (filtering, fleet-wide stats) and can JOIN path results:
+    ``location`` deliberately uses the taint ``SourcePattern.channel``
+    vocabulary, so a path's (source_key, source_channel) matches a parameter's
+    (name, location) with no re-mapping.
+    """
+
+    __tablename__ = "entrypoint_parameters"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # app-assigned
+    # Owning repository — denormalized for one-repo scoping in a global DB (#116).
+    repo_id: Mapped[int] = mapped_column(ForeignKey("repositories.id", ondelete="CASCADE"))
+    entrypoint_id: Mapped[int] = mapped_column(ForeignKey("entrypoints.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(128))
+    # Where the value arrives: path|query|body|form|header|cookie
+    # (= detect.taint.SourcePattern.channel values).
+    location: Mapped[str] = mapped_column(String(16))
+    required: Mapped[bool] = mapped_column(default=True)
+    # Declared type name when the framework states one (Grape `type: String`).
+    type_ref: Mapped[str | None] = mapped_column(String(64))
+    # How we learned about it: route (template segment) | dsl (params block) |
+    # strong_params (Rails permit) | usage (observed params[:x] read).
+    provenance: Mapped[str] = mapped_column(String(16))
+    # Declaration site line in the file that declared it (route registration,
+    # permit call, params block entry). NULL when unknown.
+    line: Mapped[int | None] = mapped_column(Integer)
+
+    __table_args__ = (
+        UniqueConstraint("entrypoint_id", "name", "location", name="uq_entrypoint_params"),
+        Index("ix_entrypoint_params_repo", "repo_id"),
+    )
+
+
 class Detection(Base):
     """Per-repo detected languages and frameworks."""
 

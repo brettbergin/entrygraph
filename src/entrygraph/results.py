@@ -42,6 +42,23 @@ class Edge:
 
 
 @dataclass(frozen=True, slots=True)
+class Parameter:
+    """A declared or observed input parameter of an entrypoint.
+
+    ``location`` uses the taint source-channel vocabulary
+    (path|query|body|form|header|cookie) so it matches ``PathResult.source_channel``
+    directly; ``provenance`` records how it was learned
+    (route|dsl|strong_params|usage)."""
+
+    name: str
+    location: str
+    required: bool = True
+    type_ref: str | None = None
+    provenance: str = "route"
+    line: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Entrypoint:
     id: int
     kind: str
@@ -50,6 +67,7 @@ class Entrypoint:
     route: str | None = None
     http_method: str | None = None
     extra: dict = field(default_factory=dict)
+    parameters: tuple[Parameter, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +134,28 @@ class CallPath:
         for edge, sym in zip(self.edges, self.symbols[1:]):
             parts.append(f"-> {sym.qname} (line {edge.line})")
         return " ".join(parts)
+
+
+@dataclass(frozen=True, slots=True)
+class ParameterFlows:
+    """One entrypoint parameter with the sink-reaching paths attributed to it
+    (matched on the path's ``source_key``)."""
+
+    parameter: Parameter
+    paths: tuple[CallPath, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class EntrypointFlows:
+    """An entrypoint, its declared/observed parameters, and where their data
+    flows. ``unmatched`` holds paths whose source key matches no declared
+    parameter (or carries none) — still real flows out of this handler."""
+
+    entrypoint: Entrypoint
+    parameters: tuple[ParameterFlows, ...] = ()
+    unmatched: tuple[CallPath, ...] = ()
+    mode: str | None = None  # precise|widened|strict|explicit (from paths())
+    truncated: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -19,6 +19,10 @@ class SymbolNotFoundError(EntrygraphError):
     """No symbol matches the given qualified name."""
 
 
+class EntrypointNotFoundError(EntrygraphError):
+    """No entrypoint with the given id exists in this repository."""
+
+
 class RepositoryNotIndexedError(EntrygraphError):
     """The database contains no indexed repository."""
 

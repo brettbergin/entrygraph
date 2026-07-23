@@ -25,7 +25,15 @@ from sqlalchemy.orm import Session, aliased
 
 from entrygraph.db.meta import ANALYZER_VERSION
 from entrygraph.db.migrations import is_stale, prepare_db
-from entrygraph.db.models import Detection, Edge, Entrypoint, File, Repository, Symbol
+from entrygraph.db.models import (
+    Detection,
+    Edge,
+    Entrypoint,
+    EntrypointParameter,
+    File,
+    Repository,
+    Symbol,
+)
 from entrygraph.detect import entrypoints as entrypoint_rules
 from entrygraph.detect.entrypoints.base import first_string_arg
 from entrygraph.detect.express_mounts import resolve_mount_prefixes
@@ -33,6 +41,7 @@ from entrygraph.detect.frameworks import detect_frameworks
 from entrygraph.detect.graphql_link import link_graphql
 from entrygraph.detect.grpc_expand import expand_grpc
 from entrygraph.detect.manifests import parse_manifests
+from entrygraph.detect.rails_link import link_rails
 from entrygraph.detect.taint import SinkRegistry, registry_for_repo
 from entrygraph.errors import IndexCancelledError
 from entrygraph.extract.ir import EntrypointHint, FileExtraction
@@ -207,6 +216,9 @@ def index_repository(
         # ---- GraphQL SDL fields -> code resolvers (cross-file rebind + dedup) ----
         link_graphql(extractions, table)
 
+        # ---- Rails routes -> controller actions (cross-file rebind) ----
+        link_rails(extractions, table)
+
         # ---- resolve references -> edges + entrypoints ----
         externals = ExternalRegistry(lambda: alloc.take(Symbol), repo.id)
         if incremental:
@@ -374,6 +386,7 @@ def _known_file_states(session: Session, repo_id: int) -> dict[str, FileState]:
 def _wipe_repo_graph(session: Session, repo_id: int) -> None:
     """Full-reindex: clear the graph for this repo, keep the repo row + meta."""
     session.execute(delete(Edge).where(Edge.repo_id == repo_id))
+    session.execute(delete(EntrypointParameter).where(EntrypointParameter.repo_id == repo_id))
     session.execute(delete(Entrypoint).where(Entrypoint.repo_id == repo_id))
     # repo_id also covers this repo's external placeholders (file_id NULL) without
     # touching other repos' symbols in a global DB (#116)
@@ -728,6 +741,9 @@ def _write_edges_and_entrypoints(
 
     edge_writer = BatchedWriter(session, Edge, before_flush=_flush_new_externals)
     entrypoint_writer = BatchedWriter(session, Entrypoint)
+    # Parameter rows FK onto entrypoint rows; flushing the entrypoint buffer first
+    # keeps the FK satisfied even when the parameter buffer fills mid-file.
+    param_writer = BatchedWriter(session, EntrypointParameter, before_flush=entrypoint_writer.flush)
 
     for path, x, is_package in extractions:
         resolver = FileResolver(
@@ -797,8 +813,15 @@ def _write_edges_and_entrypoints(
             handler_q = hint.handler_qualified_name or ""
             # Bind to the handler defined in this file first (so same-package
             # collisions like per-file `func init()` each keep their own row),
-            # then the global map.
-            symbol_id = per_file.get(handler_q) or symbol_id_by_qname.get(handler_q)
+            # then the global map, then the symbol table — the table also holds
+            # symbols loaded from the DB, so a cross-file link pass (graphql,
+            # rails) still binds on an incremental run whose handler file was
+            # unchanged and therefore not re-extracted.
+            symbol_id = (
+                per_file.get(handler_q)
+                or symbol_id_by_qname.get(handler_q)
+                or table.by_fqn.get(handler_q)
+            )
             # Route handler passed by reference (router.get('/x', ctrl.fn)) — the
             # name isn't a symbol in scope, but the resolver bound the callback at
             # the registration line. Bind the route to that real handler instead of
@@ -806,9 +829,10 @@ def _write_edges_and_entrypoints(
             if symbol_id is None and hint.span is not None:
                 symbol_id = callback_handler_by_line.get(hint.span.start_line)
             symbol_id = symbol_id or module_ids[path]
+            entrypoint_id = alloc.take(Entrypoint)
             entrypoint_writer.add(
                 {
-                    "id": alloc.take(Entrypoint),
+                    "id": entrypoint_id,
                     "repo_id": repo_id,
                     "kind": hint.kind,
                     "framework": hint.framework,
@@ -818,9 +842,31 @@ def _write_edges_and_entrypoints(
                     "extra": json.dumps(hint.metadata) if hint.metadata else None,
                 }
             )
+            # (name, location) is unique per entrypoint; rules may re-observe the
+            # same parameter (route segment + a params[:x] read) — first wins,
+            # and producers order stronger provenance first.
+            seen_params: set[tuple[str, str]] = set()
+            for param in hint.parameters:
+                if (param.name, param.location) in seen_params:
+                    continue
+                seen_params.add((param.name, param.location))
+                param_writer.add(
+                    {
+                        "id": alloc.take(EntrypointParameter),
+                        "repo_id": repo_id,
+                        "entrypoint_id": entrypoint_id,
+                        "name": param.name[:128],
+                        "location": param.location,
+                        "required": param.required,
+                        "type_ref": param.type_ref[:64] if param.type_ref else None,
+                        "provenance": param.provenance,
+                        "line": param.line,
+                    }
+                )
     edge_writer.flush()  # before_flush writes any remaining new externals first
     _flush_new_externals()  # externals with no trailing edge batch (belt-and-suspenders)
     entrypoint_writer.flush()
+    param_writer.flush()  # before_flush drains the entrypoint buffer first anyway
     return edge_writer.count, entrypoint_writer.count
 
 

@@ -6,6 +6,7 @@ import type {
   ApiKey,
   Detection,
   Entrypoint,
+  EntrypointFlowsResponse,
   Job,
   Me,
   Neighborhood,
@@ -31,6 +32,8 @@ export const keys = {
   symbolDetail: (id: number, qname: string) => ["repo", id, "symbol", qname] as const,
   entrypoints: (id: number, params: Record<string, string>) =>
     ["repo", id, "entrypoints", params] as const,
+  entrypointFlows: (id: number, entrypointId: number) =>
+    ["repo", id, "entrypoint-flows", entrypointId] as const,
   neighborhood: (id: number, qname: string) => ["repo", id, "graph", qname] as const,
   paths: (id: number, params: PathsQuery) => ["repo", id, "paths", params] as const,
   jobs: (params: Record<string, string>) => ["jobs", params] as const,
@@ -53,6 +56,8 @@ export const api = {
     request<{ entrypoints: Entrypoint[] }>(`${V1}/repos/${id}/entrypoints${qs(params)}`).then(
       (r) => r.entrypoints,
     ),
+  entrypointFlows: (id: number, entrypointId: number) =>
+    request<EntrypointFlowsResponse>(`${V1}/repos/${id}/entrypoints/${entrypointId}/flows`),
   neighborhood: (id: number, qname: string) =>
     request<Neighborhood>(`${V1}/repos/${id}/graph${qs({ qname })}`),
   paths: (id: number, params: PathsQuery) =>

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from entrygraph.db import models
 from entrygraph.kinds import EntrypointKind, SymbolKind
-from entrygraph.results import Entrypoint, FileInfo, Symbol
+from entrygraph.results import Entrypoint, FileInfo, Parameter, Symbol
 
 _LIKE_ESCAPE = "\\"
 
@@ -143,6 +143,7 @@ def select_entrypoints(
     kind: str | EntrypointKind | None = None,
     framework: str | None = None,
     route: str | None = None,
+    ids: list[int] | None = None,
     limit: int | None = None,
 ) -> list[Entrypoint]:
     stmt = (
@@ -165,8 +166,12 @@ def select_entrypoints(
         stmt = stmt.where(models.Entrypoint.framework == framework)
     if route is not None:
         stmt = stmt.where(_match(models.Entrypoint.route, route))
+    if ids is not None:
+        stmt = stmt.where(models.Entrypoint.id.in_(ids))
     if limit is not None:
         stmt = stmt.limit(limit)
+    rows = list(session.execute(stmt))
+    params = _parameters_by_entrypoint(session, [ep.id for ep, _sym, _path in rows])
     return [
         Entrypoint(
             id=ep.id,
@@ -176,6 +181,33 @@ def select_entrypoints(
             route=ep.route,
             http_method=ep.http_method,
             extra=json.loads(ep.extra) if ep.extra else {},
+            parameters=params.get(ep.id, ()),
         )
-        for ep, sym, path in session.execute(stmt)
+        for ep, sym, path in rows
     ]
+
+
+def _parameters_by_entrypoint(
+    session: Session, entrypoint_ids: list[int]
+) -> dict[int, tuple[Parameter, ...]]:
+    """Parameter rows for a batch of entrypoints, in insert (declaration) order."""
+    if not entrypoint_ids:
+        return {}
+    stmt = (
+        select(models.EntrypointParameter)
+        .where(models.EntrypointParameter.entrypoint_id.in_(entrypoint_ids))
+        .order_by(models.EntrypointParameter.entrypoint_id, models.EntrypointParameter.id)
+    )
+    grouped: dict[int, list[Parameter]] = {}
+    for p in session.execute(stmt).scalars():
+        grouped.setdefault(p.entrypoint_id, []).append(
+            Parameter(
+                name=p.name,
+                location=p.location,
+                required=p.required,
+                type_ref=p.type_ref,
+                provenance=p.provenance,
+                line=p.line,
+            )
+        )
+    return {eid: tuple(plist) for eid, plist in grouped.items()}

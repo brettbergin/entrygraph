@@ -22,6 +22,7 @@ from entrygraph.db.engine import make_engine, make_session_factory
 from entrygraph.db.migrations import is_stale, prepare_db
 from entrygraph.errors import (
     DatabaseNotFoundError,
+    EntrypointNotFoundError,
     RepositoryNotIndexedError,
     SymbolNotFoundError,
     UnknownCategoryError,
@@ -35,9 +36,11 @@ from entrygraph.results import (
     DetectionReport,
     Edge,
     Entrypoint,
+    EntrypointFlows,
     FileInfo,
     GraphStats,
     IndexStats,
+    ParameterFlows,
     PathEdge,
     RepoInfo,
     Symbol,
@@ -432,6 +435,64 @@ class CodeGraph:
             return q.select_entrypoints(
                 session, self._repo_id, kind=kind, framework=framework, route=route, limit=limit
             )
+
+    def entrypoint(self, entrypoint_id: int) -> Entrypoint:
+        """One entrypoint by id (with its parameter rows)."""
+        with self._session_factory() as session:
+            rows = q.select_entrypoints(session, self._repo_id, ids=[entrypoint_id])
+        if not rows:
+            raise EntrypointNotFoundError(f"no entrypoint with id {entrypoint_id} in this repo")
+        return rows[0]
+
+    def entrypoint_flows(
+        self,
+        entrypoint_id: int,
+        *,
+        sink: SourceSpec | None = None,
+        sink_category: str | None = "all",
+        max_depth: int = 25,
+        max_paths: int = 50,
+        min_confidence: int | None = None,
+        confirmed_only: bool = False,
+        taint_hops: int = 5,
+    ) -> EntrypointFlows:
+        """Where this entrypoint's input flows: sink-reaching paths out of its
+        handler, grouped by the parameter they enter through.
+
+        Sources are pinned to the entrypoint's handler symbol (the same
+        adaptive search as :meth:`paths`); each returned path's ``source_key``
+        is matched against the entrypoint's parameter names. Paths carrying no
+        key — or a key no parameter declares — land in ``unmatched``: they are
+        still real flows out of this handler, often the interesting ones.
+        Attribution is per source symbol, so a handler reading several inputs
+        reports one recorded key per path, not one path per read."""
+        ep = self.entrypoint(entrypoint_id)
+        results = self.paths(
+            source=ep,
+            sink=sink,
+            sink_category=sink_category if sink is None else None,
+            max_depth=max_depth,
+            max_paths=max_paths,
+            min_confidence=min_confidence,
+            confirmed_only=confirmed_only,
+            taint_hops=taint_hops,
+        )
+        by_name: dict[str, list[CallPath]] = {p.name: [] for p in ep.parameters}
+        unmatched: list[CallPath] = []
+        for path in results:
+            if path.source_key is not None and path.source_key in by_name:
+                by_name[path.source_key].append(path)
+            else:
+                unmatched.append(path)
+        return EntrypointFlows(
+            entrypoint=ep,
+            parameters=tuple(
+                ParameterFlows(parameter=p, paths=tuple(by_name[p.name])) for p in ep.parameters
+            ),
+            unmatched=tuple(unmatched),
+            mode=getattr(results, "mode", None),
+            truncated=bool(getattr(results, "truncated", False)),
+        )
 
     # ---------------- traversal ----------------
 
