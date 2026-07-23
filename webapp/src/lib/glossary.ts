@@ -42,4 +42,14 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     short: "A bounded dataflow check of whether the tainted value actually flows to the sink.",
     long: "Verified = flow observed; 'not observed' = the check found the value never reaches the sink; unknown = the check couldn't decide.",
   },
+  parameter: {
+    title: "Entrypoint parameter",
+    short: "An input the route accepts: a path segment (:id), query/body field, or an observed read.",
+    long: "Location says where the value arrives (path, query, body, form). Provenance says how it was learned: 'route' = declared in the route template; 'dsl' = a params declaration block (Grape); 'strong_params' = a Rails permit chain; 'usage' = a params[:x] read observed in the handler body.",
+  },
+  parameter_flows: {
+    title: "Parameter data flow",
+    short: "Sink-reaching call paths out of this handler, grouped by the parameter the data enters through.",
+    long: "Each path's recorded input key is matched against the declared parameters. Paths whose key matches no declared parameter (or that carry none) are listed separately — they are still real flows out of this handler.",
+  },
 };
