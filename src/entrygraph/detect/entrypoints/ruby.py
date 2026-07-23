@@ -151,10 +151,6 @@ _RESOURCE_ACTIONS = (
 )
 
 
-def _camelize_scope(name: str) -> str:
-    return "".join(part.title() for part in name.split("_"))
-
-
 def _singularize(name: str) -> str:
     """Best-effort English singular for nested-resource param names
     (posts -> :post_id). Rails runs a full inflector; the common regular
