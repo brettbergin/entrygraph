@@ -17,10 +17,62 @@ from entrygraph.detect.entrypoints.base import (
     register,
     route_path_params,
 )
-from entrygraph.extract.ir import EntrypointHint, FileExtraction
+from entrygraph.extract.ir import EntrypointHint, FileExtraction, ParameterHint
 from entrygraph.kinds import EntrypointKind, SymbolKind
 
 _SINATRA_VERBS = frozenset({"get", "post", "put", "delete", "patch"})
+
+# HTTP methods whose parameters conventionally arrive in the query string;
+# anything else defaults to the form/body channel.
+_QUERY_METHODS = frozenset({"GET", "DELETE", "HEAD"})
+
+
+def _usage_location(methods: list[str]) -> str:
+    return "query" if all(m in _QUERY_METHODS for m in methods) else "form"
+
+
+def observed_params(
+    x: FileExtraction,
+    start_line: int,
+    end_line: int,
+    methods: list[str],
+    exclude: set[str],
+) -> list[ParameterHint]:
+    """``params[:q]`` reads observed inside a handler span.
+
+    The extractor synthesizes each accessor subscript as a bare ``params``
+    reference carrying the key (#87C); any such read between start_line and
+    end_line whose key isn't already a declared parameter becomes a
+    provenance="usage" hint. Best-effort: required is unknowable, and the
+    channel is guessed from the route's methods (query for GET-ish, form
+    otherwise)."""
+    out: list[ParameterHint] = []
+    seen = set(exclude)
+    location = _usage_location(methods)
+    for ref in x.references:
+        if (
+            ref.kind != "call"
+            or ref.receiver_text is not None
+            or ref.callee_name != "params"
+            or not ref.arg_preview
+            or ref.span.end_line > ref.span.start_line  # a `params do` block, not a read
+            or not (start_line <= ref.span.start_line <= end_line)
+        ):
+            continue
+        key = first_string_arg("(" + ref.arg_preview.lstrip("("))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            ParameterHint(
+                name=key,
+                location=location,
+                required=False,
+                provenance="usage",
+                line=ref.span.start_line,
+            )
+        )
+    return out
 
 
 def _is_rails_routes_file(path: str) -> bool:
@@ -41,15 +93,25 @@ def _sinatra_routes(x: FileExtraction) -> list[EntrypointHint]:
         ):
             route = first_string_arg("(" + ref.arg_preview.lstrip("("))
             if route is not None and route.startswith("/"):
+                methods = [ref.callee_name.upper()]
+                params = route_path_params(route, line=ref.span.start_line)
+                # the route call's span covers its do...end handler block
+                params += observed_params(
+                    x,
+                    ref.span.start_line,
+                    ref.span.end_line,
+                    methods,
+                    exclude={p.name for p in params},
+                )
                 hints.append(
                     EntrypointHint(
                         rule_id="ruby.sinatra.route",
                         kind=EntrypointKind.HTTP_ROUTE,
                         handler_qualified_name=ref.caller_qualified_name,
                         route=route,
-                        http_methods=[ref.callee_name.upper()],
+                        http_methods=methods,
                         framework="sinatra",
-                        parameters=route_path_params(route, line=ref.span.start_line),
+                        parameters=params,
                     )
                 )
     return hints
@@ -280,8 +342,62 @@ def _rake_tasks(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
+_GRAPE_PARAM_DECLS = frozenset({"requires", "optional"})
+_TYPE_OPT = re.compile(r"\btype\s*(?:=>|:)\s*([A-Z]\w*)")
+
+# A `params do ... end` block annotates the route declared right below it;
+# allow one blank/comment line between the block's `end` and the verb.
+_PARAMS_BLOCK_GAP = 2
+
+
+def _grape_param_blocks(x: FileExtraction) -> list[tuple[int, int, list[ParameterHint]]]:
+    """`params do requires :name, type: String ... end` blocks, as
+    (start_line, end_line, declared params). Location is left empty here and
+    filled in when a block attaches to a route (it depends on the verb)."""
+    blocks = [
+        (ref.span.start_line, ref.span.end_line)
+        for ref in x.references
+        if ref.kind == "call"
+        and ref.receiver_text is None
+        and ref.callee_name == "params"
+        and ref.span.end_line > ref.span.start_line
+    ]
+    declared: dict[tuple[int, int], list[ParameterHint]] = {b: [] for b in blocks}
+    for ref in x.references:
+        if (
+            ref.kind != "call"
+            or ref.receiver_text is not None
+            or ref.callee_name not in _GRAPE_PARAM_DECLS
+            or not ref.arg_preview
+        ):
+            continue
+        block = next(
+            (b for b in blocks if b[0] <= ref.span.start_line <= b[1]),
+            None,
+        )
+        if block is None:
+            continue
+        name_m = _FIRST_SYMBOL.match(ref.arg_preview.lstrip("("))
+        if not name_m:
+            continue
+        type_m = _TYPE_OPT.search(ref.arg_preview)
+        declared[block].append(
+            ParameterHint(
+                name=name_m.group(1),
+                location="",  # filled at attach time
+                required=ref.callee_name == "requires",
+                type_ref=type_m.group(1) if type_m else None,
+                provenance="dsl",
+                line=ref.span.start_line,
+            )
+        )
+    return sorted((s, e, ps) for (s, e), ps in declared.items())
+
+
 def _grape_routes(x: FileExtraction) -> list[EntrypointHint]:
-    """Grape API classes: class-body `get '/x'` / `post '/y'` declarations."""
+    """Grape API classes: class-body `get '/x'` / `post '/y'` declarations, with
+    the preceding `params do ... end` block's requires/optional declarations."""
+    blocks = _grape_param_blocks(x)
     hints = []
     for ref in x.references:
         if (
@@ -291,18 +407,48 @@ def _grape_routes(x: FileExtraction) -> list[EntrypointHint]:
             and ref.arg_preview
         ):
             route = first_string_arg("(" + ref.arg_preview.lstrip("("))
-            if route is not None:
-                hints.append(
-                    EntrypointHint(
-                        rule_id="ruby.grape.route",
-                        kind=EntrypointKind.HTTP_ROUTE,
-                        handler_qualified_name=ref.caller_qualified_name,
-                        route=route,
-                        http_methods=[ref.callee_name.upper()],
-                        framework="grape",
-                        parameters=route_path_params(route, line=ref.span.start_line),
+            if route is None:
+                continue
+            methods = [ref.callee_name.upper()]
+            params = route_path_params(route, line=ref.span.start_line)
+            names = {p.name for p in params}
+            block = next(
+                (
+                    b
+                    for b in reversed(blocks)
+                    if b[1] < ref.span.start_line <= b[1] + _PARAMS_BLOCK_GAP
+                ),
+                None,
+            )
+            if block is not None:
+                for p in block[2]:
+                    if p.name in names:
+                        continue
+                    names.add(p.name)
+                    params.append(
+                        ParameterHint(
+                            name=p.name,
+                            location="body" if methods[0] in ("POST", "PUT", "PATCH") else "query",
+                            required=p.required,
+                            type_ref=p.type_ref,
+                            provenance="dsl",
+                            line=p.line,
+                        )
                     )
+            params += observed_params(
+                x, ref.span.start_line, ref.span.end_line, methods, exclude=names
+            )
+            hints.append(
+                EntrypointHint(
+                    rule_id="ruby.grape.route",
+                    kind=EntrypointKind.HTTP_ROUTE,
+                    handler_qualified_name=ref.caller_qualified_name,
+                    route=route,
+                    http_methods=methods,
+                    framework="grape",
+                    parameters=params,
                 )
+            )
     return hints
 
 

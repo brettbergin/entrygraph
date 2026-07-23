@@ -238,6 +238,22 @@ def test_rails_app_end_to_end(tmp_path):
         assert comments.symbol.qname.endswith("CommentsController.index")
         assert {p.name for p in comments.parameters} == {"post_id"}
 
+        # strong params: create's post_params helper contributes permit keys
+        create = by[("POST", "/posts")]
+        assert {(p.name, p.location, p.provenance) for p in create.parameters} == {
+            ("title", "body", "strong_params"),
+            ("body", "body", "strong_params"),
+        }
+
+        # usage read with no matching route segment surfaces as a usage param
+        profile = by[("GET", "/profile")]
+        assert {(p.name, p.provenance, p.location) for p in profile.parameters} == {
+            ("id", "usage", "query")
+        }
+
+        # a usage read that matches a declared path param does NOT duplicate
+        assert [(p.name, p.provenance) for p in show.parameters] == [("id", "route")]
+
         # the bound controller action is a real taint source: params[:id] -> system
         paths = g.paths(
             source_category="http_input", sink_category="command_exec", include_unresolved=True
@@ -246,5 +262,29 @@ def test_rails_app_end_to_end(tmp_path):
             p.symbols[0].qname.endswith("PostsController.show") and p.taint_verified is True
             for p in paths
         )
+    finally:
+        g.close()
+
+
+def test_grape_app_end_to_end(tmp_path):
+    g = CodeGraph.index(FIX / "ruby" / "grape_app", db=tmp_path / "grape.db")
+    try:
+        eps = g.entrypoints(kind="http_route", framework="grape")
+        by = {(e.http_method, e.route): e for e in eps}
+
+        create = by[("POST", "/users")]
+        got = {
+            (p.name, p.location, p.required, p.type_ref, p.provenance) for p in create.parameters
+        }
+        assert got == {
+            ("name", "body", True, "String", "dsl"),
+            ("age", "body", False, "Integer", "dsl"),
+        }
+
+        show = by[("GET", "/users/:id")]
+        assert {(p.name, p.provenance, p.location) for p in show.parameters} == {
+            ("id", "route", "path"),
+            ("verbose", "usage", "query"),
+        }
     finally:
         g.close()

@@ -109,6 +109,67 @@ def test_rails_verb_route_emits_path_params():
     assert [(p.name, p.required) for p in hint.parameters] == [("id", True)]
 
 
+# ---------------- enrichment: usage reads + grape params DSL ----------------
+
+
+def _ref(callee, preview, start, end=None, receiver=None):
+    return RawReference(
+        kind="call",
+        callee_text=callee,
+        callee_name=callee,
+        receiver_text=receiver,
+        span=Span(start, 0, end or start, 40),
+        caller_qualified_name=None,
+        arg_preview=preview,
+    )
+
+
+def test_sinatra_observed_params_from_handler_block():
+    # get '/search' do ... params[:q] ... end — the route call spans the block
+    refs = [
+        _ref("get", "('/search')", 1, end=4),
+        _ref("params", '("q")', 2),  # synthesized subscript read (#87C)
+        _ref("params", '("q")', 3),  # re-read of the same key collapses
+    ]
+    (hint,) = _sinatra_rule().match(_ruby_ext(refs, "app.rb"))
+    (q,) = hint.parameters
+    assert (q.name, q.location, q.required, q.provenance) == ("q", "query", False, "usage")
+
+
+def test_sinatra_usage_skips_declared_path_params():
+    refs = [
+        _ref("get", "('/users/:id')", 1, end=3),
+        _ref("params", '("id")', 2),
+    ]
+    (hint,) = _sinatra_rule().match(_ruby_ext(refs, "app.rb"))
+    assert [(p.name, p.provenance) for p in hint.parameters] == [("id", "route")]
+
+
+def test_grape_params_block_attaches_to_following_route():
+    refs = [
+        _ref("params", None, 1, end=4),
+        _ref("requires", ":name, type: String", 2),
+        _ref("optional", ":age, type: Integer", 3),
+        _ref("post", "('/users')", 5, end=7),
+    ]
+    (hint,) = _grape_rule().match(_ruby_ext(refs, "api.rb"))
+    got = {(p.name, p.location, p.required, p.type_ref, p.provenance) for p in hint.parameters}
+    assert got == {
+        ("name", "body", True, "String", "dsl"),
+        ("age", "body", False, "Integer", "dsl"),
+    }
+
+
+def test_grape_params_block_not_adjacent_is_ignored():
+    refs = [
+        _ref("params", None, 1, end=2),
+        _ref("requires", ":name", 2),
+        _ref("get", "('/users')", 10, end=11),  # far below the block
+    ]
+    (hint,) = _grape_rule().match(_ruby_ext(refs, "api.rb"))
+    assert hint.parameters == []
+
+
 # ---------------- graphql-ruby ----------------
 
 from entrygraph.extract.ir import RawSymbol
