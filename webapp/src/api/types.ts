@@ -71,6 +71,15 @@ export interface Symbol {
   exported: boolean | null;
 }
 
+export interface Parameter {
+  name: string;
+  location: string; // path | query | body | form | header | cookie
+  required: boolean;
+  type: string | null;
+  provenance: string; // route | dsl | strong_params | usage
+  line: number | null;
+}
+
 export interface Entrypoint {
   id: number;
   kind: string;
@@ -78,6 +87,8 @@ export interface Entrypoint {
   route: string | null;
   http_method: string | null;
   handler: Symbol | null;
+  parameters: Parameter[];
+  extra: Record<string, unknown>;
 }
 
 export interface SymbolDetail {
@@ -136,6 +147,19 @@ export interface CallPath {
 
 export interface PathsResponse {
   paths: CallPath[];
+  mode: "precise" | "widened" | "strict" | "explicit" | null;
+  truncated: boolean;
+}
+
+export interface ParameterFlows {
+  parameter: Parameter;
+  paths: CallPath[];
+}
+
+export interface EntrypointFlowsResponse {
+  entrypoint: Entrypoint;
+  parameters: ParameterFlows[];
+  unmatched_paths: CallPath[];
   mode: "precise" | "widened" | "strict" | "explicit" | null;
   truncated: boolean;
 }
