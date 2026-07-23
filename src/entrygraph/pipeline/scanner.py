@@ -41,6 +41,7 @@ from entrygraph.detect.frameworks import detect_frameworks
 from entrygraph.detect.graphql_link import link_graphql
 from entrygraph.detect.grpc_expand import expand_grpc
 from entrygraph.detect.manifests import parse_manifests
+from entrygraph.detect.rails_link import link_rails
 from entrygraph.detect.taint import SinkRegistry, registry_for_repo
 from entrygraph.errors import IndexCancelledError
 from entrygraph.extract.ir import EntrypointHint, FileExtraction
@@ -214,6 +215,9 @@ def index_repository(
 
         # ---- GraphQL SDL fields -> code resolvers (cross-file rebind + dedup) ----
         link_graphql(extractions, table)
+
+        # ---- Rails routes -> controller actions (cross-file rebind) ----
+        link_rails(extractions, table)
 
         # ---- resolve references -> edges + entrypoints ----
         externals = ExternalRegistry(lambda: alloc.take(Symbol), repo.id)
@@ -809,8 +813,15 @@ def _write_edges_and_entrypoints(
             handler_q = hint.handler_qualified_name or ""
             # Bind to the handler defined in this file first (so same-package
             # collisions like per-file `func init()` each keep their own row),
-            # then the global map.
-            symbol_id = per_file.get(handler_q) or symbol_id_by_qname.get(handler_q)
+            # then the global map, then the symbol table — the table also holds
+            # symbols loaded from the DB, so a cross-file link pass (graphql,
+            # rails) still binds on an incremental run whose handler file was
+            # unchanged and therefore not re-extracted.
+            symbol_id = (
+                per_file.get(handler_q)
+                or symbol_id_by_qname.get(handler_q)
+                or table.by_fqn.get(handler_q)
+            )
             # Route handler passed by reference (router.get('/x', ctrl.fn)) — the
             # name isn't a symbol in scope, but the resolver bound the callback at
             # the registration line. Bind the route to that real handler instead of

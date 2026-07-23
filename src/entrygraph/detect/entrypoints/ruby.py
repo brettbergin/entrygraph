@@ -21,7 +21,6 @@ from entrygraph.extract.ir import EntrypointHint, FileExtraction
 from entrygraph.kinds import EntrypointKind, SymbolKind
 
 _SINATRA_VERBS = frozenset({"get", "post", "put", "delete", "patch"})
-_RAILS_VERBS = frozenset({"get", "post", "put", "patch", "delete", "resources", "resource", "root"})
 
 
 def _is_rails_routes_file(path: str) -> bool:
@@ -56,32 +55,204 @@ def _sinatra_routes(x: FileExtraction) -> list[EntrypointHint]:
     return hints
 
 
+# -- rails routes DSL parsing helpers --
+
+_FIRST_SYMBOL = re.compile(r"^\(?\s*:(\w+)")
+# `to: 'users#show'` / `to => 'users#show'` and the hashrocket route form
+# `get 'profile' => 'users#show'`.
+_TO_TARGET = re.compile(r"\bto\s*(?:=>|:)\s*['\"]([\w/]+)#(\w+)['\"]")
+_ARROW_TARGET = re.compile(r"['\"]\s*=>\s*['\"]([\w/]+)#(\w+)['\"]")
+_ONLY_EXCEPT = re.compile(r"\b(only|except)\s*(?:=>|:)\s*(\[[^\]]*\]|:\w+)")
+_VIA_OPT = re.compile(r"\bvia\s*(?:=>|:)\s*(\[[^\]]*\]|:\w+)")
+_MODULE_OPT = re.compile(r"\bmodule\s*(?:=>|:)\s*['\"]?(\w+)['\"]?")
+_PATH_OPT = re.compile(r"\bpath\s*(?:=>|:)\s*['\"]([^'\"]*)['\"]")
+_SYMBOLS = re.compile(r":(\w+)")
+
+# Conventional RESTful expansions: (action, methods, path suffix). Rails routes
+# update as both PATCH and PUT; a singular `resource` has no index and no :id.
+_RESOURCES_ACTIONS = (
+    ("index", ("GET",), ""),
+    ("create", ("POST",), ""),
+    ("new", ("GET",), "/new"),
+    ("edit", ("GET",), "/:id/edit"),
+    ("show", ("GET",), "/:id"),
+    ("update", ("PATCH", "PUT"), "/:id"),
+    ("destroy", ("DELETE",), "/:id"),
+)
+_RESOURCE_ACTIONS = (
+    ("show", ("GET",), ""),
+    ("create", ("POST",), ""),
+    ("new", ("GET",), "/new"),
+    ("edit", ("GET",), "/edit"),
+    ("update", ("PATCH", "PUT"), ""),
+    ("destroy", ("DELETE",), ""),
+)
+
+
+def _camelize_scope(name: str) -> str:
+    return "".join(part.title() for part in name.split("_"))
+
+
+def _singularize(name: str) -> str:
+    """Best-effort English singular for nested-resource param names
+    (posts -> :post_id). Rails runs a full inflector; the common regular
+    plurals below cover real route files, and a miss only mislabels the
+    param name, never the route itself."""
+    if name.endswith("ies") and len(name) > 3:
+        return name[:-3] + "y"
+    if any(name.endswith(s) for s in ("ses", "xes", "zes", "ches", "shes")):
+        return name[:-2]
+    if name.endswith("s") and not name.endswith("ss"):
+        return name[:-1]
+    return name
+
+
+def _join_path(*segments: str | None) -> str:
+    parts = [s.strip("/") for s in segments if s and s.strip("/")]
+    return "/" + "/".join(parts)
+
+
+def _first_symbol_or_string(arg_preview: str | None) -> str | None:
+    if not arg_preview:
+        return None
+    m = _FIRST_SYMBOL.match(arg_preview.lstrip("("))
+    if m:
+        return m.group(1)
+    return first_string_arg("(" + arg_preview.lstrip("("))
+
+
+def _has_block(ref) -> bool:
+    # a `do ... end` block makes the call node span multiple lines
+    return ref.span.end_line > ref.span.start_line
+
+
+def _restful_actions(kind: str, arg_preview: str | None):
+    actions = _RESOURCES_ACTIONS if kind == "resources" else _RESOURCE_ACTIONS
+    m = _ONLY_EXCEPT.search(arg_preview or "")
+    if not m:
+        return actions
+    names = set(_SYMBOLS.findall(m.group(2)))
+    if m.group(1) == "only":
+        return tuple(a for a in actions if a[0] in names)
+    return tuple(a for a in actions if a[0] not in names)
+
+
+def _route_target(arg_preview: str | None) -> tuple[str, str] | None:
+    """The `controller#action` a verb route points at, if stated."""
+    m = _TO_TARGET.search(arg_preview or "") or _ARROW_TARGET.search(arg_preview or "")
+    return (m.group(1), m.group(2)) if m else None
+
+
+def _infer_target(route: str) -> tuple[str, str] | None:
+    """Rails maps `get 'welcome/index'` to welcome#index when no `to:` is given.
+    Only infer for plain multi-segment paths — no params, no globs."""
+    segments = [s for s in route.strip("/").split("/") if s]
+    if len(segments) < 2 or any(c in route for c in ":*(."):
+        return None
+    return "/".join(segments[:-1]), segments[-1]
+
+
 def _rails_routes(x: FileExtraction) -> list[EntrypointHint]:
+    """Span-aware walk of the routes DSL: `namespace`/`scope`/nested `resources`
+    blocks stack path and controller-module prefixes (a call node's span covers
+    its `do ... end` block), `resources`/`resource` expand to their conventional
+    RESTful set, and verb routes pick up `to:`/hashrocket/inferred targets. The
+    controller#action lands in metadata; the cross-file link pass binds it to
+    the controller symbol after all files' symbols are registered."""
     if not _is_rails_routes_file(x.path):
         return []
-    hints = []
-    for ref in x.references:
-        if ref.kind != "call" or ref.receiver_text is not None:
-            continue
-        if ref.callee_name not in _RAILS_VERBS:
-            continue
-        route = None
-        if ref.arg_preview:
-            route = first_string_arg("(" + ref.arg_preview.lstrip("("))
+    calls = sorted(
+        (r for r in x.references if r.kind == "call" and r.receiver_text is None),
+        key=lambda r: (r.span.start_line, r.span.start_col),
+    )
+    # active enclosing blocks: (end_line, path segment | None, module segment | None)
+    scopes: list[tuple[int, str | None, str | None]] = []
+    hints: list[EntrypointHint] = []
+
+    def _prefixes() -> tuple[list[str], list[str]]:
+        return (
+            [p for _e, p, _m in scopes if p],
+            [m for _e, _p, m in scopes if m],
+        )
+
+    def _emit(route, methods, controller, action, ref, extra_meta=None):
+        metadata = {"registration": ref.arg_preview or ref.callee_name}
+        if controller and action:
+            _path_segs, module_segs = _prefixes()
+            metadata["controller"] = "/".join([*module_segs, controller])
+            metadata["action"] = action
+        if extra_meta:
+            metadata.update(extra_meta)
         hints.append(
             EntrypointHint(
                 rule_id="ruby.rails.routes",
                 kind=EntrypointKind.HTTP_ROUTE,
-                handler_qualified_name=None,  # handler resolved as a normal call edge
-                route=route if route is not None else "",
-                http_methods=["*"]
-                if ref.callee_name in ("resources", "resource", "root")
-                else [ref.callee_name.upper()],
+                handler_qualified_name=None,  # bound by the rails link pass
+                route=route,
+                http_methods=list(methods),
                 framework="rails",
-                metadata={"registration": ref.arg_preview or ref.callee_name},
+                span=ref.span,
+                metadata=metadata,
                 parameters=route_path_params(route, line=ref.span.start_line),
             )
         )
+
+    for ref in calls:
+        while scopes and ref.span.start_line > scopes[-1][0]:
+            scopes.pop()
+        name = ref.callee_name
+        preview = ref.arg_preview
+        if name == "namespace" and _has_block(ref):
+            seg = _first_symbol_or_string(preview)
+            scopes.append((ref.span.end_line, seg, seg))
+        elif name == "scope" and _has_block(ref):
+            path_seg = first_string_arg("(" + (preview or "").lstrip("(")) or (
+                m.group(1) if (m := _PATH_OPT.search(preview or "")) else None
+            )
+            module_m = _MODULE_OPT.search(preview or "")
+            scopes.append((ref.span.end_line, path_seg, module_m.group(1) if module_m else None))
+        elif name in ("resources", "resource"):
+            res = _first_symbol_or_string(preview)
+            if not res:
+                continue
+            path_m = _PATH_OPT.search(preview or "")
+            res_path = path_m.group(1) if path_m else res
+            path_segs, _module_segs = _prefixes()
+            for action, methods, suffix in _restful_actions(name, preview):
+                _emit(
+                    _join_path(*path_segs, res_path + suffix),
+                    methods,
+                    res,
+                    action,
+                    ref,
+                )
+            if _has_block(ref):  # nested resources scope under the parent's id
+                nested = res_path if name == "resource" else f"{res_path}/:{_singularize(res)}_id"
+                scopes.append((ref.span.end_line, nested, None))
+        elif name == "root":
+            target = _route_target(preview)
+            if target is None and preview:
+                arg = first_string_arg("(" + preview.lstrip("("))
+                if arg and "#" in arg:
+                    ctrl, _sep, act = arg.partition("#")
+                    target = (ctrl, act)
+            controller, action = target if target else (None, None)
+            path_segs, _module_segs = _prefixes()
+            _emit(_join_path(*path_segs), ["GET"], controller, action, ref)
+        elif name in ("get", "post", "put", "patch", "delete", "match"):
+            route = first_string_arg("(" + (preview or "").lstrip("(")) if preview else None
+            if route is None:
+                continue
+            if name == "match":
+                via = _VIA_OPT.search(preview or "")
+                verbs = [v.upper() for v in _SYMBOLS.findall(via.group(1))] if via else []
+                methods = [v for v in verbs if v != "ALL"] or ["*"]
+            else:
+                methods = [name.upper()]
+            target = _route_target(preview) or _infer_target(route)
+            controller, action = target if target else (None, None)
+            path_segs, _module_segs = _prefixes()
+            _emit(_join_path(*path_segs, route), methods, controller, action, ref)
     return hints
 
 
