@@ -43,7 +43,7 @@ def _repo(engine) -> Repository:
         return s.get(Repository, 1)
 
 
-def test_v9_migrates_in_place_no_data_loss_and_current(tmp_path):
+def test_v9_migrates_in_place_no_data_loss(tmp_path):
     db = tmp_path / "v9.db"
     _old_db(db, 9)
     engine = make_engine(db)
@@ -55,9 +55,10 @@ def test_v9_migrates_in_place_no_data_loss_and_current(tmp_path):
         assert int(s.get(Meta, "schema_version").value) == SCHEMA_VERSION
         r = s.get(Repository, 1)
         assert (r.file_count, r.symbol_count, r.index_generation) == (7, 55, 3)  # preserved
-        # v9 data already reflects the current analyzer -> current, not stale
-        assert r.analyzer_version == ANALYZER_VERSION
-        assert is_stale(r.analyzer_version) is False
+        # v9 data reflects the v9-era analyzer (1), NOT whatever this binary runs:
+        # under any later analyzer it reads stale and heals per-repo.
+        assert r.analyzer_version == 1
+        assert is_stale(r.analyzer_version) is (ANALYZER_VERSION > 1)
 
 
 def test_v8_rescue_migrates_in_place_and_flags_stale(tmp_path):

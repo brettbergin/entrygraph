@@ -67,6 +67,48 @@ def test_grape_detects_routes():
     ]
 
 
+# ---------------- route-template parameters ----------------
+
+
+def test_route_path_params_styles():
+    from entrygraph.detect.entrypoints.base import route_path_params
+
+    by_name = {p.name: p for p in route_path_params("/posts/:post_id/comments/:id(.:format)")}
+    assert set(by_name) == {"post_id", "id", "format"}
+    assert by_name["post_id"].required and by_name["id"].required
+    assert not by_name["format"].required  # inside Rails optional parens
+    assert all(p.location == "path" and p.provenance == "route" for p in by_name.values())
+
+    (splat,) = route_path_params("/files/*path")
+    assert (splat.name, splat.required) == ("path", False)
+
+    # other languages' styles parse too, for later adoption
+    assert [p.name for p in route_path_params("/users/{id}")] == ["id"]
+    assert [p.name for p in route_path_params("/users/<int:user_id>")] == ["user_id"]
+    assert route_path_params(None) == []
+    assert route_path_params("/static") == []
+    # duplicate segment names collapse to the first occurrence
+    assert [p.name for p in route_path_params("/a/:id/b/:id")] == ["id"]
+
+
+def test_sinatra_route_emits_path_params():
+    (hint,) = _sinatra_rule().match(_ruby_ext([_verb("get", "/reports/:id")], "app.rb"))
+    (param,) = hint.parameters
+    assert (param.name, param.location, param.required) == ("id", "path", True)
+    assert param.line == 1  # the registration line
+
+
+def test_grape_route_emits_path_params():
+    (hint,) = _grape_rule().match(_ruby_ext([_verb("get", "/orders/:order_id")], "api.rb"))
+    assert [(p.name, p.location) for p in hint.parameters] == [("order_id", "path")]
+
+
+def test_rails_verb_route_emits_path_params():
+    rails = {r.id: r for r in rules_for("ruby", {"rails"})}["ruby.rails.routes"]
+    (hint,) = rails.match(_ruby_ext([_verb("get", "/posts/:id")], "config/routes.rb"))
+    assert [(p.name, p.required) for p in hint.parameters] == [("id", True)]
+
+
 # ---------------- graphql-ruby ----------------
 
 from entrygraph.extract.ir import RawSymbol

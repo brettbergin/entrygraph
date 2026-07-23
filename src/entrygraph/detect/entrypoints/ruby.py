@@ -15,6 +15,7 @@ from entrygraph.detect.entrypoints.base import (
     EntrypointRule,
     first_string_arg,
     register,
+    route_path_params,
 )
 from entrygraph.extract.ir import EntrypointHint, FileExtraction
 from entrygraph.kinds import EntrypointKind, SymbolKind
@@ -49,6 +50,7 @@ def _sinatra_routes(x: FileExtraction) -> list[EntrypointHint]:
                         route=route,
                         http_methods=[ref.callee_name.upper()],
                         framework="sinatra",
+                        parameters=route_path_params(route, line=ref.span.start_line),
                     )
                 )
     return hints
@@ -77,6 +79,7 @@ def _rails_routes(x: FileExtraction) -> list[EntrypointHint]:
                 else [ref.callee_name.upper()],
                 framework="rails",
                 metadata={"registration": ref.arg_preview or ref.callee_name},
+                parameters=route_path_params(route, line=ref.span.start_line),
             )
         )
     return hints
@@ -126,6 +129,7 @@ def _grape_routes(x: FileExtraction) -> list[EntrypointHint]:
                         route=route,
                         http_methods=[ref.callee_name.upper()],
                         framework="grape",
+                        parameters=route_path_params(route, line=ref.span.start_line),
                     )
                 )
     return hints
