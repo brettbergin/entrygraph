@@ -106,6 +106,26 @@ class RawReexport:
 
 
 @dataclass(slots=True)
+class ParameterHint:
+    """A declared or observed input parameter of an entrypoint.
+
+    ``location`` uses the taint SourcePattern.channel vocabulary
+    (path|query|body|form|header|cookie) so parameters join path results on
+    (source_key, source_channel) without re-mapping. ``provenance`` records how
+    the parameter was learned: "route" (template segment), "dsl" (a params
+    declaration block), "strong_params" (Rails permit), "usage" (an observed
+    params[:x] read).
+    """
+
+    name: str
+    location: str
+    required: bool = True
+    type_ref: str | None = None  # declared type name (Grape `type: String`)
+    provenance: str = "route"
+    line: int | None = None  # declaration site, when known
+
+
+@dataclass(slots=True)
 class EntrypointHint:
     rule_id: str  # "python.flask.route"
     kind: EntrypointKind
@@ -116,6 +136,7 @@ class EntrypointHint:
     span: Span | None = None
     framework: str | None = None
     metadata: dict = field(default_factory=dict)
+    parameters: list[ParameterHint] = field(default_factory=list)
 
 
 @dataclass(slots=True)

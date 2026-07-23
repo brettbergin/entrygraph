@@ -42,6 +42,23 @@ class Edge:
 
 
 @dataclass(frozen=True, slots=True)
+class Parameter:
+    """A declared or observed input parameter of an entrypoint.
+
+    ``location`` uses the taint source-channel vocabulary
+    (path|query|body|form|header|cookie) so it matches ``PathResult.source_channel``
+    directly; ``provenance`` records how it was learned
+    (route|dsl|strong_params|usage)."""
+
+    name: str
+    location: str
+    required: bool = True
+    type_ref: str | None = None
+    provenance: str = "route"
+    line: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Entrypoint:
     id: int
     kind: str
@@ -50,6 +67,7 @@ class Entrypoint:
     route: str | None = None
     http_method: str | None = None
     extra: dict = field(default_factory=dict)
+    parameters: tuple[Parameter, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

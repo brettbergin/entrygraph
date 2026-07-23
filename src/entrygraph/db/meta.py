@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from entrygraph.db.models import Base, Meta
 
-SCHEMA_VERSION = 10  # repositories.analyzer_version column (migrated in place from 8/9)
+SCHEMA_VERSION = 11  # entrypoint_parameters table (migrated in place from 8/9/10)
 
 # Bump when parsing/detection logic changes so that already-indexed repos would
 # produce different rows. Do NOT bump SCHEMA_VERSION for this. Stale repos heal

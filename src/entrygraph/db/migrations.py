@@ -77,8 +77,18 @@ def _v9_to_v10(conn: Connection) -> None:
     conn.execute(text("DELETE FROM meta WHERE key = :k"), {"k": _PRE_ANALYZER_MARKER})
 
 
+def _v10_to_v11(conn: Connection) -> None:
+    """Add the ``entrypoint_parameters`` table (first-class parameter rows).
+
+    Purely additive: existing rows are untouched and keep serving. Parameter
+    rows appear per repo when an analyzer bump marks it stale and the heal
+    re-index runs — this step itself does not change analyzer staleness."""
+    Base.metadata.tables["entrypoint_parameters"].create(conn, checkfirst=True)
+
+
 _register(8, _v8_to_v9)
 _register(9, _v9_to_v10)
+_register(10, _v10_to_v11)
 
 
 def _backup(engine: Engine, from_version: int) -> None:
