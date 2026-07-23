@@ -71,6 +71,7 @@ class RepoInfo:
     files: int
     symbols: int
     indexed_at: str | None  # ISO-8601, or None if never completed
+    stale: bool = False  # analyzer_version behind current: data valid but refreshing
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,3 +163,4 @@ class GraphStats:
     entrypoints: int
     sink_edges: int
     source_edges: int
+    stale: bool = False  # analyzer_version behind current: data valid but refreshing

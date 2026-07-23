@@ -65,6 +65,11 @@ export function RepoListPage() {
                   indexing…
                 </Label>
               )}
+              {r.stale && !indexing.has(r.root_path) && !indexing.has(r.source?.url ?? "") && (
+                <Label size="small" variant="attention" title="Analyzer upgraded; existing data is still served while this repo refreshes.">
+                  refreshing
+                </Label>
+              )}
               {r.source?.url && (
                 <span className="muted fs0 clip" title={r.source.url}>
                   {r.source.url}

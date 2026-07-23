@@ -16,7 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 
 from entrygraph.db.engine import make_engine, make_session_factory
-from entrygraph.db.meta import create_schema, stored_schema_version
+from entrygraph.db.migrations import prepare_db
 from entrygraph.server.appdb import (
     ensure_app_schema,
     get_or_create_secret,
@@ -37,14 +37,39 @@ from entrygraph.server.routes import repos as repos_routes
 _STATIC_DIR = Path(__file__).parent / "static"
 
 
+async def _heal_loop(config, app_session_factory, runner) -> None:
+    """Sweep stale repos into re-index jobs at startup, then optionally on an
+    interval. Runs the (blocking) sweep in a thread so it never stalls the loop;
+    a sweep failure is logged and retried on the next interval, never fatal."""
+    import asyncio
+    import logging
+
+    from entrygraph.server.jobs.heal import sweep_stale_repos
+
+    if config.heal_interval_s < 0:
+        return  # disabled
+    log = logging.getLogger("entrygraph.server.jobs")
+    while True:
+        try:
+            enqueued = await asyncio.to_thread(sweep_stale_repos, config, app_session_factory)
+            if enqueued:
+                runner.nudge()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a heal sweep must never crash the server
+            log.exception("stale-repo heal sweep failed")
+        if config.heal_interval_s == 0:
+            return  # startup-only
+        await asyncio.sleep(config.heal_interval_s)
+
+
 def create_app(config: ServerConfig, *, serve_ui: bool = True) -> FastAPI:
     config.check_bind_safety()
 
     graph_engine = make_engine(config.db_path)
-    if stored_schema_version(graph_engine) is None:
-        # an empty/new graph DB is fine — the UI shows the first-run experience;
-        # a mismatched one raises per-request via CodeGraph instead of at boot
-        create_schema(graph_engine)
+    # Create a fresh graph DB or migrate an older one in place at boot; raises only
+    # if the DB is newer than this binary. An empty DB shows the first-run UI.
+    prepare_db(graph_engine)
     app_engine = make_app_engine(config.app_db_url)
     ensure_app_schema(app_engine)
 
@@ -54,11 +79,13 @@ def create_app(config: ServerConfig, *, serve_ui: bool = True) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         loop_task = asyncio.create_task(runner.run())
+        heal_task = asyncio.create_task(_heal_loop(config, app_session_factory, runner))
         try:
             yield
         finally:
             await runner.stop()
             loop_task.cancel()
+            heal_task.cancel()
 
     app = FastAPI(title="entrygraph", version="1", lifespan=lifespan)
     app.state.config = config

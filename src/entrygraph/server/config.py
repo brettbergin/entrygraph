@@ -68,6 +68,10 @@ class ServerConfig:
     session_ttl_hours: int = 72
     # --- jobs / clones ---
     jobs_concurrency: int = 1
+    # Auto-heal repos whose data predates the current analyzer by enqueueing index
+    # jobs. -1 disables; 0 sweeps once at startup (covers the deploy=restart case);
+    # >0 also re-sweeps on that interval (seconds).
+    heal_interval_s: int = 0
     clone_dir: str = field(default_factory=_default_clone_dir)
     git_timeout_s: int = 600
     allowed_git_hosts: tuple[str, ...] = ()  # empty = any host
@@ -144,6 +148,7 @@ class ServerConfig:
             session_secret=cls._resolve_secret(env, "EG_SESSION_SECRET"),
             session_ttl_hours=get_int("EG_SESSION_TTL_HOURS", 72),
             jobs_concurrency=max(1, get_int("EG_JOBS_CONCURRENCY", 1)),
+            heal_interval_s=get_int("EG_HEAL_INTERVAL_S", 0),
             clone_dir=get("EG_CLONE_DIR") or _default_clone_dir(),
             git_timeout_s=get_int("EG_GIT_TIMEOUT_S", 600),
             allowed_git_hosts=get_list("EG_ALLOWED_GIT_HOSTS"),
@@ -200,6 +205,7 @@ class ServerConfig:
             "oidc_client_secret": "<set>" if self.oidc_client_secret else "<unset>",
             "session_secret": "<set>" if self.session_secret else "<unset>",
             "jobs_concurrency": str(self.jobs_concurrency),
+            "heal_interval_s": str(self.heal_interval_s),
             "clone_dir": self.clone_dir,
             "allowed_git_hosts": ",".join(self.allowed_git_hosts) or "<any>",
             "allow_local_paths": str(self.local_paths_allowed),

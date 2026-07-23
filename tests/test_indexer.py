@@ -141,6 +141,66 @@ def test_reindex_is_idempotent(indexed):
         assert s.execute(select(Repository)).scalars().one().index_generation == 2
 
 
+def test_index_stamps_current_analyzer_version(indexed):
+    from entrygraph.db.meta import ANALYZER_VERSION
+    from entrygraph.db.migrations import is_stale
+
+    engine, _ = indexed
+    with Session(engine) as s:
+        repo = s.execute(select(Repository)).scalars().one()
+        assert repo.analyzer_version == ANALYZER_VERSION
+        assert is_stale(repo.analyzer_version) is False
+
+
+def test_stale_repo_forces_full_rescan_others_untouched(tmp_engine, fixture_repo, monkeypatch):
+    # Two repos in one DB. Mark one stale (as an analyzer bump would) and re-index
+    # it: it must re-scan fully (analyzer_version refreshed) while the other repo's
+    # rows and reads are never disturbed — no global outage.
+    from sqlalchemy import update
+
+    from entrygraph.db.meta import ANALYZER_VERSION
+    from entrygraph.db.migrations import is_stale
+
+    repo_a = fixture_repo("python/flask_app")
+    repo_b = FLASK_APP  # a distinct root_path (the shared fixture dir)
+    index_repository(repo_a, tmp_engine)
+    index_repository(repo_b, tmp_engine)
+
+    with Session(tmp_engine) as s:
+        a = s.execute(
+            select(Repository).where(Repository.root_path == str(repo_a.resolve()))
+        ).scalar_one()
+        b = s.execute(
+            select(Repository).where(Repository.root_path == str(repo_b.resolve()))
+        ).scalar_one()
+        a_id, b_id = a.id, b.id
+        b_symbols_before = (
+            s.execute(select(Symbol.qname).where(Symbol.repo_id == b_id)).scalars().all()
+        )
+        # simulate an analyzer bump landing on repo A only
+        s.execute(update(Repository).where(Repository.id == a_id).values(analyzer_version=0))
+        s.commit()
+
+    # a normal incremental index of the stale repo heals it (full re-scan despite
+    # no file changes — the content-hash diff would otherwise skip everything)
+    stats = index_repository(repo_a, tmp_engine, incremental=True)
+    assert stats.files_indexed > 0  # not the "nothing changed" no-op path
+
+    with Session(tmp_engine) as s:
+        a = s.get(Repository, a_id)
+        b = s.get(Repository, b_id)
+        assert a.analyzer_version == ANALYZER_VERSION and not is_stale(a.analyzer_version)
+        # the other repo was never touched: still stale-free and data intact
+        assert b.analyzer_version == ANALYZER_VERSION
+        b_symbols_after = (
+            s.execute(select(Symbol.qname).where(Symbol.repo_id == b_id)).scalars().all()
+        )
+        assert sorted(b_symbols_after) == sorted(b_symbols_before)
+
+    # reads for the untouched repo work throughout
+    assert CodeGraph(tmp_engine, b_id).entrypoints(kind="http_route")
+
+
 def test_dedup_entrypoint_hints_collapses_cross_framework_duplicates():
     # Several JS frameworks share a registration shape, so the same route is
     # emitted once per detected framework. Dedup collapses them, keeping the

@@ -1,8 +1,18 @@
-"""Schema-version bookkeeping.
+"""Version bookkeeping for the graph database.
 
-The database is a rebuildable cache of the repository, not a system of record:
-instead of migrations, a version mismatch either raises (read paths) or drops
-and recreates every table (index paths).
+Two independent versions, deliberately decoupled:
+
+- ``SCHEMA_VERSION`` — the on-disk *structure* (tables/columns/indexes). Advanced
+  by ordered, in-place migrations (see ``db.migrations``); a mismatch is never a
+  reason to drop data.
+- ``ANALYZER_VERSION`` — the *extraction/detection logic* that fills the tables.
+  Bumped whenever that logic changes such that already-stored rows would differ
+  (e.g. teaching the analyzer a new framework). Stored per repo in
+  ``repositories.analyzer_version``; a repo behind the current value keeps
+  serving its still-valid rows and is re-scanned per-repo in the background.
+
+The split is what makes upgrades safe: a structural change migrates in place, an
+analyzer change self-heals per repo — neither forces a fleet-wide re-index.
 """
 
 from __future__ import annotations
@@ -13,13 +23,22 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from entrygraph.db.models import Base, Meta
-from entrygraph.errors import SchemaMismatchError
 
-SCHEMA_VERSION = 9  # graphql_resolver entrypoints + graphql SDL extraction
+SCHEMA_VERSION = 10  # repositories.analyzer_version column (migrated in place from 8/9)
+
+# Bump when parsing/detection logic changes so that already-indexed repos would
+# produce different rows. Do NOT bump SCHEMA_VERSION for this. Stale repos heal
+# per-repo (scanner heal gate) instead of a global rebuild.
+ANALYZER_VERSION = 1  # baseline: GraphQL detection + everything current as of schema 10
+
+# analyzer_version stamped on rows that predate the current analyzer (e.g. a
+# database migrated up from schema 8, which had no GraphQL detection). Anything
+# below ANALYZER_VERSION reads as stale.
+STALE_ANALYZER_VERSION = 0
 
 
 def create_schema(engine: Engine) -> None:
-    """Create all tables and stamp the current schema version."""
+    """Create all tables and stamp the current schema version on a fresh DB."""
     from entrygraph import __version__
 
     Base.metadata.create_all(engine)
@@ -44,27 +63,3 @@ def stored_schema_version(engine: Engine) -> int | None:
         except Exception:
             return None
     return int(row) if row is not None else None
-
-
-def check_schema(engine: Engine) -> None:
-    """Raise SchemaMismatchError unless the db matches SCHEMA_VERSION."""
-    version = stored_schema_version(engine)
-    if version != SCHEMA_VERSION:
-        raise SchemaMismatchError(
-            f"database schema version {version!r} != expected {SCHEMA_VERSION}; "
-            "re-run `entrygraph index` to rebuild the index"
-        )
-
-
-def ensure_schema(engine: Engine) -> bool:
-    """Make the db usable for indexing: create if empty, rebuild if mismatched.
-
-    Returns True if the schema was (re)created from scratch.
-    """
-    version = stored_schema_version(engine)
-    if version == SCHEMA_VERSION:
-        return False
-    if version is not None:
-        Base.metadata.drop_all(engine)
-    create_schema(engine)
-    return True
