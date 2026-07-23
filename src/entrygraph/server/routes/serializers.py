@@ -29,6 +29,17 @@ def symbol_json(s) -> dict[str, Any]:
     }
 
 
+def parameter_json(p) -> dict[str, Any]:
+    return {
+        "name": p.name,
+        "location": p.location,
+        "required": p.required,
+        "type": p.type_ref,
+        "provenance": p.provenance,
+        "line": p.line,
+    }
+
+
 def entrypoint_json(e) -> dict[str, Any]:
     return {
         "id": e.id,
@@ -37,6 +48,10 @@ def entrypoint_json(e) -> dict[str, Any]:
         "route": e.route,
         "http_method": e.http_method,
         "handler": symbol_json(e.symbol) if e.symbol else None,
+        "parameters": [parameter_json(p) for p in e.parameters],
+        # rule metadata (registration preview, GraphQL operation/parent_type/
+        # schema_file, rails controller#action) — previously stored but unserved
+        "extra": e.extra or {},
     }
 
 

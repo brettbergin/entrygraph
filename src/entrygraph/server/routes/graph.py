@@ -13,13 +13,14 @@ from sqlalchemy import select
 
 from entrygraph.api import CodeGraph
 from entrygraph.db import models
-from entrygraph.errors import SymbolNotFoundError
+from entrygraph.errors import EntrypointNotFoundError, SymbolNotFoundError
 from entrygraph.kinds import Confidence
 from entrygraph.server.auth.deps import current_principal
 from entrygraph.server.routes.serializers import (
     entrypoint_json,
     file_json,
     make_line_reader,
+    parameter_json,
     path_json,
     symbol_json,
 )
@@ -119,6 +120,50 @@ def entrypoints(
 ) -> dict[str, Any]:
     rows = g.entrypoints(framework=framework, kind=kind, route=route)
     return {"entrypoints": [entrypoint_json(e) for e in rows]}
+
+
+@router.get("/repos/{repo_id}/entrypoints/{entrypoint_id}/flows")
+def entrypoint_flows(
+    g: Graph,
+    entrypoint_id: int,
+    sink: str | None = None,
+    sink_category: str | None = "all",
+    max_depth: int = Query(25, ge=1, le=50),
+    max_paths: int = Query(50, ge=1, le=200),
+    min_confidence: str | None = Query(None, pattern="^(exact|import|fuzzy|unresolved)$"),
+    confirmed_only: bool = False,
+    taint_hops: int = Query(5, ge=0, le=10),
+) -> dict[str, Any]:
+    """The entrypoint's parameters and the sink-reaching paths grouped by the
+    parameter the data enters through (matched on each path's source_key);
+    paths matching no declared parameter come back under unmatched_paths."""
+    try:
+        flows = g.entrypoint_flows(
+            entrypoint_id,
+            sink=sink,
+            sink_category=sink_category if not sink else None,
+            max_depth=max_depth,
+            max_paths=max_paths,
+            min_confidence=_CONFIDENCE_TIERS[min_confidence] if min_confidence else None,
+            confirmed_only=confirmed_only,
+            taint_hops=taint_hops,
+        )
+    except EntrypointNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    read_line = make_line_reader(g.repo_root)
+    return {
+        "entrypoint": entrypoint_json(flows.entrypoint),
+        "parameters": [
+            {
+                "parameter": parameter_json(pf.parameter),
+                "paths": [path_json(p, read_line) for p in pf.paths],
+            }
+            for pf in flows.parameters
+        ],
+        "unmatched_paths": [path_json(p, read_line) for p in flows.unmatched],
+        "mode": flows.mode,
+        "truncated": flows.truncated,
+    }
 
 
 @router.get("/repos/{repo_id}/symbol")

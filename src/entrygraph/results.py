@@ -137,6 +137,28 @@ class CallPath:
 
 
 @dataclass(frozen=True, slots=True)
+class ParameterFlows:
+    """One entrypoint parameter with the sink-reaching paths attributed to it
+    (matched on the path's ``source_key``)."""
+
+    parameter: Parameter
+    paths: tuple[CallPath, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class EntrypointFlows:
+    """An entrypoint, its declared/observed parameters, and where their data
+    flows. ``unmatched`` holds paths whose source key matches no declared
+    parameter (or carries none) — still real flows out of this handler."""
+
+    entrypoint: Entrypoint
+    parameters: tuple[ParameterFlows, ...] = ()
+    unmatched: tuple[CallPath, ...] = ()
+    mode: str | None = None  # precise|widened|strict|explicit (from paths())
+    truncated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class DetectedLanguage:
     name: str
     file_count: int

@@ -143,6 +143,7 @@ def select_entrypoints(
     kind: str | EntrypointKind | None = None,
     framework: str | None = None,
     route: str | None = None,
+    ids: list[int] | None = None,
     limit: int | None = None,
 ) -> list[Entrypoint]:
     stmt = (
@@ -165,6 +166,8 @@ def select_entrypoints(
         stmt = stmt.where(models.Entrypoint.framework == framework)
     if route is not None:
         stmt = stmt.where(_match(models.Entrypoint.route, route))
+    if ids is not None:
+        stmt = stmt.where(models.Entrypoint.id.in_(ids))
     if limit is not None:
         stmt = stmt.limit(limit)
     rows = list(session.execute(stmt))
