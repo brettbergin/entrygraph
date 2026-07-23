@@ -94,6 +94,8 @@ def _backup(engine: Engine, from_version: int) -> None:
         raw = engine.raw_connection()
         try:
             dbapi = raw.driver_connection
+            if dbapi is None:
+                return
             prior = dbapi.isolation_level
             dbapi.isolation_level = None  # autocommit: VACUUM can't run in a transaction
             try:
