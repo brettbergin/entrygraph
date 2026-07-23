@@ -25,7 +25,15 @@ from sqlalchemy.orm import Session, aliased
 
 from entrygraph.db.meta import ANALYZER_VERSION
 from entrygraph.db.migrations import is_stale, prepare_db
-from entrygraph.db.models import Detection, Edge, Entrypoint, File, Repository, Symbol
+from entrygraph.db.models import (
+    Detection,
+    Edge,
+    Entrypoint,
+    EntrypointParameter,
+    File,
+    Repository,
+    Symbol,
+)
 from entrygraph.detect import entrypoints as entrypoint_rules
 from entrygraph.detect.entrypoints.base import first_string_arg
 from entrygraph.detect.express_mounts import resolve_mount_prefixes
@@ -374,6 +382,7 @@ def _known_file_states(session: Session, repo_id: int) -> dict[str, FileState]:
 def _wipe_repo_graph(session: Session, repo_id: int) -> None:
     """Full-reindex: clear the graph for this repo, keep the repo row + meta."""
     session.execute(delete(Edge).where(Edge.repo_id == repo_id))
+    session.execute(delete(EntrypointParameter).where(EntrypointParameter.repo_id == repo_id))
     session.execute(delete(Entrypoint).where(Entrypoint.repo_id == repo_id))
     # repo_id also covers this repo's external placeholders (file_id NULL) without
     # touching other repos' symbols in a global DB (#116)
@@ -728,6 +737,9 @@ def _write_edges_and_entrypoints(
 
     edge_writer = BatchedWriter(session, Edge, before_flush=_flush_new_externals)
     entrypoint_writer = BatchedWriter(session, Entrypoint)
+    # Parameter rows FK onto entrypoint rows; flushing the entrypoint buffer first
+    # keeps the FK satisfied even when the parameter buffer fills mid-file.
+    param_writer = BatchedWriter(session, EntrypointParameter, before_flush=entrypoint_writer.flush)
 
     for path, x, is_package in extractions:
         resolver = FileResolver(
@@ -806,9 +818,10 @@ def _write_edges_and_entrypoints(
             if symbol_id is None and hint.span is not None:
                 symbol_id = callback_handler_by_line.get(hint.span.start_line)
             symbol_id = symbol_id or module_ids[path]
+            entrypoint_id = alloc.take(Entrypoint)
             entrypoint_writer.add(
                 {
-                    "id": alloc.take(Entrypoint),
+                    "id": entrypoint_id,
                     "repo_id": repo_id,
                     "kind": hint.kind,
                     "framework": hint.framework,
@@ -818,9 +831,31 @@ def _write_edges_and_entrypoints(
                     "extra": json.dumps(hint.metadata) if hint.metadata else None,
                 }
             )
+            # (name, location) is unique per entrypoint; rules may re-observe the
+            # same parameter (route segment + a params[:x] read) — first wins,
+            # and producers order stronger provenance first.
+            seen_params: set[tuple[str, str]] = set()
+            for param in hint.parameters:
+                if (param.name, param.location) in seen_params:
+                    continue
+                seen_params.add((param.name, param.location))
+                param_writer.add(
+                    {
+                        "id": alloc.take(EntrypointParameter),
+                        "repo_id": repo_id,
+                        "entrypoint_id": entrypoint_id,
+                        "name": param.name[:128],
+                        "location": param.location,
+                        "required": param.required,
+                        "type_ref": param.type_ref[:64] if param.type_ref else None,
+                        "provenance": param.provenance,
+                        "line": param.line,
+                    }
+                )
     edge_writer.flush()  # before_flush writes any remaining new externals first
     _flush_new_externals()  # externals with no trailing edge batch (belt-and-suspenders)
     entrypoint_writer.flush()
+    param_writer.flush()  # before_flush drains the entrypoint buffer first anyway
     return edge_writer.count, entrypoint_writer.count
 
 

@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from sqlalchemy import func, insert, select
 from sqlalchemy.orm import Session
 
-from entrygraph.db.models import Base, Edge, Entrypoint, File, Symbol
+from entrygraph.db.models import Base, Edge, Entrypoint, EntrypointParameter, File, Symbol
 
 _BATCH = 5000
 
@@ -23,7 +23,7 @@ class IdAllocator:
 
     def __init__(self, session: Session) -> None:
         self._next: dict[str, int] = {}
-        for model in (File, Symbol, Edge, Entrypoint):
+        for model in (File, Symbol, Edge, Entrypoint, EntrypointParameter):
             current = session.execute(select(func.max(model.id))).scalar() or 0
             self._next[model.__tablename__] = current + 1
 
