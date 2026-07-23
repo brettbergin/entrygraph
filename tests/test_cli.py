@@ -11,6 +11,7 @@ from entrygraph.cli.main import main
 
 FLASK_APP = Path(__file__).parent / "fixtures" / "python" / "flask_app"
 CLI_APP = Path(__file__).parent / "fixtures" / "python" / "cli_app"
+RAILS_APP = Path(__file__).parent / "fixtures" / "ruby" / "rails_app"
 
 
 @pytest.fixture
@@ -131,6 +132,54 @@ def test_entrypoints_json(db, capsys):
     rows = json.loads(capsys.readouterr().out)
     routes = {r["route"] for r in rows}
     assert "/reports" in routes
+
+
+@pytest.fixture
+def rails_db(tmp_path):
+    path = tmp_path / "rails.db"
+    assert main(["index", str(RAILS_APP), "--db", str(path)]) == 0
+    return str(path)
+
+
+def test_entrypoints_params_column(rails_db, capsys):
+    assert main(["entrypoints", "--db", rails_db, "--framework", "rails", "--params"]) == 0
+    out = capsys.readouterr().out
+    assert "PARAMS" in out  # header only present with --params
+    assert "id:path" in out  # /posts/:id path parameter
+
+
+def test_entrypoints_params_in_json(rails_db, capsys):
+    assert main(["entrypoints", "--db", rails_db, "--route", "/posts/:id", "--json"]) == 0
+    (row,) = json.loads(capsys.readouterr().out)
+    assert row["parameters"] == [
+        {
+            "name": "id",
+            "location": "path",
+            "required": True,
+            "type_ref": None,
+            "provenance": "route",
+            "line": row["parameters"][0]["line"],
+        }
+    ]
+
+
+def test_paths_card_annotates_matched_parameter(rails_db, capsys):
+    rc = main(
+        [
+            "paths",
+            "--db",
+            rails_db,
+            "--source-category",
+            "http_input",
+            "--sink-category",
+            "command_exec",
+            "--include-unresolved",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "GET /posts/:id" in out  # the reachable entrypoint label
+    assert "param id (path)" in out  # matched to the declared path parameter
 
 
 def test_paths_exit_codes(db, capsys):
